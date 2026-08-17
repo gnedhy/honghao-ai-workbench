@@ -79,13 +79,13 @@ export function ContextSidebar({
                 <>
                   <ToolSection title="本次上下文">
                     <PropertyRow icon={<Database size={16} />} label="知识访问" value="按需引用" />
-                    <PropertyRow icon={<FileText size={16} />} label="当前引用" value="暂无" />
-                    <PropertyRow icon={<FolderLock size={16} />} label="本次附件" value="仅当前会话" />
+                    <PropertyRow icon={<FileText size={16} />} label="当前引用" value={conversationView === "existing" ? "2 条知识" : "暂无"} />
+                    <PropertyRow icon={<FolderLock size={16} />} label="本次附件" value={conversationView === "existing" ? "1 个 · 仅当前会话" : "暂无"} />
                   </ToolSection>
                   <ToolSection title="对话边界">
-                    <PropertyRow icon={<ShieldCheck size={16} />} label="会话类型" value="个人会话" />
+                    <PropertyRow icon={<ShieldCheck size={16} />} label="会话类型" value={conversationView === "existing" ? "项目会话" : "个人会话"} />
                     <PropertyRow icon={<FolderLock size={16} />} label="写入权限" value="关闭" />
-                    <PropertyRow icon={<CheckCircle2 size={16} />} label="知识沉淀" value="确认后保存" />
+                    <PropertyRow icon={<CheckCircle2 size={16} />} label="知识沉淀" value={conversationView === "existing" ? "确认后保存" : "尚未启用"} />
                   </ToolSection>
                   <div className="tool-safety-note"><ShieldCheck size={16} /><p>对话模式只读取你主动引用的内容，不会执行文件写入或启动任务。</p></div>
                 </>
@@ -103,9 +103,7 @@ export function ContextSidebar({
                     <ToolSection title="当前运行">
                       <PropertyRow icon={<History size={16} />} label="检查点" value="等待确认" />
                       <PropertyRow icon={<CheckCircle2 size={16} />} label="执行进度" value="4 / 5" />
-                      <button className="tool-action" type="button" onClick={() => { setTaskPaused((paused) => !paused); showFeedback(taskPaused ? "任务已继续执行。" : "任务已暂停，可随时继续。"); }}>
-                        {taskPaused ? <Play size={16} /> : <Pause size={16} />}<span><strong>{taskPaused ? "继续任务" : "暂停任务"}</strong><small>保留当前检查点</small></span>
-                      </button>
+                      <button className="tool-action" type="button" onClick={() => showFeedback("已定位到等待确认的 ChangeSet。")}><FileText size={16} /><span><strong>查看待确认变更</strong><small>任务已暂停，不会继续写入</small></span></button>
                     </ToolSection>
                   ) : (
                     <ToolSection title="执行边界">
@@ -120,53 +118,17 @@ export function ContextSidebar({
           )}
 
           {section === "knowledge" && (
-            <>
-              <ToolSection title="文档操作">
-                <button className="tool-action" type="button" onClick={() => showFeedback("Markdown 导出已准备。原型阶段不会写入本地文件。")}><Download size={16} /><span><strong>导出 Markdown</strong><small>保留正文与来源信息</small></span></button>
-                <button className="tool-action" type="button" onClick={() => showFeedback("已生成公共知识候选，等待独立发布确认。")}><Rocket size={16} /><span><strong>提交公共知识候选</strong><small>不会直接发布</small></span></button>
-              </ToolSection>
-              <ToolSection title="文档属性">
-                <PropertyRow icon={<FileText size={16} />} label="空间" value={knowledgeItem.scope} />
-                <PropertyRow icon={<History size={16} />} label="最后更新" value={knowledgeItem.updated} />
-                <PropertyRow icon={<Tags size={16} />} label="标签" value={knowledgeItem.tags.join("、")} />
-                <PropertyRow icon={<ShieldCheck size={16} />} label="来源" value="可追溯" />
-              </ToolSection>
-            </>
+            <KnowledgeStatusTools item={knowledgeItem} onFeedback={showFeedback} />
           )}
 
           {section === "automation" && (
-            automationTab === "技能" ? <>
-              <ToolSection title="技能操作">
-                <button className="tool-action" type="button" onClick={() => showFeedback("测试通过：已生成样本输出，未触发写入。")}><TestTube2 size={16} /><span><strong>运行测试</strong><small>使用当前样本输入</small></span></button>
-                <button className="tool-action" type="button" onClick={() => showFeedback(`已从 ${skill.version} 创建草稿版本。`)}><GitBranch size={16} /><span><strong>创建新版本</strong><small>从当前版本复制</small></span></button>
-                <button className="tool-action" type="button" onClick={() => showFeedback("发布检查已启动，需要代码与数据审查通过。")}><Rocket size={16} /><span><strong>提交发布检查</strong><small>进入审查流程</small></span></button>
-              </ToolSection>
-              <ToolSection title="当前版本"><PropertyRow icon={<WandSparkles size={16} />} label="版本" value={skill.version} /><PropertyRow icon={<CheckCircle2 size={16} />} label="状态" value={skill.status} /><PropertyRow icon={<History size={16} />} label="运行" value={`${skill.runs} 次`} /><PropertyRow icon={<ShieldCheck size={16} />} label="发布范围" value="AI 团队" /></ToolSection>
-            </> : <>
-              <ToolSection title="运行设置">
-                <button className="tool-action" type="button" onClick={() => showFeedback("已创建一次受控试运行，等待输入材料。")}><Play size={16} /><span><strong>试运行工作流</strong><small>使用隔离样本，不产生写入</small></span></button>
-                <button className="tool-action" type="button" onClick={() => showFeedback(`已从 ${workflow.version} 创建工作流草稿。`)}><GitBranch size={16} /><span><strong>创建新版本</strong><small>复制当前步骤与权限</small></span></button>
-                <button className="tool-action" type="button" onClick={() => showFeedback("工作流发布检查已启动。")}><Rocket size={16} /><span><strong>提交发布检查</strong><small>逐步检查技能、权限与人工节点</small></span></button>
-              </ToolSection>
-              <ToolSection title="流程信息"><PropertyRow icon={<GitBranch size={16} />} label="版本" value={workflow.version} /><PropertyRow icon={<CheckCircle2 size={16} />} label="状态" value={workflow.status} /><PropertyRow icon={<History size={16} />} label="步骤" value={`${workflow.steps.length} 个`} /><PropertyRow icon={<ShieldCheck size={16} />} label="写入方式" value="ChangeSet" /></ToolSection>
-            </>
+            automationTab === "技能"
+              ? <SkillStatusTools skill={skill} onFeedback={showFeedback} />
+              : <WorkflowStatusTools workflow={workflow} onFeedback={showFeedback} />
           )}
 
           {section === "tasks" && (
-            <>
-              <ToolSection title="执行详情">
-                <PropertyRow icon={<History size={16} />} label="当前运行" value="RUN-003" />
-                <PropertyRow icon={<WandSparkles size={16} />} label="使用技能" value="需求诊断 v1.0" />
-                <PropertyRow icon={<CheckCircle2 size={16} />} label="检查点" value={task.status} />
-                <PropertyRow icon={<FolderLock size={16} />} label="工作目录" value="受控目录" />
-              </ToolSection>
-              <ToolSection title="任务操作">
-                <button className="tool-action" type="button" onClick={onReturnChat}><ArrowLeft size={16} /><span><strong>返回来源会话</strong><small>{task.title}</small></span></button>
-                <button className="tool-action" type="button" onClick={() => { setTaskPaused((paused) => !paused); showFeedback(taskPaused ? "任务已恢复。" : "任务已暂停在当前检查点。"); }}>
-                  {taskPaused ? <Play size={16} /> : <Pause size={16} />}<span><strong>{taskPaused ? "恢复任务" : "暂停任务"}</strong><small>不会丢失当前进度</small></span>
-                </button>
-              </ToolSection>
-            </>
+            <TaskStatusTools task={task} paused={taskPaused} onPauseToggle={() => setTaskPaused((paused) => !paused)} onReturnChat={onReturnChat} onFeedback={showFeedback} />
           )}
 
           {feedback?.section === section && <p className="tool-feedback"><CheckCircle2 size={15} />{feedback.message}</p>}
@@ -174,6 +136,148 @@ export function ContextSidebar({
       </aside>
     </>
   );
+}
+
+type StatusAction = { icon: React.ReactNode; title: string; subtitle: string; feedback?: string; onSelect?: () => void };
+type StatusProperty = { icon: React.ReactNode; label: string; value: string };
+
+function StatusToolLayout({ actionTitle, actions, infoTitle, properties, note, onFeedback }: { actionTitle: string; actions: StatusAction[]; infoTitle: string; properties: StatusProperty[]; note: string; onFeedback: (message: string) => void }) {
+  return <>
+    <ToolSection title={actionTitle}>{actions.map((action) => <button className="tool-action" type="button" key={action.title} onClick={() => action.onSelect ? action.onSelect() : onFeedback(action.feedback ?? "")}>{action.icon}<span><strong>{action.title}</strong><small>{action.subtitle}</small></span></button>)}</ToolSection>
+    <ToolSection title={infoTitle}>{properties.map((property) => <PropertyRow icon={property.icon} label={property.label} value={property.value} key={property.label} />)}</ToolSection>
+    <div className="tool-safety-note"><ShieldCheck size={16} /><p>{note}</p></div>
+  </>;
+}
+
+function KnowledgeStatusTools({ item, onFeedback }: { item: KnowledgeItem; onFeedback: (message: string) => void }) {
+  if (item.scope === "公共知识") return <StatusToolLayout actionTitle="公共知识操作" actions={[
+    { icon: <FileText size={16} />, title: "复制到个人库", subtitle: "基于发布版本创建个人副本", feedback: "已创建个人知识副本，公共版本保持不变。" },
+    { icon: <History size={16} />, title: "查看版本记录", subtitle: "审查发布人与变更说明", feedback: "已打开公共知识版本记录。" },
+    { icon: <Download size={16} />, title: "导出 Markdown", subtitle: "保留正文与来源信息", feedback: "Markdown 导出已准备。" },
+  ]} infoTitle="发布属性" properties={[
+    { icon: <FileText size={16} />, label: "空间", value: "公共知识库" },
+    { icon: <CheckCircle2 size={16} />, label: "状态", value: "已发布 · 只读" },
+    { icon: <History size={16} />, label: "最后更新", value: item.updated },
+    { icon: <ShieldCheck size={16} />, label: "来源", value: "已审查 · 可追溯" },
+  ]} note="公共知识不能在阅读页直接修改。更新必须创建候选版本，并重新经过内容与权限审查。" onFeedback={onFeedback} />;
+
+  return <StatusToolLayout actionTitle="个人知识操作" actions={[
+    { icon: <Download size={16} />, title: "导出 Markdown", subtitle: "保留正文与来源信息", feedback: "Markdown 导出已准备。原型阶段不会写入本地文件。" },
+    { icon: <Rocket size={16} />, title: "提交公共知识候选", subtitle: "进入独立审查，不会直接发布", feedback: "已生成公共知识候选，等待独立发布确认。" },
+    { icon: <History size={16} />, title: "查看编辑记录", subtitle: "回看个人沉淀过程", feedback: "已打开个人知识编辑记录。" },
+  ]} infoTitle="文档属性" properties={[
+    { icon: <FileText size={16} />, label: "空间", value: "个人知识库" },
+    { icon: <CheckCircle2 size={16} />, label: "状态", value: "本人可编辑" },
+    { icon: <History size={16} />, label: "最后更新", value: item.updated },
+    { icon: <Tags size={16} />, label: "标签", value: item.tags.join("、") },
+  ]} note="个人知识只对本人可见。提交公共候选后仍需来源、内容和权限审查，原文不会被自动覆盖。" onFeedback={onFeedback} />;
+}
+
+function TaskStatusTools({ task, paused, onPauseToggle, onReturnChat, onFeedback }: { task: TaskItem; paused: boolean; onPauseToggle: () => void; onReturnChat: () => void; onFeedback: (message: string) => void }) {
+  if (task.status === "等待确认") return <StatusToolLayout actionTitle="等待你确认" actions={[
+    { icon: <FileText size={16} />, title: "查看待确认变更", subtitle: "检查 ChangeSet 与影响范围", feedback: "已定位到待确认的 ChangeSet。" },
+    { icon: <ArrowLeft size={16} />, title: "返回来源会话", subtitle: task.title, onSelect: onReturnChat },
+  ]} infoTitle="确认信息" properties={[
+    { icon: <CheckCircle2 size={16} />, label: "检查点", value: "等待人工确认" },
+    { icon: <History size={16} />, label: "进度", value: task.progress },
+    { icon: <WandSparkles size={16} />, label: "负责人", value: task.owner },
+    { icon: <FolderLock size={16} />, label: "写入状态", value: "尚未应用" },
+  ]} note="任务已暂停在人工确认门。未经批准，ChangeSet 不会写入项目文件或公共知识。" onFeedback={onFeedback} />;
+
+  if (task.status === "运行中") {
+    const toggleRun = () => { onPauseToggle(); onFeedback(paused ? "任务已从检查点继续执行。" : "任务已暂停在当前检查点。"); };
+    return <StatusToolLayout actionTitle="运行控制" actions={[
+      { icon: paused ? <Play size={16} /> : <Pause size={16} />, title: paused ? "继续任务" : "暂停任务", subtitle: "保留当前检查点", onSelect: toggleRun },
+      { icon: <History size={16} />, title: "查看运行记录", subtitle: "检查步骤、耗时与工具调用", feedback: "已打开当前任务运行记录。" },
+      { icon: <ArrowLeft size={16} />, title: "返回来源会话", subtitle: task.title, onSelect: onReturnChat },
+    ]} infoTitle="执行详情" properties={[
+      { icon: <History size={16} />, label: "运行状态", value: paused ? "已暂停" : "运行中" },
+      { icon: <CheckCircle2 size={16} />, label: "进度", value: task.progress },
+      { icon: <WandSparkles size={16} />, label: "负责人", value: task.owner },
+      { icon: <FolderLock size={16} />, label: "工作目录", value: "受控目录" },
+    ]} note="运行中的任务只能在授权目录和知识范围内操作；写入仍需经过人工确认。" onFeedback={onFeedback} />;
+  }
+
+  return <StatusToolLayout actionTitle="完成结果" actions={[
+    { icon: <FileText size={16} />, title: "查看任务产出", subtitle: "打开最终结果与引用来源", feedback: "已打开任务产出与验证记录。" },
+    { icon: <Play size={16} />, title: "基于快照重跑", subtitle: "创建新任务，不覆盖原结果", feedback: "已基于完成快照创建新的任务草稿。" },
+    { icon: <ArrowLeft size={16} />, title: "返回来源会话", subtitle: task.title, onSelect: onReturnChat },
+  ]} infoTitle="完成信息" properties={[
+    { icon: <CheckCircle2 size={16} />, label: "状态", value: "已完成" },
+    { icon: <History size={16} />, label: "最终进度", value: task.progress },
+    { icon: <WandSparkles size={16} />, label: "负责人", value: task.owner },
+    { icon: <ShieldCheck size={16} />, label: "结果", value: "已留痕 · 可追溯" },
+  ]} note="完成任务及其运行记录保持只读。重新执行会创建新任务，不会覆盖原始结果。" onFeedback={onFeedback} />;
+}
+
+function SkillStatusTools({ skill, onFeedback }: { skill: SkillItem; onFeedback: (message: string) => void }) {
+  if (skill.status === "已发布") return <StatusToolLayout actionTitle="运行与版本" actions={[
+    { icon: <Play size={16} />, title: "验证运行", subtitle: "使用已批准配置", feedback: "已创建一次受控验证运行，不会产生业务写入。" },
+    { icon: <GitBranch size={16} />, title: "创建新版本", subtitle: "当前发布版本保持只读", feedback: "已从 " + skill.version + " 派生新的草稿版本。" },
+    { icon: <History size={16} />, title: "查看运行记录", subtitle: skill.runs + " 次运行可追溯", feedback: "已打开 " + skill.runs + " 条技能运行记录。" },
+  ]} infoTitle="发布信息" properties={[
+    { icon: <WandSparkles size={16} />, label: "当前版本", value: skill.version },
+    { icon: <CheckCircle2 size={16} />, label: "状态", value: "已发布 · 只读" },
+    { icon: <ShieldCheck size={16} />, label: "审查", value: "数据与代码已通过" },
+    { icon: <History size={16} />, label: "发布范围", value: "AI 团队" },
+  ]} note="已发布版本不能直接修改。任何调整都从新草稿开始，并重新经过测试与审查。" onFeedback={onFeedback} />;
+
+  if (skill.status === "测试中") return <StatusToolLayout actionTitle="测试与发布" actions={[
+    { icon: <TestTube2 size={16} />, title: "继续样本测试", subtitle: "对照人工结果验证输出", feedback: "样本测试已启动，输出只保存在隔离测试区。" },
+    { icon: <FileText size={16} />, title: "添加验证样本", subtitle: "补充边界与失败案例", feedback: "已创建新的验证样本槽位。" },
+    { icon: <Rocket size={16} />, title: "提交发布审查", subtitle: "检查数据边界与代码风险", feedback: "发布审查已提交，等待代码审查完成。" },
+  ]} infoTitle="测试进度" properties={[
+    { icon: <WandSparkles size={16} />, label: "测试版本", value: skill.version },
+    { icon: <CheckCircle2 size={16} />, label: "样本", value: skill.runs + " 次测试" },
+    { icon: <ShieldCheck size={16} />, label: "数据审查", value: "已通过" },
+    { icon: <History size={16} />, label: "代码审查", value: "等待中" },
+  ]} note="测试中的技能仅能使用隔离样本；数据审查与代码审查全部通过后才能发布。" onFeedback={onFeedback} />;
+
+  return <StatusToolLayout actionTitle="草稿配置" actions={[
+    { icon: <WandSparkles size={16} />, title: "配置能力定义", subtitle: "设置输入、输出与调用规则", feedback: "已打开输入、输出与提示规则配置。" },
+    { icon: <ShieldCheck size={16} />, title: "设置运行边界", subtitle: "知识范围、工具与写入权限", feedback: "已打开权限与数据边界配置。" },
+    { icon: <TestTube2 size={16} />, title: "进入样本测试", subtitle: "先验证小样本，再提交审查", feedback: "草稿已进入样本测试阶段。" },
+  ]} infoTitle="草稿信息" properties={[
+    { icon: <WandSparkles size={16} />, label: "草稿版本", value: skill.version },
+    { icon: <CheckCircle2 size={16} />, label: "状态", value: "仅创建者可见" },
+    { icon: <History size={16} />, label: "试运行", value: skill.runs + " 次" },
+    { icon: <ShieldCheck size={16} />, label: "发布审查", value: "未开始" },
+  ]} note="草稿不能用于正式任务。完成能力定义与运行边界后，才能进入测试阶段。" onFeedback={onFeedback} />;
+}
+
+function WorkflowStatusTools({ workflow, onFeedback }: { workflow: WorkflowItem; onFeedback: (message: string) => void }) {
+  if (workflow.status === "已发布") return <StatusToolLayout actionTitle="运行与版本" actions={[
+    { icon: <Play size={16} />, title: "运行工作流", subtitle: "使用已发布步骤与权限", feedback: "已创建一次受控运行，写入仍需人工确认。" },
+    { icon: <GitBranch size={16} />, title: "创建新版本", subtitle: "复制步骤、技能与权限", feedback: "已从 " + workflow.version + " 创建工作流草稿。" },
+    { icon: <History size={16} />, title: "查看运行记录", subtitle: "检查节点耗时与人工确认", feedback: "已打开 " + workflow.runs + " 条工作流运行记录。" },
+  ]} infoTitle="发布信息" properties={[
+    { icon: <GitBranch size={16} />, label: "当前版本", value: workflow.version },
+    { icon: <CheckCircle2 size={16} />, label: "状态", value: "已发布 · 只读" },
+    { icon: <History size={16} />, label: "步骤", value: workflow.steps.length + " 个" },
+    { icon: <ShieldCheck size={16} />, label: "写入方式", value: "ChangeSet" },
+  ]} note="已发布流程的步骤和权限保持锁定。修改必须派生新版本并重新验证每个节点。" onFeedback={onFeedback} />;
+
+  if (workflow.status === "测试中") return <StatusToolLayout actionTitle="流程测试" actions={[
+    { icon: <TestTube2 size={16} />, title: "继续试运行", subtitle: "逐步检查输入与输出", feedback: "隔离试运行已启动，不会应用任何 ChangeSet。" },
+    { icon: <GitBranch size={16} />, title: "校验流程步骤", subtitle: "检查技能、权限和人工节点", feedback: "步骤校验完成，发现 1 个待确认节点。" },
+    { icon: <Rocket size={16} />, title: "提交发布审查", subtitle: "逐步审查依赖与写入边界", feedback: "工作流发布审查已提交。" },
+  ]} infoTitle="测试进度" properties={[
+    { icon: <GitBranch size={16} />, label: "测试版本", value: workflow.version },
+    { icon: <CheckCircle2 size={16} />, label: "已验证步骤", value: Math.max(workflow.steps.length - 1, 1) + " / " + workflow.steps.length },
+    { icon: <History size={16} />, label: "试运行", value: workflow.runs + " 次" },
+    { icon: <ShieldCheck size={16} />, label: "发布审查", value: "待完成" },
+  ]} note="测试流程只能使用隔离材料。所有技能依赖、权限和人工节点验证完成后才能发布。" onFeedback={onFeedback} />;
+
+  return <StatusToolLayout actionTitle="草稿编排" actions={[
+    { icon: <GitBranch size={16} />, title: "编辑执行步骤", subtitle: "添加技能与人工确认节点", feedback: "已打开步骤编排界面。" },
+    { icon: <ShieldCheck size={16} />, title: "配置步骤权限", subtitle: "为每个节点设置最小权限", feedback: "已打开逐步权限配置。" },
+    { icon: <TestTube2 size={16} />, title: "进入流程测试", subtitle: "验证顺序、回退与人工节点", feedback: "工作流草稿已进入隔离测试。" },
+  ]} infoTitle="草稿信息" properties={[
+    { icon: <GitBranch size={16} />, label: "草稿版本", value: workflow.version },
+    { icon: <CheckCircle2 size={16} />, label: "状态", value: "仅创建者可见" },
+    { icon: <History size={16} />, label: "步骤", value: workflow.steps.length + " 个" },
+    { icon: <ShieldCheck size={16} />, label: "发布审查", value: "未开始" },
+  ]} note="草稿工作流不能用于正式任务。完成步骤、权限和失败回退配置后，才能开始测试。" onFeedback={onFeedback} />;
 }
 
 function ToolSection({ title, children }: { title: string; children: React.ReactNode }) {
