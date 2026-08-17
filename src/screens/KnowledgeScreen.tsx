@@ -44,7 +44,7 @@ export function KnowledgeScreen({ contextOpen, onOpenNavigation, onToggleContext
             ))}
           </div>
         </aside>
-        <article className="document-editor">
+        <article className="document-editor" key={activeItem?.title}>
           <h1>{activeItem?.title}</h1>
           <p className="document-meta">最后更新：{activeItem?.updated} · 来源可追溯 · Markdown 正文</p>
           <div className="document-body">

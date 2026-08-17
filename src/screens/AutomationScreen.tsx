@@ -39,7 +39,7 @@ export function AutomationScreen({ contextOpen, onOpenNavigation, onToggleContex
               ))}
             </div>
           </aside>
-          <article className="skill-detail">
+          <article className="skill-detail" key={selectedSkill.title}>
             <div className="detail-heading">
               <div><span className="status-dot status-dot--green" />{selectedSkill.status}</div>
               <h1>{selectedSkill.title}</h1>

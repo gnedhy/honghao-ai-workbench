@@ -35,13 +35,6 @@ function App() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, []);
 
-  useEffect(() => {
-    const desktopQuery = window.matchMedia("(min-width: 1180px)");
-    const syncContext = (event: MediaQueryListEvent) => setContextOpen(event.matches);
-    desktopQuery.addEventListener("change", syncContext);
-    return () => desktopQuery.removeEventListener("change", syncContext);
-  }, []);
-
   const openNavigation = () => {
     setContextOpen(false);
     setMobileOpen(true);
@@ -63,9 +56,9 @@ function App() {
       <Sidebar
         activeSection={section}
         selectedConversationTitle={conversationView === "existing" ? conversationTitle : null}
-        onSectionChange={(nextSection) => { setSection(nextSection); setProfileOpen(false); setMobileOpen(false); setContextOpen(window.matchMedia("(min-width: 1180px)").matches); }}
+        onSectionChange={(nextSection) => { setSection(nextSection); setProfileOpen(false); setMobileOpen(false); setContextOpen(false); }}
         onNewConversation={() => { setSection("chat"); setConversationView("new"); setProfileOpen(false); setMobileOpen(false); setContextOpen(false); }}
-        onConversationOpen={(title) => { setSection("chat"); setConversationView("existing"); setConversationTitle(title); setProfileOpen(false); setMobileOpen(false); setContextOpen(window.matchMedia("(min-width: 1180px)").matches); }}
+        onConversationOpen={(title) => { setSection("chat"); setConversationView("existing"); setConversationTitle(title); setProfileOpen(false); setMobileOpen(false); setContextOpen(false); }}
         profileOpen={profileOpen}
         onProfileToggle={() => setProfileOpen((open) => !open)}
         mobileOpen={mobileOpen}

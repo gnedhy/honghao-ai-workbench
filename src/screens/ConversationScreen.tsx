@@ -30,7 +30,7 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
       />
 
       {view === "new" ? (
-        <section className={`new-conversation-empty new-conversation-empty--${mode === "工作" ? "work" : "chat"}`}>
+        <section key={mode} className={`new-conversation-empty new-conversation-empty--${mode === "工作" ? "work" : "chat"}`}>
           <div className="new-conversation-empty__content">
             <h1>{mode === "工作" ? "我们该处理什么工作？" : "随时可以开始。"}</h1>
             <Composer compact={mode === "聊天"} empty mode={mode} onSubmit={setLastMessage} />
