@@ -1,5 +1,7 @@
 export type Section = "chat" | "knowledge" | "automation" | "tasks";
 
+export type ConversationView = "new" | "existing";
+
 export type WorkApproval = "pending" | "approved" | "rejected";
 
 export type KnowledgeItem = {

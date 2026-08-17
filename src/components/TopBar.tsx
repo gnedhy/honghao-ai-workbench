@@ -12,6 +12,7 @@ type TopBarProps = ScreenChromeProps & {
   subtitle?: string;
   tabs: ReactNode;
   action?: ReactNode;
+  minimal?: boolean;
 };
 
 export function TopBar({
@@ -19,12 +20,13 @@ export function TopBar({
   subtitle,
   tabs,
   action,
+  minimal = false,
   contextOpen,
   onOpenNavigation,
   onToggleContext,
 }: TopBarProps) {
   return (
-    <header className="screen-header">
+    <header className={minimal ? "screen-header screen-header--minimal" : "screen-header"}>
       <div className="screen-header__identity">
         <button className="icon-button mobile-nav-trigger" type="button" onClick={onOpenNavigation} aria-label="打开导航">
           <Menu size={19} />

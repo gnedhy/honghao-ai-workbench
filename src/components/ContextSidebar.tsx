@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  Check,
   CheckCircle2,
   ChevronDown,
   Database,
@@ -22,6 +23,7 @@ import type { KnowledgeItem, Section, SkillItem, TaskItem } from "../types";
 
 type ContextSidebarProps = {
   section: Section;
+  conversationTitle: string;
   open: boolean;
   onClose: () => void;
   onOpenTasks: () => void;
@@ -35,6 +37,7 @@ type Feedback = { section: Section; message: string } | null;
 
 export function ContextSidebar({
   section,
+  conversationTitle,
   open,
   onClose,
   onOpenTasks,
@@ -49,7 +52,7 @@ export function ContextSidebar({
   const [feedback, setFeedback] = useState<Feedback>(null);
 
   const panelTitle = section === "chat" ? "工作设置" : section === "knowledge" ? "文档工具" : section === "automation" ? "技能工具" : "任务详情";
-  const panelSubtitle = section === "chat" ? "跨部门 AI 需求诊断" : section === "knowledge" ? knowledgeItem.title : section === "automation" ? skill.title : task.title;
+  const panelSubtitle = section === "chat" ? conversationTitle : section === "knowledge" ? knowledgeItem.title : section === "automation" ? skill.title : task.title;
   const showFeedback = (message: string) => setFeedback({ section, message });
 
   return (
@@ -142,14 +145,25 @@ function ToolSection({ title, children }: { title: string; children: React.React
 }
 
 function ToolSelect({ icon, label, value, options, onChange }: { icon: React.ReactNode; label: string; value: string; options: string[]; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+
   return (
-    <label className="tool-select">
+    <div className={open ? "tool-select is-open" : "tool-select"} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false); }}>
       <span className="tool-select__label">{icon}<small>{label}</small></span>
-      <span className="tool-select__control">
-        <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option}>{option}</option>)}</select>
+      <button className="tool-select__control" type="button" aria-label={label} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <strong>{value}</strong>
         <ChevronDown size={15} />
-      </span>
-    </label>
+      </button>
+      {open && (
+        <div className="tool-select__menu" role="listbox" aria-label={`${label}选项`}>
+          {options.map((option) => (
+            <button className={option === value ? "is-selected" : ""} type="button" role="option" aria-selected={option === value} key={option} onClick={() => { onChange(option); setOpen(false); }}>
+              <span>{option}</span>{option === value && <Check size={15} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

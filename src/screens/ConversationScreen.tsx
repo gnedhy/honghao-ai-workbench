@@ -4,9 +4,14 @@ import { Composer } from "../components/Composer";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { TopBar, type ScreenChromeProps } from "../components/TopBar";
 import { runSteps } from "../data";
-import type { WorkApproval } from "../types";
+import type { ConversationView, WorkApproval } from "../types";
 
-export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleContext }: ScreenChromeProps) {
+type ConversationScreenProps = ScreenChromeProps & {
+  view: ConversationView;
+  conversationTitle: string;
+};
+
+export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleContext, view, conversationTitle }: ConversationScreenProps) {
   const [mode, setMode] = useState<"聊天" | "工作">("工作");
   const [approval, setApproval] = useState<WorkApproval>("pending");
   const [lastMessage, setLastMessage] = useState("");
@@ -14,22 +19,38 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
   return (
     <main className="app-main conversation-screen">
       <TopBar
-        title={mode === "工作" ? "跨部门 AI 需求诊断" : "新聊天"}
-        subtitle={mode === "工作" ? "正在执行 · 等待确认" : "个人智能体"}
+        title={view === "new" ? "新聊天" : conversationTitle}
+        subtitle={view === "new" ? (mode === "工作" ? "新工作" : "个人智能体") : mode === "工作" ? "正在执行 · 等待确认" : "已有对话"}
         tabs={<SegmentedControl value={mode} options={["聊天", "工作"] as const} onChange={setMode} label="会话模式" />}
+        minimal={view === "new"}
         contextOpen={contextOpen}
         onOpenNavigation={onOpenNavigation}
         onToggleContext={onToggleContext}
       />
 
-      {mode === "聊天" ? (
-        <section className="chat-empty-state">
-          <div>
-            <h1>今天想聊点什么？</h1>
-            <p>我会结合你的个人知识和允许访问的企业知识回答。</p>
-            {lastMessage && <div className="chat-preview"><strong>你</strong><span>{lastMessage}</span></div>}
-            <Composer compact mode="聊天" onSubmit={setLastMessage} />
+      {view === "new" ? (
+        <section className={`new-conversation-empty new-conversation-empty--${mode === "工作" ? "work" : "chat"}`}>
+          <div className="new-conversation-empty__content">
+            <h1>{mode === "工作" ? "我们该处理什么工作？" : "随时可以开始。"}</h1>
+            <Composer compact={mode === "聊天"} empty mode={mode} onSubmit={setLastMessage} />
           </div>
+        </section>
+      ) : mode === "聊天" ? (
+        <section className="existing-chat-thread">
+          <div className="existing-chat-thread__messages">
+            <div className="message-row message-row--user">
+              <span className="avatar avatar--blue">张</span>
+              <div className="message-bubble">请帮我梳理这个需求里需要优先确认的关键问题。</div>
+            </div>
+            <div className="message-row message-row--assistant">
+              <span className="assistant-avatar"><Sparkles size={16} /></span>
+              <div className="assistant-response">
+                <p>围绕“{conversationTitle}”，建议先确认业务目标、知识与数据边界、输出用途，以及最终由谁验收。涉及文件写入或公共知识发布时，仍需单独确认。</p>
+              </div>
+            </div>
+            {lastMessage && <div className="chat-preview"><strong>你</strong><span>{lastMessage}</span></div>}
+          </div>
+          <Composer compact mode="聊天" onSubmit={setLastMessage} />
         </section>
       ) : (
         <section className="work-thread">

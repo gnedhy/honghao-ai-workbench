@@ -23,7 +23,10 @@ import type { Section } from "../types";
 
 type SidebarProps = {
   activeSection: Section;
+  selectedConversationTitle: string | null;
   onSectionChange: (section: Section) => void;
+  onNewConversation: () => void;
+  onConversationOpen: (title: string) => void;
   profileOpen: boolean;
   onProfileToggle: () => void;
   mobileOpen: boolean;
@@ -33,14 +36,17 @@ type SidebarProps = {
 
 const navItems = [
   { id: "chat", label: "新聊天", icon: PenLine },
-  { id: "knowledge", label: "知识", icon: LibraryBig },
+  { id: "knowledge", label: "知识库", icon: LibraryBig },
   { id: "automation", label: "自动化", icon: WandSparkles },
   { id: "tasks", label: "任务看板", icon: FolderKanban },
 ] as const;
 
 export function Sidebar({
   activeSection,
+  selectedConversationTitle,
   onSectionChange,
+  onNewConversation,
+  onConversationOpen,
   profileOpen,
   onProfileToggle,
   mobileOpen,
@@ -51,6 +57,11 @@ export function Sidebar({
 
   const selectSection = (section: Section) => {
     onSectionChange(section);
+    onMobileClose();
+  };
+
+  const openConversation = (title: string) => {
+    onConversationOpen(title);
     onMobileClose();
   };
 
@@ -77,7 +88,7 @@ export function Sidebar({
               key={id}
               type="button"
               aria-current={activeSection === id && id !== "chat" ? "page" : undefined}
-              onClick={() => selectSection(id)}
+              onClick={() => id === "chat" ? onNewConversation() : selectSection(id)}
             >
               <Icon size={18} strokeWidth={1.7} />
               <span>{label}</span>
@@ -89,10 +100,10 @@ export function Sidebar({
           <SidebarGroup title="置顶">
             {pinnedConversations.map((title, index) => (
               <button
-                className={activeSection === "chat" && index === 0 ? "conversation-row is-active" : "conversation-row"}
+                className={activeSection === "chat" && selectedConversationTitle === title ? "conversation-row is-active" : "conversation-row"}
                 type="button"
                 key={title}
-                onClick={() => selectSection("chat")}
+                onClick={() => openConversation(title)}
               >
                 {index === 0 ? <Bot size={16} /> : <Columns2 size={16} />}
                 <span>{title}</span>
@@ -113,7 +124,7 @@ export function Sidebar({
                   {expanded && (
                     <div className="project-thread-list">
                       {project.conversations.map((title) => (
-                        <button className="project-thread" type="button" key={title} onClick={() => selectSection("chat")}>
+                        <button className={activeSection === "chat" && selectedConversationTitle === title ? "project-thread is-active" : "project-thread"} type="button" key={title} onClick={() => openConversation(title)}>
                           <span>{title}</span>
                         </button>
                       ))}
@@ -125,7 +136,7 @@ export function Sidebar({
           </SidebarGroup>
           <SidebarGroup title="最近">
             {recentConversations.map((title) => (
-              <button className="conversation-row" type="button" key={title} onClick={() => selectSection("chat")}>
+              <button className={activeSection === "chat" && selectedConversationTitle === title ? "conversation-row is-active" : "conversation-row"} type="button" key={title} onClick={() => openConversation(title)}>
                 <MessageCircle size={16} />
                 <span>{title}</span>
               </button>

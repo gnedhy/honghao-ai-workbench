@@ -9,17 +9,23 @@ type KnowledgeScreenProps = ScreenChromeProps & {
   onSelectedTitleChange: (title: string) => void;
 };
 
+const scopeByTab = {
+  "个人库": "个人知识",
+  "公共库": "公共知识",
+} as const;
+
 export function KnowledgeScreen({ contextOpen, onOpenNavigation, onToggleContext, selectedTitle, onSelectedTitleChange }: KnowledgeScreenProps) {
-  const [scope, setScope] = useState<"个人知识" | "公共知识">("个人知识");
+  const [scopeTab, setScopeTab] = useState<keyof typeof scopeByTab>("个人库");
+  const scope = scopeByTab[scopeTab];
   const visibleItems = knowledgeItems.filter((item) => item.scope === scope);
   const activeItem = knowledgeItems.find((item) => item.title === selectedTitle) ?? visibleItems[0];
 
   return (
     <main className="app-main">
       <TopBar
-        title="知识"
+        title="知识库"
         subtitle={`${visibleItems.length} 条内容`}
-        tabs={<SegmentedControl value={scope} options={["个人知识", "公共知识"] as const} onChange={(value) => { setScope(value); onSelectedTitleChange(knowledgeItems.find((item) => item.scope === value)?.title ?? ""); }} label="知识范围" />}
+        tabs={<SegmentedControl value={scopeTab} options={["个人库", "公共库"] as const} onChange={(value) => { setScopeTab(value); onSelectedTitleChange(knowledgeItems.find((item) => item.scope === scopeByTab[value])?.title ?? ""); }} label="知识范围" />}
         action={<button className="primary-button header-action" type="button"><Plus size={16} /><span>新建知识</span></button>}
         contextOpen={contextOpen}
         onOpenNavigation={onOpenNavigation}
@@ -27,7 +33,7 @@ export function KnowledgeScreen({ contextOpen, onOpenNavigation, onToggleContext
       />
       <section className="workspace-layout">
         <aside className="workspace-list-panel">
-          <div className="workspace-panel-title"><div><h1>知识</h1><p>{visibleItems.length} 条内容</p></div><button className="icon-button" type="button"><MoreHorizontal size={17} /></button></div>
+          <div className="workspace-panel-title"><div><h1>知识库</h1><p>{visibleItems.length} 条内容</p></div><button className="icon-button" type="button"><MoreHorizontal size={17} /></button></div>
           <label className="search-field"><Search size={16} /><input aria-label="搜索知识" placeholder="搜索标题、正文或标签" /></label>
           <div className="item-list">
             {visibleItems.map((item) => (
