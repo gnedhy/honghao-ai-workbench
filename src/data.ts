@@ -34,6 +34,12 @@ export const skills = [
   { title: "知识沉淀建议", version: "v0.2", status: "草稿", description: "从任务结果中提出个人知识候选。", runs: 3 },
 ];
 
+export const workflows = [
+  { title: "AI 需求诊断", version: "v1.0", status: "已发布", description: "从材料接收、知识检索到人工确认的完整诊断流程。", runs: 18, updated: "今天 10:14", owner: "AI 项目组", steps: ["接收材料", "数据边界检查", "检索知识", "调用需求诊断", "人工确认 ChangeSet"] },
+  { title: "部门访谈整理", version: "v0.6", status: "测试中", description: "把访谈转写整理为事实、判断、缺口和待确认事项。", runs: 7, updated: "昨天 17:32", owner: "需求治理组", steps: ["接收转写", "敏感信息检查", "提取访谈事实", "生成结构化纪要", "负责人确认"] },
+  { title: "个人知识沉淀", version: "v0.3", status: "草稿", description: "从已完成任务中提取个人知识候选，并保留来源。", runs: 3, updated: "8 月 15 日", owner: "知识治理组", steps: ["选择任务结果", "提取知识候选", "来源与重复检查", "个人确认入库"] },
+];
+
 export const tasks = [
   { title: "跨部门 AI 需求诊断", status: "等待确认", owner: "张伟", updated: "刚刚", progress: "4 / 5" },
   { title: "客服知识库优化", status: "运行中", owner: "张伟", updated: "12 分钟前", progress: "2 / 4" },

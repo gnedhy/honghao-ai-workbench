@@ -19,6 +19,17 @@ export type SkillItem = {
   runs: number;
 };
 
+export type WorkflowItem = {
+  title: string;
+  version: string;
+  status: string;
+  description: string;
+  runs: number;
+  updated: string;
+  owner: string;
+  steps: string[];
+};
+
 export type TaskItem = {
   title: string;
   status: string;

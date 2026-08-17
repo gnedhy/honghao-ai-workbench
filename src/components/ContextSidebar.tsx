@@ -19,18 +19,21 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { useState } from "react";
-import type { KnowledgeItem, Section, SkillItem, TaskItem } from "../types";
+import type { KnowledgeItem, Section, SkillItem, TaskItem, WorkflowItem } from "../types";
 
 type ContextSidebarProps = {
   section: Section;
   conversationTitle: string;
   conversationMode: "聊天" | "工作";
   conversationView: "new" | "existing";
+  automationTab: "技能" | "工作流";
   open: boolean;
+  closing: boolean;
   onClose: () => void;
   onReturnChat: () => void;
   knowledgeItem: KnowledgeItem;
   skill: SkillItem;
+  workflow: WorkflowItem;
   task: TaskItem;
 };
 
@@ -41,11 +44,14 @@ export function ContextSidebar({
   conversationTitle,
   conversationMode,
   conversationView,
+  automationTab,
   open,
+  closing,
   onClose,
   onReturnChat,
   knowledgeItem,
   skill,
+  workflow,
   task,
 }: ContextSidebarProps) {
   const [knowledgeScope, setKnowledgeScope] = useState("个人与公共知识");
@@ -53,14 +59,14 @@ export function ContextSidebar({
   const [taskPaused, setTaskPaused] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
 
-  const panelTitle = section === "chat" ? (conversationMode === "聊天" ? "对话上下文" : "执行控制") : section === "knowledge" ? "文档工具" : section === "automation" ? "技能工具" : "任务详情";
-  const panelSubtitle = section === "chat" ? conversationTitle : section === "knowledge" ? knowledgeItem.title : section === "automation" ? skill.title : task.title;
+  const panelTitle = section === "chat" ? (conversationMode === "聊天" ? "对话上下文" : "执行控制") : section === "knowledge" ? "文档工具" : section === "automation" ? (automationTab === "技能" ? "技能工具" : "工作流工具") : "任务详情";
+  const panelSubtitle = section === "chat" ? conversationTitle : section === "knowledge" ? knowledgeItem.title : section === "automation" ? (automationTab === "技能" ? skill.title : workflow.title) : task.title;
   const showFeedback = (message: string) => setFeedback({ section, message });
 
   return (
     <>
-      {open && <button className="context-backdrop" type="button" aria-label="关闭右侧工具栏" onClick={onClose} />}
-      <aside className={open ? "context-sidebar is-open" : "context-sidebar"} aria-hidden={!open}>
+      {open && <button className={closing ? "context-backdrop is-closing" : "context-backdrop"} type="button" aria-label="关闭右侧工具栏" onClick={onClose} />}
+      <aside className={`context-sidebar${open ? " is-open" : ""}${closing ? " is-closing" : ""}`} aria-hidden={!open}>
         <header className="context-sidebar__header">
           <div><span>{panelTitle}</span><strong>{panelSubtitle}</strong></div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="收起右侧工具栏"><PanelRightClose size={18} /></button>
@@ -129,18 +135,20 @@ export function ContextSidebar({
           )}
 
           {section === "automation" && (
-            <>
-              <ToolSection title="版本操作">
+            automationTab === "技能" ? <>
+              <ToolSection title="技能操作">
                 <button className="tool-action" type="button" onClick={() => showFeedback("测试通过：已生成样本输出，未触发写入。")}><TestTube2 size={16} /><span><strong>运行测试</strong><small>使用当前样本输入</small></span></button>
                 <button className="tool-action" type="button" onClick={() => showFeedback(`已从 ${skill.version} 创建草稿版本。`)}><GitBranch size={16} /><span><strong>创建新版本</strong><small>从当前版本复制</small></span></button>
                 <button className="tool-action" type="button" onClick={() => showFeedback("发布检查已启动，需要代码与数据审查通过。")}><Rocket size={16} /><span><strong>提交发布检查</strong><small>进入审查流程</small></span></button>
               </ToolSection>
-              <ToolSection title="当前版本">
-                <PropertyRow icon={<WandSparkles size={16} />} label="版本" value={skill.version} />
-                <PropertyRow icon={<CheckCircle2 size={16} />} label="状态" value={skill.status} />
-                <PropertyRow icon={<History size={16} />} label="运行" value={`${skill.runs} 次`} />
-                <PropertyRow icon={<ShieldCheck size={16} />} label="发布范围" value="AI 团队" />
+              <ToolSection title="当前版本"><PropertyRow icon={<WandSparkles size={16} />} label="版本" value={skill.version} /><PropertyRow icon={<CheckCircle2 size={16} />} label="状态" value={skill.status} /><PropertyRow icon={<History size={16} />} label="运行" value={`${skill.runs} 次`} /><PropertyRow icon={<ShieldCheck size={16} />} label="发布范围" value="AI 团队" /></ToolSection>
+            </> : <>
+              <ToolSection title="运行设置">
+                <button className="tool-action" type="button" onClick={() => showFeedback("已创建一次受控试运行，等待输入材料。")}><Play size={16} /><span><strong>试运行工作流</strong><small>使用隔离样本，不产生写入</small></span></button>
+                <button className="tool-action" type="button" onClick={() => showFeedback(`已从 ${workflow.version} 创建工作流草稿。`)}><GitBranch size={16} /><span><strong>创建新版本</strong><small>复制当前步骤与权限</small></span></button>
+                <button className="tool-action" type="button" onClick={() => showFeedback("工作流发布检查已启动。")}><Rocket size={16} /><span><strong>提交发布检查</strong><small>逐步检查技能、权限与人工节点</small></span></button>
               </ToolSection>
+              <ToolSection title="流程信息"><PropertyRow icon={<GitBranch size={16} />} label="版本" value={workflow.version} /><PropertyRow icon={<CheckCircle2 size={16} />} label="状态" value={workflow.status} /><PropertyRow icon={<History size={16} />} label="步骤" value={`${workflow.steps.length} 个`} /><PropertyRow icon={<ShieldCheck size={16} />} label="写入方式" value="ChangeSet" /></ToolSection>
             </>
           )}
 
