@@ -39,11 +39,17 @@ export function TopBar({
       <div className="screen-header__tabs">{tabs}</div>
       <div className="screen-header__actions">
         {action}
-        {!contextOpen && (
-          <button className="icon-button context-toggle" type="button" onClick={onToggleContext} aria-label="打开右侧工具栏" aria-expanded={false}>
-            <PanelRightOpen size={18} />
-          </button>
-        )}
+        <button
+          className={`icon-button context-toggle${contextOpen ? " is-context-open" : ""}`}
+          type="button"
+          onClick={onToggleContext}
+          aria-label="打开右侧工具栏"
+          aria-expanded={contextOpen}
+          aria-hidden={contextOpen}
+          tabIndex={contextOpen ? -1 : 0}
+        >
+          <PanelRightOpen size={18} />
+        </button>
       </div>
     </header>
   );
