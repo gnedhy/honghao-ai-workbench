@@ -16,6 +16,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
+import userAvatar from "../assets/avatar-zhang-wei-v1.png";
 import { pinnedConversations, recentConversations } from "../data";
 import type { Section } from "../types";
 
@@ -60,11 +61,9 @@ export function Sidebar({
       <aside className={`${mobileOpen ? "sidebar is-mobile-open" : "sidebar"}${collapsed ? " is-collapsed" : ""}`}>
         <div className="sidebar__brand">
           <button className="brand-button" type="button" aria-label="切换工作空间" title={collapsed ? "宏昊 AI" : undefined}>
-            <span className="brand-mark" aria-hidden="true">
-              <span /><span /><span /><span />
-            </span>
+            <BrandMark />
             <span className="brand-button__label">宏昊 AI</span>
-            <ChevronDown size={14} />
+            <ChevronDown className="brand-button__chevron" size={14} />
           </button>
           <div className="sidebar__brand-actions">
             <button className="icon-button sidebar__search" type="button" aria-label="搜索"><Search size={18} /></button>
@@ -116,6 +115,10 @@ export function Sidebar({
           </SidebarGroup>
         </div>
 
+        <button className="icon-button sidebar__expand-control" type="button" aria-label="展开导航" onClick={onCollapsedToggle} title="展开导航">
+          <PanelLeftOpen size={18} />
+        </button>
+
         <div className="profile-area">
           {profileOpen && (
             <div className="profile-menu" role="menu">
@@ -127,13 +130,25 @@ export function Sidebar({
             </div>
           )}
           <button className="profile-trigger" type="button" onClick={onProfileToggle} aria-expanded={profileOpen} title={collapsed ? "张伟 · AI 项目负责人" : undefined}>
-            <span className="avatar">张</span>
+            <span className="avatar"><img src={userAvatar} alt="张伟的虚拟头像" /></span>
             <span className="profile-trigger__copy"><strong>张伟</strong><small>AI 项目负责人</small></span>
             <ChevronDown size={15} />
           </button>
         </div>
       </aside>
     </>
+  );
+}
+
+function BrandMark() {
+  return (
+    <span className="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 28 28" role="presentation">
+        <rect x="1" y="1" width="26" height="26" rx="8" />
+        <path d="M8.5 8.2v11.6M19.5 8.2v11.6M8.5 14h11" />
+        <circle cx="14" cy="14" r="2.15" />
+      </svg>
+    </span>
   );
 }
 

@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
   Database,
   Download,
   FileText,
@@ -66,7 +67,10 @@ export function ContextSidebar({
               <ToolSection title="执行设置">
                 <ToolSelect icon={<Database size={16} />} label="知识范围" value={knowledgeScope} onChange={setKnowledgeScope} options={["个人与公共知识", "仅个人知识", "仅本次附件"]} />
                 <ToolSelect icon={<WandSparkles size={16} />} label="执行模型" value={model} onChange={setModel} options={["宏昊企业模型", "通用模型", "轻量模型"]} />
-                <div className="tool-property"><FolderLock size={16} /><span><small>工作目录</small><strong>受控项目目录</strong></span><CheckCircle2 size={15} className="tool-property__ok" /></div>
+                <div className="tool-setting">
+                  <span className="tool-setting__label"><FolderLock size={16} /><small>工作目录</small></span>
+                  <span className="tool-setting__value"><strong>受控项目目录</strong><span><CheckCircle2 size={14} />已授权</span></span>
+                </div>
               </ToolSection>
               <ToolSection title="任务控制">
                 <button className="tool-action" type="button" onClick={() => { setTaskPaused((paused) => !paused); showFeedback(taskPaused ? "任务已继续执行。" : "任务已暂停，可随时继续。"); }}>
@@ -138,7 +142,15 @@ function ToolSection({ title, children }: { title: string; children: React.React
 }
 
 function ToolSelect({ icon, label, value, options, onChange }: { icon: React.ReactNode; label: string; value: string; options: string[]; onChange: (value: string) => void }) {
-  return <label className="tool-select">{icon}<span><small>{label}</small><select value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option}>{option}</option>)}</select></span></label>;
+  return (
+    <label className="tool-select">
+      <span className="tool-select__label">{icon}<small>{label}</small></span>
+      <span className="tool-select__control">
+        <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option}>{option}</option>)}</select>
+        <ChevronDown size={15} />
+      </span>
+    </label>
+  );
 }
 
 function PropertyRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {

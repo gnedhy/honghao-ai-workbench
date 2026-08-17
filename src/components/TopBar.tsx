@@ -1,4 +1,4 @@
-import { Menu, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Menu, PanelRightOpen } from "lucide-react";
 import type { ReactNode } from "react";
 
 export type ScreenChromeProps = {
@@ -37,15 +37,11 @@ export function TopBar({
       <div className="screen-header__tabs">{tabs}</div>
       <div className="screen-header__actions">
         {action}
-        <button
-          className={contextOpen ? "icon-button context-toggle is-active" : "icon-button context-toggle"}
-          type="button"
-          onClick={onToggleContext}
-          aria-label={contextOpen ? "收起右侧工具栏" : "打开右侧工具栏"}
-          aria-expanded={contextOpen}
-        >
-          {contextOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
-        </button>
+        {!contextOpen && (
+          <button className="icon-button context-toggle" type="button" onClick={onToggleContext} aria-label="打开右侧工具栏" aria-expanded={false}>
+            <PanelRightOpen size={18} />
+          </button>
+        )}
       </div>
     </header>
   );
