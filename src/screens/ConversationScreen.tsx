@@ -53,13 +53,12 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
       ) : (
         <section className="work-thread">
           <div className="work-thread__messages">
-            <div className="message-row message-row--user">
-              <span className="avatar avatar--blue">张</span>
-              <div className="message-bubble">请根据访谈材料整理 AI 需求诊断卡，并生成项目卡草案。</div>
+            <div className="chat-turn chat-turn--user">
+              <p>请根据访谈材料整理 AI 需求诊断卡，并生成项目卡草案。</p>
             </div>
 
-            <div className="message-row message-row--assistant">
-              <span className="assistant-avatar"><Sparkles size={16} /></span>
+            <div className="work-tool-event"><Sparkles size={14} /><span>已调用需求诊断技能与工作流</span></div>
+            <div className="work-turn">
               <div className="assistant-response">
                 <p>好的，我已基于访谈材料与企业知识进行分析，正在按流程执行需求诊断。完成后会生成需求诊断卡（草案），并准备项目卡草案。等你的确认。</p>
                 <div className="run-summary">
@@ -116,7 +115,7 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
                     <button className="secondary-button" type="button" onClick={() => setApproval("pending")}>恢复待确认</button>
                   )}
                 </div>
-                </article>
+              </article>
               </div>
             </div>
           </div>
