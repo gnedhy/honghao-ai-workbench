@@ -1,13 +1,17 @@
-import { CheckCircle2, ChevronRight, MoreHorizontal, Play, Plus, Search, WandSparkles, Workflow } from "lucide-react";
+import { ChevronRight, MoreHorizontal, Play, Plus, Search, WandSparkles, Workflow } from "lucide-react";
 import { useState } from "react";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { TopBar, type ScreenChromeProps } from "../components/TopBar";
 import { skills } from "../data";
+import type { SkillItem } from "../types";
 
-export function AutomationScreen({ contextOpen, onOpenNavigation, onToggleContext }: ScreenChromeProps) {
+type AutomationScreenProps = ScreenChromeProps & {
+  selectedSkill: SkillItem;
+  onSelectedSkillChange: (skill: SkillItem) => void;
+};
+
+export function AutomationScreen({ contextOpen, onOpenNavigation, onToggleContext, selectedSkill, onSelectedSkillChange }: AutomationScreenProps) {
   const [tab, setTab] = useState<"Skills" | "Workflows">("Skills");
-  const [selectedSkill, setSelectedSkill] = useState(skills[0]);
-  const [testResult, setTestResult] = useState("");
 
   return (
     <main className="app-main">
@@ -27,7 +31,7 @@ export function AutomationScreen({ contextOpen, onOpenNavigation, onToggleContex
             <label className="search-field"><Search size={16} /><input aria-label="搜索 Skill" placeholder="搜索 Skill" /></label>
             <div className="item-list">
               {skills.map((skill) => (
-                <button className={selectedSkill.title === skill.title ? "list-item is-active" : "list-item"} type="button" key={skill.title} onClick={() => { setSelectedSkill(skill); setTestResult(""); }}>
+                <button className={selectedSkill.title === skill.title ? "list-item is-active" : "list-item"} type="button" key={skill.title} onClick={() => onSelectedSkillChange(skill)}>
                   <WandSparkles size={17} />
                   <span><strong>{skill.title}</strong><small>{skill.version} · {skill.status} · {skill.runs} 次运行</small></span>
                   <ChevronRight size={15} />
@@ -41,9 +45,7 @@ export function AutomationScreen({ contextOpen, onOpenNavigation, onToggleContex
               <h1>{selectedSkill.title}</h1>
               <p>{selectedSkill.description}</p>
             </div>
-            <dl className="metadata-grid"><div><dt>当前版本</dt><dd>{selectedSkill.version}</dd></div><div><dt>运行次数</dt><dd>{selectedSkill.runs}</dd></div><div><dt>最近更新</dt><dd>今天 09:40</dd></div><div><dt>发布范围</dt><dd>AI 团队</dd></div></dl>
             <section className="skill-section"><h2>输入与输出</h2><div className="code-surface"><code>输入：访谈记录、需求描述、会议纪要</code><code>输出：需求诊断卡、风险与下一步验证</code></div></section>
-            <section className="skill-section"><div className="section-title-row"><h2>测试运行</h2><button className="primary-button" type="button" onClick={() => setTestResult("测试通过：已生成 1 张诊断卡，未触发写入。") }><Play size={15} />运行测试</button></div><textarea aria-label="测试输入" defaultValue="整理这份跨部门访谈材料，识别可验证的 AI 需求。" />{testResult && <p className="success-message"><CheckCircle2 size={16} />{testResult}</p>}</section>
           </article>
         </section>
       ) : (

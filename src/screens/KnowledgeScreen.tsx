@@ -1,21 +1,25 @@
-import { BookOpen, FileText, MoreHorizontal, Plus, Search, ShieldCheck, UserRound } from "lucide-react";
+import { BookOpen, FileText, MoreHorizontal, Plus, Search } from "lucide-react";
 import { useState } from "react";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { TopBar, type ScreenChromeProps } from "../components/TopBar";
 import { knowledgeItems } from "../data";
 
-export function KnowledgeScreen({ contextOpen, onOpenNavigation, onToggleContext }: ScreenChromeProps) {
+type KnowledgeScreenProps = ScreenChromeProps & {
+  selectedTitle: string;
+  onSelectedTitleChange: (title: string) => void;
+};
+
+export function KnowledgeScreen({ contextOpen, onOpenNavigation, onToggleContext, selectedTitle, onSelectedTitleChange }: KnowledgeScreenProps) {
   const [scope, setScope] = useState<"个人知识" | "公共知识">("个人知识");
-  const [selected, setSelected] = useState(knowledgeItems[0].title);
   const visibleItems = knowledgeItems.filter((item) => item.scope === scope);
-  const activeItem = knowledgeItems.find((item) => item.title === selected) ?? visibleItems[0];
+  const activeItem = knowledgeItems.find((item) => item.title === selectedTitle) ?? visibleItems[0];
 
   return (
     <main className="app-main">
       <TopBar
         title="知识"
         subtitle={`${visibleItems.length} 条内容`}
-        tabs={<SegmentedControl value={scope} options={["个人知识", "公共知识"] as const} onChange={(value) => { setScope(value); setSelected(knowledgeItems.find((item) => item.scope === value)?.title ?? ""); }} label="知识范围" />}
+        tabs={<SegmentedControl value={scope} options={["个人知识", "公共知识"] as const} onChange={(value) => { setScope(value); onSelectedTitleChange(knowledgeItems.find((item) => item.scope === value)?.title ?? ""); }} label="知识范围" />}
         action={<button className="primary-button header-action" type="button"><Plus size={16} /><span>新建知识</span></button>}
         contextOpen={contextOpen}
         onOpenNavigation={onOpenNavigation}
@@ -27,7 +31,7 @@ export function KnowledgeScreen({ contextOpen, onOpenNavigation, onToggleContext
           <label className="search-field"><Search size={16} /><input aria-label="搜索知识" placeholder="搜索标题、正文或标签" /></label>
           <div className="item-list">
             {visibleItems.map((item) => (
-              <button className={activeItem?.title === item.title ? "list-item is-active" : "list-item"} type="button" key={item.title} onClick={() => setSelected(item.title)}>
+              <button className={activeItem?.title === item.title ? "list-item is-active" : "list-item"} type="button" key={item.title} onClick={() => onSelectedTitleChange(item.title)}>
                 <FileText size={17} />
                 <span><strong>{item.title}</strong><small>{item.updated} · {item.tags.join(" / ")}</small></span>
               </button>
@@ -35,10 +39,6 @@ export function KnowledgeScreen({ contextOpen, onOpenNavigation, onToggleContext
           </div>
         </aside>
         <article className="document-editor">
-          <div className="document-editor__topline">
-            <span>{scope === "个人知识" ? <UserRound size={16} /> : <ShieldCheck size={16} />}{scope}</span>
-            <div><button className="secondary-button" type="button">导出 Markdown</button><button className="icon-button" type="button"><MoreHorizontal size={17} /></button></div>
-          </div>
           <h1>{activeItem?.title}</h1>
           <p className="document-meta">最后更新：{activeItem?.updated} · 来源可追溯 · Markdown 正文</p>
           <div className="document-body">

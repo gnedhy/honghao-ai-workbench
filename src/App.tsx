@@ -2,6 +2,7 @@ import { Check, ChevronRight, ShieldCheck, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ContextSidebar } from "./components/ContextSidebar";
 import { Sidebar } from "./components/Sidebar";
+import { knowledgeItems, skills, tasks } from "./data";
 import { AutomationScreen } from "./screens/AutomationScreen";
 import { ConversationScreen } from "./screens/ConversationScreen";
 import { KnowledgeScreen } from "./screens/KnowledgeScreen";
@@ -12,8 +13,12 @@ function App() {
   const [section, setSection] = useState<Section>("chat");
   const [profileOpen, setProfileOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [contextOpen, setContextOpen] = useState(() => window.matchMedia("(min-width: 1180px)").matches);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedKnowledgeTitle, setSelectedKnowledgeTitle] = useState(knowledgeItems[0].title);
+  const [selectedSkill, setSelectedSkill] = useState(skills[0]);
+  const [selectedTask, setSelectedTask] = useState(tasks[0]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -51,8 +56,10 @@ function App() {
     onToggleContext: toggleContext,
   };
 
+  const shellClasses = ["app-shell", contextOpen && "has-context", leftCollapsed && "is-left-collapsed"].filter(Boolean).join(" ");
+
   return (
-    <div className={contextOpen ? "app-shell has-context" : "app-shell"}>
+    <div className={shellClasses}>
       <Sidebar
         activeSection={section}
         onSectionChange={(nextSection) => { setSection(nextSection); setProfileOpen(false); setMobileOpen(false); }}
@@ -60,17 +67,23 @@ function App() {
         onProfileToggle={() => setProfileOpen((open) => !open)}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
+        collapsed={leftCollapsed}
+        onCollapsedToggle={() => setLeftCollapsed((collapsed) => !collapsed)}
         onOpenSettings={() => { setProfileOpen(false); setSettingsOpen(true); }}
       />
-      {section === "chat" && <ConversationScreen {...screenChrome} onOpenTasks={() => setSection("tasks")} />}
-      {section === "knowledge" && <KnowledgeScreen {...screenChrome} />}
-      {section === "automation" && <AutomationScreen {...screenChrome} />}
-      {section === "tasks" && <TaskBoardScreen {...screenChrome} />}
+      {section === "chat" && <ConversationScreen {...screenChrome} />}
+      {section === "knowledge" && <KnowledgeScreen {...screenChrome} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
+      {section === "automation" && <AutomationScreen {...screenChrome} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} />}
+      {section === "tasks" && <TaskBoardScreen {...screenChrome} selectedTask={selectedTask} onSelectedTaskChange={setSelectedTask} />}
       <ContextSidebar
         section={section}
         open={contextOpen}
         onClose={() => setContextOpen(false)}
         onOpenTasks={() => { setSection("tasks"); setMobileOpen(false); }}
+        onReturnChat={() => { setSection("chat"); setMobileOpen(false); }}
+        knowledgeItem={knowledgeItems.find((item) => item.title === selectedKnowledgeTitle) ?? knowledgeItems[0]}
+        skill={selectedSkill}
+        task={selectedTask}
       />
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
     </div>

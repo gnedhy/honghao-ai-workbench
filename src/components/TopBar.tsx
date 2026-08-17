@@ -41,7 +41,7 @@ export function TopBar({
           className={contextOpen ? "icon-button context-toggle is-active" : "icon-button context-toggle"}
           type="button"
           onClick={onToggleContext}
-          aria-label={contextOpen ? "收起上下文栏" : "打开上下文栏"}
+          aria-label={contextOpen ? "收起右侧工具栏" : "打开右侧工具栏"}
           aria-expanded={contextOpen}
         >
           {contextOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}

@@ -1,178 +1,146 @@
 import {
-  Bot,
+  ArrowLeft,
   CheckCircle2,
-  Clock3,
   Database,
+  Download,
   FileText,
+  FolderLock,
+  GitBranch,
   History,
   PanelRightClose,
+  Pause,
+  Play,
+  Rocket,
   ShieldCheck,
+  Tags,
+  TestTube2,
   WandSparkles,
-  Workflow,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
-import type { Section } from "../types";
+import { useState } from "react";
+import type { KnowledgeItem, Section, SkillItem, TaskItem } from "../types";
 
 type ContextSidebarProps = {
   section: Section;
   open: boolean;
   onClose: () => void;
   onOpenTasks: () => void;
+  onReturnChat: () => void;
+  knowledgeItem: KnowledgeItem;
+  skill: SkillItem;
+  task: TaskItem;
 };
 
-type ContextData = {
-  title: string;
-  subtitle: string;
-  status: string;
-  statusTone: "active" | "ready" | "waiting";
-  groups: Array<{
-    label: string;
-    items: Array<{ icon: LucideIcon; title: string; detail: string }>;
-  }>;
-};
+type Feedback = { section: Section; message: string } | null;
 
-const contextBySection: Record<Section, ContextData> = {
-  chat: {
-    title: "任务上下文",
-    subtitle: "跨部门 AI 需求诊断",
-    status: "等待确认",
-    statusTone: "waiting",
-    groups: [
-      {
-        label: "本次运行",
-        items: [
-          { icon: Clock3, title: "RUN-003 · 4/5", detail: "停在 ChangeSet 审批节点" },
-          { icon: Bot, title: "企业模型", detail: "工作模式 · 受控执行" },
-        ],
-      },
-      {
-        label: "已使用资源",
-        items: [
-          { icon: Database, title: "知识范围", detail: "个人 3 条 · 公共 15 条" },
-          { icon: WandSparkles, title: "需求诊断 Skill", detail: "v1.0 · 已校验" },
-          { icon: Workflow, title: "需求诊断 Workflow", detail: "v1.0 · 人工审批" },
-        ],
-      },
-      {
-        label: "安全边界",
-        items: [
-          { icon: ShieldCheck, title: "受控工作目录", detail: "写入前必须再次确认" },
-        ],
-      },
-    ],
-  },
-  knowledge: {
-    title: "知识上下文",
-    subtitle: "个人知识库",
-    status: "可编辑",
-    statusTone: "ready",
-    groups: [
-      {
-        label: "当前文档",
-        items: [
-          { icon: FileText, title: "需求诊断方法", detail: "Markdown · 今天 09:40" },
-          { icon: History, title: "版本与来源", detail: "来源可追溯 · 尚未发布" },
-        ],
-      },
-      {
-        label: "访问边界",
-        items: [
-          { icon: Database, title: "个人知识", detail: "仅本人和授权智能体可见" },
-          { icon: ShieldCheck, title: "公共发布", detail: "需独立发布确认" },
-        ],
-      },
-    ],
-  },
-  automation: {
-    title: "自动化上下文",
-    subtitle: "需求诊断 Skill",
-    status: "已发布",
-    statusTone: "ready",
-    groups: [
-      {
-        label: "当前版本",
-        items: [
-          { icon: WandSparkles, title: "Skill v1.0", detail: "AI 团队 · 今天 09:40" },
-          { icon: CheckCircle2, title: "测试状态", detail: "最近测试通过 · 无写入" },
-        ],
-      },
-      {
-        label: "执行关系",
-        items: [
-          { icon: Workflow, title: "需求诊断 Workflow", detail: "人工确认后才可写入" },
-          { icon: ShieldCheck, title: "代码与数据审查", detail: "发布前检查已启用" },
-        ],
-      },
-    ],
-  },
-  tasks: {
-    title: "任务上下文",
-    subtitle: "跨部门 AI 需求诊断",
-    status: "等待确认",
-    statusTone: "waiting",
-    groups: [
-      {
-        label: "任务状态",
-        items: [
-          { icon: Clock3, title: "TASK-20250520-001", detail: "当前运行 RUN-003" },
-          { icon: WandSparkles, title: "需求诊断 v1.0", detail: "检查点：等待 ChangeSet" },
-        ],
-      },
-      {
-        label: "关联信息",
-        items: [
-          { icon: Bot, title: "来源会话", detail: "跨部门 AI 需求诊断" },
-          { icon: ShieldCheck, title: "工作目录", detail: "受控目录 · 未发生写入" },
-        ],
-      },
-    ],
-  },
-};
+export function ContextSidebar({
+  section,
+  open,
+  onClose,
+  onOpenTasks,
+  onReturnChat,
+  knowledgeItem,
+  skill,
+  task,
+}: ContextSidebarProps) {
+  const [knowledgeScope, setKnowledgeScope] = useState("个人与公共知识");
+  const [model, setModel] = useState("宏昊企业模型");
+  const [taskPaused, setTaskPaused] = useState(false);
+  const [feedback, setFeedback] = useState<Feedback>(null);
 
-export function ContextSidebar({ section, open, onClose, onOpenTasks }: ContextSidebarProps) {
-  const context = contextBySection[section];
+  const panelTitle = section === "chat" ? "工作设置" : section === "knowledge" ? "文档工具" : section === "automation" ? "Skill 工具" : "任务详情";
+  const panelSubtitle = section === "chat" ? "跨部门 AI 需求诊断" : section === "knowledge" ? knowledgeItem.title : section === "automation" ? skill.title : task.title;
+  const showFeedback = (message: string) => setFeedback({ section, message });
 
   return (
     <>
-      {open && <button className="context-backdrop" type="button" aria-label="关闭上下文栏" onClick={onClose} />}
+      {open && <button className="context-backdrop" type="button" aria-label="关闭右侧工具栏" onClick={onClose} />}
       <aside className={open ? "context-sidebar is-open" : "context-sidebar"} aria-hidden={!open}>
         <header className="context-sidebar__header">
-          <div>
-            <span>{context.title}</span>
-            <strong>{context.subtitle}</strong>
-          </div>
-          <button className="icon-button" type="button" onClick={onClose} aria-label="收起上下文栏">
-            <PanelRightClose size={18} />
-          </button>
+          <div><span>{panelTitle}</span><strong>{panelSubtitle}</strong></div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="收起右侧工具栏"><PanelRightClose size={18} /></button>
         </header>
 
         <div className="context-sidebar__body">
-          <div className="context-status">
-            <span className={`context-status__dot context-status__dot--${context.statusTone}`} />
-            <div><span>当前状态</span><strong>{context.status}</strong></div>
-          </div>
+          {section === "chat" && (
+            <>
+              <ToolSection title="执行设置">
+                <ToolSelect icon={<Database size={16} />} label="知识范围" value={knowledgeScope} onChange={setKnowledgeScope} options={["个人与公共知识", "仅个人知识", "仅本次附件"]} />
+                <ToolSelect icon={<WandSparkles size={16} />} label="执行模型" value={model} onChange={setModel} options={["宏昊企业模型", "通用模型", "轻量模型"]} />
+                <div className="tool-property"><FolderLock size={16} /><span><small>工作目录</small><strong>受控项目目录</strong></span><CheckCircle2 size={15} className="tool-property__ok" /></div>
+              </ToolSection>
+              <ToolSection title="任务控制">
+                <button className="tool-action" type="button" onClick={() => { setTaskPaused((paused) => !paused); showFeedback(taskPaused ? "任务已继续执行。" : "任务已暂停，可随时继续。"); }}>
+                  {taskPaused ? <Play size={16} /> : <Pause size={16} />}<span><strong>{taskPaused ? "继续任务" : "暂停任务"}</strong><small>保留当前检查点</small></span>
+                </button>
+                <button className="tool-action" type="button" onClick={onOpenTasks}><History size={16} /><span><strong>打开任务看板</strong><small>查看运行与审批记录</small></span></button>
+              </ToolSection>
+              <div className="tool-safety-note"><ShieldCheck size={16} /><p>任何文件写入都会先生成 ChangeSet，并等待你的确认。</p></div>
+            </>
+          )}
 
-          {context.groups.map((group) => (
-            <section className="context-group" key={group.label}>
-              <h2>{group.label}</h2>
-              <div>
-                {group.items.map(({ icon: Icon, title, detail }) => (
-                  <div className="context-row" key={title}>
-                    <Icon size={16} strokeWidth={1.7} />
-                    <span><strong>{title}</strong><small>{detail}</small></span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          ))}
+          {section === "knowledge" && (
+            <>
+              <ToolSection title="文档操作">
+                <button className="tool-action" type="button" onClick={() => showFeedback("Markdown 导出已准备。原型阶段不会写入本地文件。")}><Download size={16} /><span><strong>导出 Markdown</strong><small>保留正文与来源信息</small></span></button>
+                <button className="tool-action" type="button" onClick={() => showFeedback("已生成公共知识候选，等待独立发布确认。")}><Rocket size={16} /><span><strong>提交公共知识候选</strong><small>不会直接发布</small></span></button>
+              </ToolSection>
+              <ToolSection title="文档属性">
+                <PropertyRow icon={<FileText size={16} />} label="空间" value={knowledgeItem.scope} />
+                <PropertyRow icon={<History size={16} />} label="最后更新" value={knowledgeItem.updated} />
+                <PropertyRow icon={<Tags size={16} />} label="标签" value={knowledgeItem.tags.join("、")} />
+                <PropertyRow icon={<ShieldCheck size={16} />} label="来源" value="可追溯" />
+              </ToolSection>
+            </>
+          )}
+
+          {section === "automation" && (
+            <>
+              <ToolSection title="版本操作">
+                <button className="tool-action" type="button" onClick={() => showFeedback("测试通过：已生成样本输出，未触发写入。")}><TestTube2 size={16} /><span><strong>运行测试</strong><small>使用当前样本输入</small></span></button>
+                <button className="tool-action" type="button" onClick={() => showFeedback(`已从 ${skill.version} 创建草稿版本。`)}><GitBranch size={16} /><span><strong>创建新版本</strong><small>从当前版本复制</small></span></button>
+                <button className="tool-action" type="button" onClick={() => showFeedback("发布检查已启动，需要代码与数据审查通过。")}><Rocket size={16} /><span><strong>提交发布检查</strong><small>进入审查流程</small></span></button>
+              </ToolSection>
+              <ToolSection title="当前版本">
+                <PropertyRow icon={<WandSparkles size={16} />} label="版本" value={skill.version} />
+                <PropertyRow icon={<CheckCircle2 size={16} />} label="状态" value={skill.status} />
+                <PropertyRow icon={<History size={16} />} label="运行" value={`${skill.runs} 次`} />
+                <PropertyRow icon={<ShieldCheck size={16} />} label="发布范围" value="AI 团队" />
+              </ToolSection>
+            </>
+          )}
+
+          {section === "tasks" && (
+            <>
+              <ToolSection title="执行详情">
+                <PropertyRow icon={<History size={16} />} label="当前运行" value="RUN-003" />
+                <PropertyRow icon={<WandSparkles size={16} />} label="使用 Skill" value="需求诊断 v1.0" />
+                <PropertyRow icon={<CheckCircle2 size={16} />} label="检查点" value={task.status} />
+                <PropertyRow icon={<FolderLock size={16} />} label="工作目录" value="受控目录" />
+              </ToolSection>
+              <ToolSection title="任务操作">
+                <button className="tool-action" type="button" onClick={onReturnChat}><ArrowLeft size={16} /><span><strong>返回来源会话</strong><small>{task.title}</small></span></button>
+                <button className="tool-action" type="button" onClick={() => { setTaskPaused((paused) => !paused); showFeedback(taskPaused ? "任务已恢复。" : "任务已暂停在当前检查点。"); }}>
+                  {taskPaused ? <Play size={16} /> : <Pause size={16} />}<span><strong>{taskPaused ? "恢复任务" : "暂停任务"}</strong><small>不会丢失当前进度</small></span>
+                </button>
+              </ToolSection>
+            </>
+          )}
+
+          {feedback?.section === section && <p className="tool-feedback"><CheckCircle2 size={15} />{feedback.message}</p>}
         </div>
-
-        <footer className="context-sidebar__footer">
-          <button className="secondary-button" type="button" onClick={onOpenTasks}>
-            <History size={16} />查看任务与运行记录
-          </button>
-        </footer>
       </aside>
     </>
   );
+}
+
+function ToolSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return <section className="tool-section"><h2>{title}</h2><div>{children}</div></section>;
+}
+
+function ToolSelect({ icon, label, value, options, onChange }: { icon: React.ReactNode; label: string; value: string; options: string[]; onChange: (value: string) => void }) {
+  return <label className="tool-select">{icon}<span><small>{label}</small><select value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option}>{option}</option>)}</select></span></label>;
+}
+
+function PropertyRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return <div className="tool-property">{icon}<span><small>{label}</small><strong>{value}</strong></span></div>;
 }

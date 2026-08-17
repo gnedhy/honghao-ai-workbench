@@ -1,4 +1,4 @@
-import { Check, Circle, ExternalLink, Info, MoreHorizontal, Sparkles } from "lucide-react";
+import { Check, Circle, Info, MoreHorizontal, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { Composer } from "../components/Composer";
 import { SegmentedControl } from "../components/SegmentedControl";
@@ -6,9 +6,7 @@ import { TopBar, type ScreenChromeProps } from "../components/TopBar";
 import { runSteps } from "../data";
 import type { WorkApproval } from "../types";
 
-type ConversationScreenProps = ScreenChromeProps & { onOpenTasks: () => void };
-
-export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleContext, onOpenTasks }: ConversationScreenProps) {
+export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleContext }: ScreenChromeProps) {
   const [mode, setMode] = useState<"聊天" | "工作">("工作");
   const [approval, setApproval] = useState<WorkApproval>("pending");
   const [lastMessage, setLastMessage] = useState("");
@@ -19,7 +17,6 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
         title={mode === "工作" ? "跨部门 AI 需求诊断" : "新聊天"}
         subtitle={mode === "工作" ? "正在执行 · 等待确认" : "个人智能体"}
         tabs={<SegmentedControl value={mode} options={["聊天", "工作"] as const} onChange={setMode} label="会话模式" />}
-        action={mode === "工作" ? <button className="secondary-button header-action" type="button" onClick={onOpenTasks}><ExternalLink size={16} /><span>打开任务看板</span></button> : undefined}
         contextOpen={contextOpen}
         onOpenNavigation={onOpenNavigation}
         onToggleContext={onToggleContext}
@@ -85,7 +82,7 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
                   <span className="diff-view__line-number">2</span><code>+ # 跨部门 AI 需求诊断卡</code>
                   <span className="diff-view__line-number">3</span><code>+ 版本：v0.1（草案）</code>
                   <span className="diff-view__line-number">4</span><code>+ 生成时间：2025-05-20 10:14:36</code>
-                  <span className="diff-view__line-number">5</span><code>+ 生成者：企业 AI（需求诊断 Skill v1.0）</code>
+                  <span className="diff-view__line-number">5</span><code>+ 生成者：宏昊 AI（需求诊断 Skill v1.0）</code>
                   <span className="diff-view__line-number">6</span><code>+ 状态：待人工确认</code>
                 </div>
                 <div className="changeset__footer">

@@ -7,6 +7,8 @@ import {
   LogOut,
   MessageCircle,
   PenLine,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pin,
   Search,
   Settings,
@@ -24,6 +26,8 @@ type SidebarProps = {
   onProfileToggle: () => void;
   mobileOpen: boolean;
   onMobileClose: () => void;
+  collapsed: boolean;
+  onCollapsedToggle: () => void;
   onOpenSettings: () => void;
 };
 
@@ -41,6 +45,8 @@ export function Sidebar({
   onProfileToggle,
   mobileOpen,
   onMobileClose,
+  collapsed,
+  onCollapsedToggle,
   onOpenSettings,
 }: SidebarProps) {
   const selectSection = (section: Section) => {
@@ -51,17 +57,20 @@ export function Sidebar({
   return (
     <>
       {mobileOpen && <button className="sidebar-backdrop" type="button" aria-label="关闭导航" onClick={onMobileClose} />}
-      <aside className={mobileOpen ? "sidebar is-mobile-open" : "sidebar"}>
+      <aside className={`${mobileOpen ? "sidebar is-mobile-open" : "sidebar"}${collapsed ? " is-collapsed" : ""}`}>
         <div className="sidebar__brand">
-          <button className="brand-button" type="button" aria-label="切换工作空间">
+          <button className="brand-button" type="button" aria-label="切换工作空间" title={collapsed ? "宏昊 AI" : undefined}>
             <span className="brand-mark" aria-hidden="true">
               <span /><span /><span /><span />
             </span>
-            <span>企业 AI</span>
+            <span className="brand-button__label">宏昊 AI</span>
             <ChevronDown size={14} />
           </button>
           <div className="sidebar__brand-actions">
-            <button className="icon-button" type="button" aria-label="搜索"><Search size={18} /></button>
+            <button className="icon-button sidebar__search" type="button" aria-label="搜索"><Search size={18} /></button>
+            <button className="icon-button sidebar__collapse" type="button" aria-label={collapsed ? "展开导航" : "收起导航"} onClick={onCollapsedToggle}>
+              {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            </button>
             <button className="icon-button sidebar__close" type="button" aria-label="关闭导航" onClick={onMobileClose}><X size={18} /></button>
           </div>
         </div>
@@ -74,6 +83,7 @@ export function Sidebar({
               type="button"
               aria-current={activeSection === id && id !== "chat" ? "page" : undefined}
               onClick={() => selectSection(id)}
+              title={collapsed ? label : undefined}
             >
               <Icon size={18} strokeWidth={1.7} />
               <span>{label}</span>
@@ -116,7 +126,7 @@ export function Sidebar({
               <button className="is-danger" role="menuitem" type="button"><LogOut size={16} /><span>退出登录</span></button>
             </div>
           )}
-          <button className="profile-trigger" type="button" onClick={onProfileToggle} aria-expanded={profileOpen}>
+          <button className="profile-trigger" type="button" onClick={onProfileToggle} aria-expanded={profileOpen} title={collapsed ? "张伟 · AI 项目负责人" : undefined}>
             <span className="avatar">张</span>
             <span className="profile-trigger__copy"><strong>张伟</strong><small>AI 项目负责人</small></span>
             <ChevronDown size={15} />

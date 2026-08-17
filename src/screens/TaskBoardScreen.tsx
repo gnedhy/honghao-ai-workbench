@@ -1,12 +1,17 @@
-import { ArrowUpRight, CheckCircle2, CircleDot, Clock3, MoreHorizontal, PauseCircle, RotateCcw, Search } from "lucide-react";
+import { CheckCircle2, CircleDot, Clock3, MoreHorizontal, PauseCircle, RotateCcw, Search } from "lucide-react";
 import { useState } from "react";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { TopBar, type ScreenChromeProps } from "../components/TopBar";
 import { tasks } from "../data";
+import type { TaskItem } from "../types";
 
-export function TaskBoardScreen({ contextOpen, onOpenNavigation, onToggleContext }: ScreenChromeProps) {
+type TaskBoardScreenProps = ScreenChromeProps & {
+  selectedTask: TaskItem;
+  onSelectedTaskChange: (task: TaskItem) => void;
+};
+
+export function TaskBoardScreen({ contextOpen, onOpenNavigation, onToggleContext, selectedTask, onSelectedTaskChange }: TaskBoardScreenProps) {
   const [tab, setTab] = useState<"任务管理" | "运行记录">("任务管理");
-  const [activeTask, setActiveTask] = useState(tasks[0]);
 
   return (
     <main className="app-main">
@@ -24,13 +29,9 @@ export function TaskBoardScreen({ contextOpen, onOpenNavigation, onToggleContext
           <div className="task-table-wrap">
             <table className="task-table">
               <thead><tr><th>任务</th><th>状态</th><th>进度</th><th>负责人</th><th>更新时间</th><th><span className="sr-only">操作</span></th></tr></thead>
-              <tbody>{tasks.map((task) => <tr className={activeTask.title === task.title ? "is-active" : ""} key={task.title} onClick={() => setActiveTask(task)}><td><strong>{task.title}</strong><small>来自会话：{task.title}</small></td><td><TaskStatus status={task.status} /></td><td>{task.progress}</td><td>{task.owner}</td><td>{task.updated}</td><td><button className="icon-button" type="button" aria-label={`${task.title}更多操作`}><MoreHorizontal size={17} /></button></td></tr>)}</tbody>
+              <tbody>{tasks.map((task) => <tr className={selectedTask.title === task.title ? "is-active" : ""} key={task.title} onClick={() => onSelectedTaskChange(task)}><td><strong>{task.title}</strong><small>来自会话：{task.title}</small></td><td><TaskStatus status={task.status} /></td><td>{task.progress}</td><td>{task.owner}</td><td>{task.updated}</td><td><button className="icon-button" type="button" aria-label={`${task.title}更多操作`}><MoreHorizontal size={17} /></button></td></tr>)}</tbody>
             </table>
           </div>
-          <aside className="task-detail-panel">
-            <div className="task-detail-panel__header"><div><TaskStatus status={activeTask.status} /><h2>{activeTask.title}</h2><p>任务 ID：TASK-20250520-001</p></div><button className="secondary-button" type="button"><ArrowUpRight size={16} />返回来源会话</button></div>
-            <div className="task-detail-grid"><div><span>当前运行</span><strong>RUN-003</strong></div><div><span>使用 Skill</span><strong>需求诊断 v1.0</strong></div><div><span>检查点</span><strong>等待 ChangeSet</strong></div><div><span>工作目录</span><strong>受控目录</strong></div></div>
-          </aside>
         </section>
       ) : (
         <section className="run-log-screen">
