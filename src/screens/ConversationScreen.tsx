@@ -91,10 +91,10 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
               <article className={`changeset changeset--${approval}`}>
                 <div className="changeset__header">
                   <div>
-                    <h2>{approval === "pending" ? "ChangeSet 等待你的确认" : approval === "approved" ? "ChangeSet 已批准" : "ChangeSet 已拒绝"}</h2>
+                    <h2>{approval === "pending" ? "待确认修改" : approval === "approved" ? "修改已应用" : "修改已拒绝"}</h2>
                     <p>将创建项目卡文件（Markdown）：knowledge/diagnosis_cards/20250520_cross_dept.md</p>
                   </div>
-                  <button className="icon-button" type="button" aria-label="ChangeSet 更多操作"><MoreHorizontal size={17} /></button>
+                  <button className="icon-button" type="button" aria-label="修改内容更多操作"><MoreHorizontal size={17} /></button>
                 </div>
                 <div className="diff-view" aria-label="文件差异预览">
                   <span className="diff-view__line-number">1</span><code>@@ -0,0 +1,12 @@</code>
@@ -105,11 +105,11 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
                   <span className="diff-view__line-number">6</span><code>+ 状态：待人工确认</code>
                 </div>
                 <div className="changeset__footer">
-                  <p><Info size={16} />批准前不会写入项目卡或公共知识库。</p>
+                  <p><Info size={16} />确认前不会写入项目卡或公共知识库。</p>
                   {approval === "pending" ? (
                     <div className="changeset__actions">
                       <button className="secondary-button" type="button" onClick={() => setApproval("rejected")}>拒绝</button>
-                      <button className="primary-button" type="button" onClick={() => setApproval("approved")}>批准并应用</button>
+                      <button className="primary-button" type="button" onClick={() => setApproval("approved")}>确认并应用</button>
                     </div>
                   ) : (
                     <button className="secondary-button" type="button" onClick={() => setApproval("pending")}>恢复待确认</button>

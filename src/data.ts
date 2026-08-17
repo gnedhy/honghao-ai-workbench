@@ -18,14 +18,14 @@ export const runSteps = [
   { label: "检索个人与企业知识", time: "05-20 10:13", detail: "命中 18 条知识", state: "done" },
   { label: "调用需求诊断技能 v1.0", time: "05-20 10:14", detail: "运行中（18s）", state: "done" },
   { label: "生成需求诊断卡", time: "运行中", detail: "", state: "active" },
-  { label: "等待 ChangeSet 确认", time: "等待中", detail: "", state: "waiting" },
+  { label: "等待修改确认", time: "等待中", detail: "", state: "waiting" },
 ] as const;
 
 export const knowledgeItems = [
   { title: "AI 需求诊断方法", scope: "个人知识", updated: "今天 10:24", tags: ["需求诊断", "方法"] },
   { title: "跨部门访谈问题清单", scope: "个人知识", updated: "昨天 17:40", tags: ["访谈", "项目"] },
   { title: "企业知识发布规范", scope: "公共知识", updated: "8 月 15 日", tags: ["制度", "审核"] },
-  { title: "ChangeSet 审批边界", scope: "公共知识", updated: "8 月 14 日", tags: ["安全", "审批"] },
+  { title: "修改确认边界", scope: "公共知识", updated: "8 月 14 日", tags: ["安全", "审批"] },
 ];
 
 export const skills = [
@@ -35,7 +35,7 @@ export const skills = [
 ];
 
 export const workflows = [
-  { title: "AI 需求诊断", version: "v1.0", status: "已发布", description: "从材料接收、知识检索到人工确认的完整诊断流程。", runs: 18, updated: "今天 10:14", owner: "AI 项目组", steps: ["接收材料", "数据边界检查", "检索知识", "调用需求诊断", "人工确认 ChangeSet"] },
+  { title: "AI 需求诊断", version: "v1.0", status: "已发布", description: "从材料接收、知识检索到人工确认的完整诊断流程。", runs: 18, updated: "今天 10:14", owner: "AI 项目组", steps: ["接收材料", "数据边界检查", "检索知识", "调用需求诊断", "人工确认修改"] },
   { title: "部门访谈整理", version: "v0.6", status: "测试中", description: "把访谈转写整理为事实、判断、缺口和待确认事项。", runs: 7, updated: "昨天 17:32", owner: "需求治理组", steps: ["接收转写", "敏感信息检查", "提取访谈事实", "生成结构化纪要", "负责人确认"] },
   { title: "个人知识沉淀", version: "v0.3", status: "草稿", description: "从已完成任务中提取个人知识候选，并保留来源。", runs: 3, updated: "8 月 15 日", owner: "知识治理组", steps: ["选择任务结果", "提取知识候选", "来源与重复检查", "个人确认入库"] },
 ];

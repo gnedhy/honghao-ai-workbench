@@ -103,15 +103,15 @@ export function ContextSidebar({
                     <ToolSection title="当前运行">
                       <PropertyRow icon={<History size={16} />} label="检查点" value="等待确认" />
                       <PropertyRow icon={<CheckCircle2 size={16} />} label="执行进度" value="4 / 5" />
-                      <button className="tool-action" type="button" onClick={() => showFeedback("已定位到等待确认的 ChangeSet。")}><FileText size={16} /><span><strong>查看待确认变更</strong><small>任务已暂停，不会继续写入</small></span></button>
+                      <button className="tool-action" type="button" onClick={() => showFeedback("已定位到待确认修改。")}><FileText size={16} /><span><strong>查看待确认修改</strong><small>任务已暂停，不会继续写入</small></span></button>
                     </ToolSection>
                   ) : (
                     <ToolSection title="执行边界">
-                      <PropertyRow icon={<FileText size={16} />} label="文件写入" value="需确认 ChangeSet" />
+                      <PropertyRow icon={<FileText size={16} />} label="文件写入" value="需人工确认" />
                       <PropertyRow icon={<ShieldCheck size={16} />} label="外部操作" value="默认禁止" />
                     </ToolSection>
                   )}
-                  <div className="tool-safety-note"><ShieldCheck size={16} /><p>任何文件写入都会先生成 ChangeSet，并等待你的确认。</p></div>
+                  <div className="tool-safety-note"><ShieldCheck size={16} /><p>任何文件写入都会先生成修改预览，并等待你的确认。</p></div>
                 </>
               )}
             </>
@@ -175,14 +175,14 @@ function KnowledgeStatusTools({ item, onFeedback }: { item: KnowledgeItem; onFee
 
 function TaskStatusTools({ task, paused, onPauseToggle, onReturnChat, onFeedback }: { task: TaskItem; paused: boolean; onPauseToggle: () => void; onReturnChat: () => void; onFeedback: (message: string) => void }) {
   if (task.status === "等待确认") return <StatusToolLayout actionTitle="等待你确认" actions={[
-    { icon: <FileText size={16} />, title: "查看待确认变更", subtitle: "检查 ChangeSet 与影响范围", feedback: "已定位到待确认的 ChangeSet。" },
+    { icon: <FileText size={16} />, title: "查看待确认修改", subtitle: "检查修改内容与影响范围", feedback: "已定位到待确认修改。" },
     { icon: <ArrowLeft size={16} />, title: "返回来源会话", subtitle: task.title, onSelect: onReturnChat },
   ]} infoTitle="确认信息" properties={[
     { icon: <CheckCircle2 size={16} />, label: "检查点", value: "等待人工确认" },
     { icon: <History size={16} />, label: "进度", value: task.progress },
     { icon: <WandSparkles size={16} />, label: "负责人", value: task.owner },
     { icon: <FolderLock size={16} />, label: "写入状态", value: "尚未应用" },
-  ]} note="任务已暂停在人工确认门。未经批准，ChangeSet 不会写入项目文件或公共知识。" onFeedback={onFeedback} />;
+  ]} note="任务已暂停，等待人工确认。未经确认，修改不会写入项目文件或公共知识。" onFeedback={onFeedback} />;
 
   if (task.status === "运行中") {
     const toggleRun = () => { onPauseToggle(); onFeedback(paused ? "任务已从检查点继续执行。" : "任务已暂停在当前检查点。"); };
@@ -254,11 +254,11 @@ function WorkflowStatusTools({ workflow, onFeedback }: { workflow: WorkflowItem;
     { icon: <GitBranch size={16} />, label: "当前版本", value: workflow.version },
     { icon: <CheckCircle2 size={16} />, label: "状态", value: "已发布 · 只读" },
     { icon: <History size={16} />, label: "步骤", value: workflow.steps.length + " 个" },
-    { icon: <ShieldCheck size={16} />, label: "写入方式", value: "ChangeSet" },
+    { icon: <ShieldCheck size={16} />, label: "写入方式", value: "确认后应用" },
   ]} note="已发布流程的步骤和权限保持锁定。修改必须派生新版本并重新验证每个节点。" onFeedback={onFeedback} />;
 
   if (workflow.status === "测试中") return <StatusToolLayout actionTitle="流程测试" actions={[
-    { icon: <TestTube2 size={16} />, title: "继续试运行", subtitle: "逐步检查输入与输出", feedback: "隔离试运行已启动，不会应用任何 ChangeSet。" },
+    { icon: <TestTube2 size={16} />, title: "继续试运行", subtitle: "逐步检查输入与输出", feedback: "隔离试运行已启动，不会应用任何修改。" },
     { icon: <GitBranch size={16} />, title: "校验流程步骤", subtitle: "检查技能、权限和人工节点", feedback: "步骤校验完成，发现 1 个待确认节点。" },
     { icon: <Rocket size={16} />, title: "提交发布审查", subtitle: "逐步审查依赖与写入边界", feedback: "工作流发布审查已提交。" },
   ]} infoTitle="测试进度" properties={[
