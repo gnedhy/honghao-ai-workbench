@@ -50,7 +50,7 @@ function SkillLibrary({ query, onQueryChange, visibleSkills, selectedSkill, onSe
 
   return <section className="workspace-layout workspace-layout--skills">
     <aside className="workspace-list-panel skill-index">
-      <div className="workspace-panel-title"><div><h1>技能库</h1><p>经过版本管理的企业能力</p></div></div>
+      <div className="workspace-panel-title"><div><h1>技能</h1><p>经过版本管理的企业能力</p></div></div>
       <label className="search-field"><Search size={16} /><input aria-label="搜索技能" placeholder="搜索名称、用途或状态" value={query} onChange={(event) => onQueryChange(event.target.value)} /></label>
       <div className="workspace-list-summary"><span>{visibleSkills.length} 个技能</span><span>{skills.filter((skill) => skill.status === "已发布").length} 个已发布</span></div>
       <div className="item-list skill-item-list">
@@ -72,7 +72,7 @@ function WorkflowLibrary({ query, onQueryChange, visibleWorkflows, selectedWorkf
 
   return <section className="workspace-layout workspace-layout--workflows">
     <aside className="workspace-list-panel workflow-index">
-      <div className="workspace-panel-title"><div><h1>工作流库</h1><p>可复用的多步骤执行流程</p></div></div>
+      <div className="workspace-panel-title"><div><h1>工作流</h1><p>可复用的多步骤执行流程</p></div></div>
       <label className="search-field"><Search size={16} /><input aria-label="搜索工作流" placeholder="搜索名称、用途或状态" value={query} onChange={(event) => onQueryChange(event.target.value)} /></label>
       <div className="workspace-list-summary"><span>{visibleWorkflows.length} 条工作流</span><span>{workflows.reduce((total, workflow) => total + workflow.runs, 0)} 次运行</span></div>
       <div className="item-list workflow-item-list">
