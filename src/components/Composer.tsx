@@ -1,4 +1,4 @@
-import { ArrowUp, AudioLines, ChevronDown, Mic, Paperclip, Plus } from "lucide-react";
+import { ArrowUp, ChevronDown, Plus } from "lucide-react";
 import { useState } from "react";
 
 type ComposerProps = {
@@ -36,9 +36,8 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
             }}
           />
           <button className="composer__model" type="button">企业模型<ChevronDown size={13} /></button>
-          <button className="icon-button composer__voice" type="button" aria-label="语音输入"><Mic size={17} /></button>
-          <button className="round-action" type="button" aria-label={message.trim() ? "发送消息" : "开始语音对话"} onClick={message.trim() ? submit : undefined}>
-            {message.trim() ? <ArrowUp size={17} /> : <AudioLines size={17} />}
+          <button className="round-action composer__submit" type="button" aria-label="发送消息" onClick={submit} disabled={!message.trim()}>
+            <ArrowUp size={16} />
           </button>
         </div>
       </div>
@@ -62,10 +61,10 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
       />
       <div className="composer__toolbar">
         <div className="composer__tools">
-          <button className="icon-button" type="button" aria-label="添加附件"><Paperclip size={18} /></button>
+          <button className="icon-button" type="button" aria-label="添加内容"><Plus size={18} /></button>
         </div>
         <button className="round-action composer__submit" type="button" aria-label="交给智能体执行" onClick={submit} disabled={!message.trim()}>
-          <ArrowUp size={17} />
+          <ArrowUp size={16} />
         </button>
       </div>
     </div>
