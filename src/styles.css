@@ -81,7 +81,7 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .nav-row, .conversation-row, .project-row, .project-thread { display: flex; width: 100%; align-items: center; gap: 11px; border-radius: 9px; text-align: left; background: transparent; cursor: pointer; transition: background-color 140ms ease, transform 120ms var(--ease-out); }
 .nav-row { min-height: 42px; padding: 8px 10px; font-size: 14px; }
 .nav-row:hover, .conversation-row:hover, .project-row:hover, .project-thread:hover { background: rgba(47,48,51,.055); }
-.nav-row.is-active, .conversation-row.is-active, .project-thread.is-active { background: var(--selected); }
+.nav-row.is-active, .conversation-row.is-active { background: var(--selected); }
 .sidebar__scroll { min-height: 0; flex: 1; overflow: auto; padding: 2px 10px 16px; scrollbar-width: thin; scrollbar-color: #cfd6dc transparent; }
 .sidebar-group { margin-top: 12px; }
 .sidebar-group h2 { margin: 0 9px 7px; color: #8e969d; font-size: 12px; font-weight: 500; }
@@ -92,7 +92,7 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .project-entry { display: grid; }
 .project-row { min-height: 36px; padding: 6px 9px; font-size: 13.5px; }
 .project-row > span:nth-child(2) { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-row.is-expanded { background: rgba(47,48,51,.04); }
+.project-row.is-expanded { background: transparent; }
 .project-row__chevron { color: #7d858c; }
 .project-row.is-expanded .project-row__chevron { transform: rotate(90deg); }
 .project-mark { display: grid; width: 22px; height: 22px; place-items: center; flex: none; border-radius: 7px; }
@@ -102,6 +102,7 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .project-thread-list { position: relative; display: grid; gap: 1px; margin: 2px 0 5px 30px; padding-left: 11px; }
 .project-thread-list::before { position: absolute; top: 2px; bottom: 2px; left: 0; width: 1px; background: rgba(125,135,143,.24); content: ""; }
 .project-thread { min-height: 30px; padding: 5px 8px; color: #596168; font-size: 12.5px; }
+.project-thread.is-active { background: rgba(47,48,51,.04); }
 .project-thread span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .profile-area { position: relative; flex: none; padding: 10px; border-top: 1px solid rgba(207,214,220,.72); }
 .profile-trigger { display: flex; width: 100%; min-height: 52px; align-items: center; gap: 10px; padding: 5px 7px; border-radius: 10px; background: transparent; text-align: left; cursor: pointer; }
