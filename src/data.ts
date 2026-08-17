@@ -1,16 +1,22 @@
 export const pinnedConversations = ["跨部门 AI 需求诊断", "个人知识整理"];
 
+export const projectGroups = [
+  { title: "宏昊 AI 中台", conversations: ["产品原型与交互", "模型接口验证", "首条工作流"] },
+  { title: "部门需求治理", conversations: ["客服知识库优化", "部门访谈整理"] },
+  { title: "知识与技能", conversations: ["知识沉淀规则", "技能使用复盘"] },
+];
+
 export const recentConversations = [
   "客服知识库优化",
   "部门访谈整理",
   "项目周报更新",
-  "Skill 使用复盘",
+  "技能使用复盘",
 ];
 
 export const runSteps = [
   { label: "材料与数据边界检查", time: "05-20 10:12", detail: "检查通过", state: "done" },
   { label: "检索个人与企业知识", time: "05-20 10:13", detail: "命中 18 条知识", state: "done" },
-  { label: "调用需求诊断 Skill v1.0", time: "05-20 10:14", detail: "运行中（18s）", state: "done" },
+  { label: "调用需求诊断技能 v1.0", time: "05-20 10:14", detail: "运行中（18s）", state: "done" },
   { label: "生成需求诊断卡", time: "运行中", detail: "", state: "active" },
   { label: "等待 ChangeSet 确认", time: "等待中", detail: "", state: "waiting" },
 ] as const;

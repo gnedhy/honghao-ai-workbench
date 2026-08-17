@@ -13,7 +13,6 @@ function App() {
   const [section, setSection] = useState<Section>("chat");
   const [profileOpen, setProfileOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [contextOpen, setContextOpen] = useState(() => window.matchMedia("(min-width: 1180px)").matches);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedKnowledgeTitle, setSelectedKnowledgeTitle] = useState(knowledgeItems[0].title);
@@ -56,10 +55,8 @@ function App() {
     onToggleContext: toggleContext,
   };
 
-  const shellClasses = ["app-shell", contextOpen && "has-context", leftCollapsed && "is-left-collapsed"].filter(Boolean).join(" ");
-
   return (
-    <div className={shellClasses}>
+    <div className={contextOpen ? "app-shell has-context" : "app-shell"}>
       <Sidebar
         activeSection={section}
         onSectionChange={(nextSection) => { setSection(nextSection); setProfileOpen(false); setMobileOpen(false); }}
@@ -67,8 +64,6 @@ function App() {
         onProfileToggle={() => setProfileOpen((open) => !open)}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
-        collapsed={leftCollapsed}
-        onCollapsedToggle={() => setLeftCollapsed((collapsed) => !collapsed)}
         onOpenSettings={() => { setProfileOpen(false); setSettingsOpen(true); }}
       />
       {section === "chat" && <ConversationScreen {...screenChrome} />}

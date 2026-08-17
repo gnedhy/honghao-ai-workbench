@@ -1,14 +1,14 @@
 import {
   Bot,
   ChevronDown,
+  ChevronRight,
   Columns2,
+  FolderClosed,
   FolderKanban,
   LibraryBig,
   LogOut,
   MessageCircle,
   PenLine,
-  PanelLeftClose,
-  PanelLeftOpen,
   Pin,
   Search,
   Settings,
@@ -16,8 +16,9 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
+import { useState } from "react";
 import userAvatar from "../assets/avatar-zhang-wei-v1.png";
-import { pinnedConversations, recentConversations } from "../data";
+import { pinnedConversations, projectGroups, recentConversations } from "../data";
 import type { Section } from "../types";
 
 type SidebarProps = {
@@ -27,8 +28,6 @@ type SidebarProps = {
   onProfileToggle: () => void;
   mobileOpen: boolean;
   onMobileClose: () => void;
-  collapsed: boolean;
-  onCollapsedToggle: () => void;
   onOpenSettings: () => void;
 };
 
@@ -46,10 +45,10 @@ export function Sidebar({
   onProfileToggle,
   mobileOpen,
   onMobileClose,
-  collapsed,
-  onCollapsedToggle,
   onOpenSettings,
 }: SidebarProps) {
+  const [expandedProject, setExpandedProject] = useState(projectGroups[0].title);
+
   const selectSection = (section: Section) => {
     onSectionChange(section);
     onMobileClose();
@@ -58,18 +57,15 @@ export function Sidebar({
   return (
     <>
       {mobileOpen && <button className="sidebar-backdrop" type="button" aria-label="关闭导航" onClick={onMobileClose} />}
-      <aside className={`${mobileOpen ? "sidebar is-mobile-open" : "sidebar"}${collapsed ? " is-collapsed" : ""}`}>
+      <aside className={mobileOpen ? "sidebar is-mobile-open" : "sidebar"}>
         <div className="sidebar__brand">
-          <button className="brand-button" type="button" aria-label="切换工作空间" title={collapsed ? "宏昊 AI" : undefined}>
+          <button className="brand-button" type="button" aria-label="切换工作空间">
             <BrandMark />
             <span className="brand-button__label">宏昊 AI</span>
             <ChevronDown className="brand-button__chevron" size={14} />
           </button>
           <div className="sidebar__brand-actions">
             <button className="icon-button sidebar__search" type="button" aria-label="搜索"><Search size={18} /></button>
-            <button className="icon-button sidebar__collapse" type="button" aria-label={collapsed ? "展开导航" : "收起导航"} onClick={onCollapsedToggle}>
-              {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-            </button>
             <button className="icon-button sidebar__close" type="button" aria-label="关闭导航" onClick={onMobileClose}><X size={18} /></button>
           </div>
         </div>
@@ -82,7 +78,6 @@ export function Sidebar({
               type="button"
               aria-current={activeSection === id && id !== "chat" ? "page" : undefined}
               onClick={() => selectSection(id)}
-              title={collapsed ? label : undefined}
             >
               <Icon size={18} strokeWidth={1.7} />
               <span>{label}</span>
@@ -105,6 +100,29 @@ export function Sidebar({
               </button>
             ))}
           </SidebarGroup>
+          <SidebarGroup title="项目">
+            {projectGroups.map((project, index) => {
+              const expanded = expandedProject === project.title;
+              return (
+                <div className="project-entry" key={project.title}>
+                  <button className={expanded ? "project-row is-expanded" : "project-row"} type="button" aria-expanded={expanded} onClick={() => setExpandedProject(expanded ? "" : project.title)}>
+                    <span className={`project-mark project-mark--${index + 1}`}><FolderClosed size={14} /></span>
+                    <span>{project.title}</span>
+                    <ChevronRight className="project-row__chevron" size={14} />
+                  </button>
+                  {expanded && (
+                    <div className="project-thread-list">
+                      {project.conversations.map((title) => (
+                        <button className="project-thread" type="button" key={title} onClick={() => selectSection("chat")}>
+                          <span>{title}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </SidebarGroup>
           <SidebarGroup title="最近">
             {recentConversations.map((title) => (
               <button className="conversation-row" type="button" key={title} onClick={() => selectSection("chat")}>
@@ -115,21 +133,17 @@ export function Sidebar({
           </SidebarGroup>
         </div>
 
-        <button className="icon-button sidebar__expand-control" type="button" aria-label="展开导航" onClick={onCollapsedToggle} title="展开导航">
-          <PanelLeftOpen size={18} />
-        </button>
-
         <div className="profile-area">
           {profileOpen && (
             <div className="profile-menu" role="menu">
               <button role="menuitem" type="button"><UserRound size={16} /><span>个人资料</span></button>
-              <button role="menuitem" type="button"><Columns2 size={16} /><span>使用情况</span><span className="profile-menu__meta">剩余 67%</span></button>
+              <button role="menuitem" type="button"><Columns2 size={16} /><span>使用情况</span></button>
               <button role="menuitem" type="button" onClick={onOpenSettings}><Settings size={16} /><span>系统设置</span><span className="profile-menu__meta">Ctrl+,</span></button>
               <div className="profile-menu__divider" />
               <button className="is-danger" role="menuitem" type="button"><LogOut size={16} /><span>退出登录</span></button>
             </div>
           )}
-          <button className="profile-trigger" type="button" onClick={onProfileToggle} aria-expanded={profileOpen} title={collapsed ? "张伟 · AI 项目负责人" : undefined}>
+          <button className="profile-trigger" type="button" onClick={onProfileToggle} aria-expanded={profileOpen}>
             <span className="avatar"><img src={userAvatar} alt="张伟的虚拟头像" /></span>
             <span className="profile-trigger__copy"><strong>张伟</strong><small>AI 项目负责人</small></span>
             <ChevronDown size={15} />

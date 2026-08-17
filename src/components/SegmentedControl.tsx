@@ -6,8 +6,11 @@ type SegmentedControlProps<T extends string> = {
 };
 
 export function SegmentedControl<T extends string>({ value, options, onChange, label }: SegmentedControlProps<T>) {
+  const activeIndex = options.indexOf(value);
+
   return (
-    <div className="segmented-control" role="tablist" aria-label={label}>
+    <div className="segmented-control" role="tablist" aria-label={label} data-active-index={activeIndex}>
+      <span className="segmented-control__indicator" aria-hidden="true" />
       {options.map((option) => (
         <button
           className={option === value ? "segmented-control__item is-active" : "segmented-control__item"}

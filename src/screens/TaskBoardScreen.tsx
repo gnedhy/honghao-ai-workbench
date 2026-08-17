@@ -39,7 +39,7 @@ export function TaskBoardScreen({ contextOpen, onOpenNavigation, onToggleContext
           <div className="run-log-list">
             <RunLog icon={<PauseCircle size={17} />} title="等待人工确认" detail="ChangeSet 已生成，运行暂停在审批节点。" time="10:15:02" />
             <RunLog icon={<CheckCircle2 size={17} />} title="生成需求诊断卡" detail="结构化输出校验通过。" time="10:14:58" />
-            <RunLog icon={<CheckCircle2 size={17} />} title="调用需求诊断 Skill v1.0" detail="运行完成，共引用 18 条知识。" time="10:14:36" />
+            <RunLog icon={<CheckCircle2 size={17} />} title="调用需求诊断技能 v1.0" detail="运行完成，共引用 18 条知识。" time="10:14:36" />
             <RunLog icon={<Clock3 size={17} />} title="任务创建" detail="从会话“跨部门 AI 需求诊断”进入工作模式。" time="10:12:01" />
           </div>
         </section>

@@ -11,24 +11,24 @@ type AutomationScreenProps = ScreenChromeProps & {
 };
 
 export function AutomationScreen({ contextOpen, onOpenNavigation, onToggleContext, selectedSkill, onSelectedSkillChange }: AutomationScreenProps) {
-  const [tab, setTab] = useState<"Skills" | "Workflows">("Skills");
+  const [tab, setTab] = useState<"技能" | "工作流">("技能");
 
   return (
     <main className="app-main">
       <TopBar
         title="自动化"
-        subtitle={tab === "Skills" ? "企业能力库" : "流程编排"}
-        tabs={<SegmentedControl value={tab} options={["Skills", "Workflows"] as const} onChange={setTab} label="自动化类型" />}
-        action={<button className="primary-button header-action" type="button"><Plus size={16} /><span>{tab === "Skills" ? "创建 Skill" : "创建 Workflow"}</span></button>}
+        subtitle={tab === "技能" ? "企业能力库" : "流程编排"}
+        tabs={<SegmentedControl value={tab} options={["技能", "工作流"] as const} onChange={setTab} label="自动化类型" />}
+        action={<button className="primary-button header-action" type="button"><Plus size={16} /><span>{tab === "技能" ? "创建技能" : "创建工作流"}</span></button>}
         contextOpen={contextOpen}
         onOpenNavigation={onOpenNavigation}
         onToggleContext={onToggleContext}
       />
-      {tab === "Skills" ? (
+      {tab === "技能" ? (
         <section className="workspace-layout">
           <aside className="workspace-list-panel">
-            <div className="workspace-panel-title"><div><h1>Skills</h1><p>版本化的企业能力</p></div><button className="icon-button" type="button"><MoreHorizontal size={17} /></button></div>
-            <label className="search-field"><Search size={16} /><input aria-label="搜索 Skill" placeholder="搜索 Skill" /></label>
+            <div className="workspace-panel-title"><div><h1>技能</h1><p>版本化的企业能力</p></div><button className="icon-button" type="button"><MoreHorizontal size={17} /></button></div>
+            <label className="search-field"><Search size={16} /><input aria-label="搜索技能" placeholder="搜索技能" /></label>
             <div className="item-list">
               {skills.map((skill) => (
                 <button className={selectedSkill.title === skill.title ? "list-item is-active" : "list-item"} type="button" key={skill.title} onClick={() => onSelectedSkillChange(skill)}>
@@ -50,13 +50,13 @@ export function AutomationScreen({ contextOpen, onOpenNavigation, onToggleContex
         </section>
       ) : (
         <section className="workflow-overview">
-          <div className="workflow-overview__heading"><div><h1>AI 需求诊断 Workflow</h1><p>固定流程 · v1.0 · 最近运行于 10 分钟前</p></div><button className="primary-button" type="button"><Play size={16} />运行</button></div>
+          <div className="workflow-overview__heading"><div><h1>AI 需求诊断工作流</h1><p>固定流程 · v1.0 · 最近运行于 10 分钟前</p></div><button className="primary-button" type="button"><Play size={16} />运行</button></div>
           <div className="workflow-rail">
             {["接收材料", "数据边界检查", "检索知识", "调用需求诊断", "人工确认 ChangeSet"].map((step, index) => (
               <div className="workflow-node" key={step}><span>{index + 1}</span><div><strong>{step}</strong><small>{index === 4 ? "人工审批节点" : "自动执行节点"}</small></div>{index < 4 && <ChevronRight size={17} />}</div>
             ))}
           </div>
-          <article className="workflow-note"><Workflow size={18} /><div><strong>写入边界</strong><p>Workflow 只生成 ChangeSet。未经人工批准，不会写入项目卡或公共知识。</p></div></article>
+          <article className="workflow-note"><Workflow size={18} /><div><strong>写入边界</strong><p>工作流只生成 ChangeSet。未经人工批准，不会写入项目卡或公共知识。</p></div></article>
         </section>
       )}
     </main>

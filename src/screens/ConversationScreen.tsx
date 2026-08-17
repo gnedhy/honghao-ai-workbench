@@ -66,7 +66,7 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
                   <li><strong>缺失信息与风险：</strong>部分历史制度文档缺少结构化标签；权限边界需进一步明确，存在越权访问风险。</li>
                   <li><strong>建议下一步：</strong>完成授权范围与 A/B 测试方案设计；补充 OCR 与结构化处理规则；确认验收指标与里程碑计划。</li>
                 </ul>
-                <p className="citation-line">引用：个人知识 3 条 · 公共知识 15 条 · 需求诊断 Skill v1.0 · Workflow v1.0</p>
+                <p className="citation-line">引用：个人知识 3 条 · 公共知识 15 条 · 需求诊断技能 v1.0 · 工作流 v1.0</p>
               </article>
 
               <article className={`changeset changeset--${approval}`}>
@@ -82,7 +82,7 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
                   <span className="diff-view__line-number">2</span><code>+ # 跨部门 AI 需求诊断卡</code>
                   <span className="diff-view__line-number">3</span><code>+ 版本：v0.1（草案）</code>
                   <span className="diff-view__line-number">4</span><code>+ 生成时间：2025-05-20 10:14:36</code>
-                  <span className="diff-view__line-number">5</span><code>+ 生成者：宏昊 AI（需求诊断 Skill v1.0）</code>
+                  <span className="diff-view__line-number">5</span><code>+ 生成者：宏昊 AI（需求诊断技能 v1.0）</code>
                   <span className="diff-view__line-number">6</span><code>+ 状态：待人工确认</code>
                 </div>
                 <div className="changeset__footer">

@@ -48,7 +48,7 @@ export function ContextSidebar({
   const [taskPaused, setTaskPaused] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
 
-  const panelTitle = section === "chat" ? "工作设置" : section === "knowledge" ? "文档工具" : section === "automation" ? "Skill 工具" : "任务详情";
+  const panelTitle = section === "chat" ? "工作设置" : section === "knowledge" ? "文档工具" : section === "automation" ? "技能工具" : "任务详情";
   const panelSubtitle = section === "chat" ? "跨部门 AI 需求诊断" : section === "knowledge" ? knowledgeItem.title : section === "automation" ? skill.title : task.title;
   const showFeedback = (message: string) => setFeedback({ section, message });
 
@@ -117,7 +117,7 @@ export function ContextSidebar({
             <>
               <ToolSection title="执行详情">
                 <PropertyRow icon={<History size={16} />} label="当前运行" value="RUN-003" />
-                <PropertyRow icon={<WandSparkles size={16} />} label="使用 Skill" value="需求诊断 v1.0" />
+                <PropertyRow icon={<WandSparkles size={16} />} label="使用技能" value="需求诊断 v1.0" />
                 <PropertyRow icon={<CheckCircle2 size={16} />} label="检查点" value={task.status} />
                 <PropertyRow icon={<FolderLock size={16} />} label="工作目录" value="受控目录" />
               </ToolSection>
