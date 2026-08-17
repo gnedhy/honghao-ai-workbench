@@ -24,9 +24,10 @@ import type { KnowledgeItem, Section, SkillItem, TaskItem } from "../types";
 type ContextSidebarProps = {
   section: Section;
   conversationTitle: string;
+  conversationMode: "聊天" | "工作";
+  conversationView: "new" | "existing";
   open: boolean;
   onClose: () => void;
-  onOpenTasks: () => void;
   onReturnChat: () => void;
   knowledgeItem: KnowledgeItem;
   skill: SkillItem;
@@ -38,9 +39,10 @@ type Feedback = { section: Section; message: string } | null;
 export function ContextSidebar({
   section,
   conversationTitle,
+  conversationMode,
+  conversationView,
   open,
   onClose,
-  onOpenTasks,
   onReturnChat,
   knowledgeItem,
   skill,
@@ -51,7 +53,7 @@ export function ContextSidebar({
   const [taskPaused, setTaskPaused] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
 
-  const panelTitle = section === "chat" ? "工作设置" : section === "knowledge" ? "文档工具" : section === "automation" ? "技能工具" : "任务详情";
+  const panelTitle = section === "chat" ? (conversationMode === "聊天" ? "对话上下文" : "执行控制") : section === "knowledge" ? "文档工具" : section === "automation" ? "技能工具" : "任务详情";
   const panelSubtitle = section === "chat" ? conversationTitle : section === "knowledge" ? knowledgeItem.title : section === "automation" ? skill.title : task.title;
   const showFeedback = (message: string) => setFeedback({ section, message });
 
@@ -67,21 +69,47 @@ export function ContextSidebar({
         <div className="context-sidebar__body">
           {section === "chat" && (
             <>
-              <ToolSection title="执行设置">
-                <ToolSelect icon={<Database size={16} />} label="知识范围" value={knowledgeScope} onChange={setKnowledgeScope} options={["个人与公共知识", "仅个人知识", "仅本次附件"]} />
-                <ToolSelect icon={<WandSparkles size={16} />} label="执行模型" value={model} onChange={setModel} options={["宏昊企业模型", "通用模型", "轻量模型"]} />
-                <div className="tool-setting">
-                  <span className="tool-setting__label"><FolderLock size={16} /><small>工作目录</small></span>
-                  <span className="tool-setting__value"><strong>受控项目目录</strong><span><CheckCircle2 size={14} />已授权</span></span>
-                </div>
-              </ToolSection>
-              <ToolSection title="任务控制">
-                <button className="tool-action" type="button" onClick={() => { setTaskPaused((paused) => !paused); showFeedback(taskPaused ? "任务已继续执行。" : "任务已暂停，可随时继续。"); }}>
-                  {taskPaused ? <Play size={16} /> : <Pause size={16} />}<span><strong>{taskPaused ? "继续任务" : "暂停任务"}</strong><small>保留当前检查点</small></span>
-                </button>
-                <button className="tool-action" type="button" onClick={onOpenTasks}><History size={16} /><span><strong>打开任务看板</strong><small>查看运行与审批记录</small></span></button>
-              </ToolSection>
-              <div className="tool-safety-note"><ShieldCheck size={16} /><p>任何文件写入都会先生成 ChangeSet，并等待你的确认。</p></div>
+              {conversationMode === "聊天" ? (
+                <>
+                  <ToolSection title="本次上下文">
+                    <PropertyRow icon={<Database size={16} />} label="知识访问" value="按需引用" />
+                    <PropertyRow icon={<FileText size={16} />} label="当前引用" value="暂无" />
+                    <PropertyRow icon={<FolderLock size={16} />} label="本次附件" value="仅当前会话" />
+                  </ToolSection>
+                  <ToolSection title="对话边界">
+                    <PropertyRow icon={<ShieldCheck size={16} />} label="会话类型" value="个人会话" />
+                    <PropertyRow icon={<FolderLock size={16} />} label="写入权限" value="关闭" />
+                    <PropertyRow icon={<CheckCircle2 size={16} />} label="知识沉淀" value="确认后保存" />
+                  </ToolSection>
+                  <div className="tool-safety-note"><ShieldCheck size={16} /><p>对话模式只读取你主动引用的内容，不会执行文件写入或启动任务。</p></div>
+                </>
+              ) : (
+                <>
+                  <ToolSection title="执行环境">
+                    <ToolSelect icon={<Database size={16} />} label="知识范围" value={knowledgeScope} onChange={setKnowledgeScope} options={["个人与公共知识", "仅个人知识", "仅本次附件"]} />
+                    <ToolSelect icon={<WandSparkles size={16} />} label="执行模型" value={model} onChange={setModel} options={["宏昊企业模型", "通用模型", "轻量模型"]} />
+                    <div className="tool-setting">
+                      <span className="tool-setting__label"><FolderLock size={16} /><small>工作目录</small></span>
+                      <span className="tool-setting__value"><strong>受控项目目录</strong><span><CheckCircle2 size={14} />已授权</span></span>
+                    </div>
+                  </ToolSection>
+                  {conversationView === "existing" ? (
+                    <ToolSection title="当前运行">
+                      <PropertyRow icon={<History size={16} />} label="检查点" value="等待确认" />
+                      <PropertyRow icon={<CheckCircle2 size={16} />} label="执行进度" value="4 / 5" />
+                      <button className="tool-action" type="button" onClick={() => { setTaskPaused((paused) => !paused); showFeedback(taskPaused ? "任务已继续执行。" : "任务已暂停，可随时继续。"); }}>
+                        {taskPaused ? <Play size={16} /> : <Pause size={16} />}<span><strong>{taskPaused ? "继续任务" : "暂停任务"}</strong><small>保留当前检查点</small></span>
+                      </button>
+                    </ToolSection>
+                  ) : (
+                    <ToolSection title="执行边界">
+                      <PropertyRow icon={<FileText size={16} />} label="文件写入" value="需确认 ChangeSet" />
+                      <PropertyRow icon={<ShieldCheck size={16} />} label="外部操作" value="默认禁止" />
+                    </ToolSection>
+                  )}
+                  <div className="tool-safety-note"><ShieldCheck size={16} /><p>任何文件写入都会先生成 ChangeSet，并等待你的确认。</p></div>
+                </>
+              )}
             </>
           )}
 

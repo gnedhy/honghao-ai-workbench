@@ -1,4 +1,4 @@
-import { Check, Circle, Info, MoreHorizontal, Sparkles } from "lucide-react";
+import { Check, Circle, Info, MoreHorizontal, Search, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { Composer } from "../components/Composer";
 import { SegmentedControl } from "../components/SegmentedControl";
@@ -9,10 +9,11 @@ import type { ConversationView, WorkApproval } from "../types";
 type ConversationScreenProps = ScreenChromeProps & {
   view: ConversationView;
   conversationTitle: string;
+  mode: "聊天" | "工作";
+  onModeChange: (mode: "聊天" | "工作") => void;
 };
 
-export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleContext, view, conversationTitle }: ConversationScreenProps) {
-  const [mode, setMode] = useState<"聊天" | "工作">("工作");
+export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleContext, view, conversationTitle, mode, onModeChange }: ConversationScreenProps) {
   const [approval, setApproval] = useState<WorkApproval>("pending");
   const [lastMessage, setLastMessage] = useState("");
 
@@ -21,7 +22,7 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
       <TopBar
         title={view === "new" ? "新聊天" : conversationTitle}
         subtitle={view === "new" ? (mode === "工作" ? "新工作" : "个人智能体") : mode === "工作" ? "正在执行 · 等待确认" : "已有对话"}
-        tabs={<SegmentedControl value={mode} options={["聊天", "工作"] as const} onChange={setMode} label="会话模式" />}
+        tabs={<SegmentedControl value={mode} options={["聊天", "工作"] as const} onChange={onModeChange} label="会话模式" />}
         minimal={view === "new"}
         contextOpen={contextOpen}
         onOpenNavigation={onOpenNavigation}
@@ -38,46 +39,44 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
       ) : mode === "聊天" ? (
         <section className="existing-chat-thread">
           <div className="existing-chat-thread__messages">
-            <div className="message-row message-row--user">
-              <span className="avatar avatar--blue">张</span>
-              <div className="message-bubble">请帮我梳理这个需求里需要优先确认的关键问题。</div>
+            <div className="chat-turn chat-turn--user">
+              <p>请帮我梳理这个需求里需要优先确认的关键问题。</p>
             </div>
-            <div className="message-row message-row--assistant">
-              <span className="assistant-avatar"><Sparkles size={16} /></span>
-              <div className="assistant-response">
-                <p>围绕“{conversationTitle}”，建议先确认业务目标、知识与数据边界、输出用途，以及最终由谁验收。涉及文件写入或公共知识发布时，仍需单独确认。</p>
-              </div>
+            <div className="chat-tool-event"><Search size={14} /><span>已检索个人知识与公共知识</span></div>
+            <div className="chat-turn chat-turn--assistant">
+              <p>围绕“{conversationTitle}”，建议先确认业务目标、知识与数据边界、输出用途，以及最终由谁验收。涉及文件写入或公共知识发布时，仍需单独确认。</p>
             </div>
-            {lastMessage && <div className="chat-preview"><strong>你</strong><span>{lastMessage}</span></div>}
+            {lastMessage && <div className="chat-turn chat-turn--user"><p>{lastMessage}</p></div>}
           </div>
           <Composer compact mode="聊天" onSubmit={setLastMessage} />
         </section>
       ) : (
         <section className="work-thread">
-          <div className="message-row message-row--user">
-            <span className="avatar avatar--blue">张</span>
-            <div className="message-bubble">请根据访谈材料整理 AI 需求诊断卡，并生成项目卡草案。</div>
-          </div>
+          <div className="work-thread__messages">
+            <div className="message-row message-row--user">
+              <span className="avatar avatar--blue">张</span>
+              <div className="message-bubble">请根据访谈材料整理 AI 需求诊断卡，并生成项目卡草案。</div>
+            </div>
 
-          <div className="message-row message-row--assistant">
-            <span className="assistant-avatar"><Sparkles size={16} /></span>
-            <div className="assistant-response">
-              <p>好的，我已基于访谈材料与企业知识进行分析，正在按流程执行需求诊断。完成后会生成需求诊断卡（草案），并准备项目卡草案。等你的确认。</p>
-              <div className="run-summary">
-                <strong>正在执行 · 4/5</strong>
-                <ol className="run-steps">
-                  {runSteps.map((step) => (
-                    <li className={`run-step run-step--${step.state}`} key={step.label}>
-                      <span className="run-step__marker" aria-hidden="true">
-                        {step.state === "done" ? <Check size={11} /> : <Circle size={9} />}
-                      </span>
-                      <span>{step.label}</span>
-                      <time>{step.time}</time>
-                      <span className="run-step__detail">{step.detail}</span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
+            <div className="message-row message-row--assistant">
+              <span className="assistant-avatar"><Sparkles size={16} /></span>
+              <div className="assistant-response">
+                <p>好的，我已基于访谈材料与企业知识进行分析，正在按流程执行需求诊断。完成后会生成需求诊断卡（草案），并准备项目卡草案。等你的确认。</p>
+                <div className="run-summary">
+                  <strong>正在执行 · 4/5</strong>
+                  <ol className="run-steps">
+                    {runSteps.map((step) => (
+                      <li className={`run-step run-step--${step.state}`} key={step.label}>
+                        <span className="run-step__marker" aria-hidden="true">
+                          {step.state === "done" ? <Check size={11} /> : <Circle size={9} />}
+                        </span>
+                        <span>{step.label}</span>
+                        <time>{step.time}</time>
+                        <span className="run-step__detail">{step.detail}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
 
               <article className="diagnosis-document">
                 <h2>需求诊断卡（草案）</h2>
@@ -117,7 +116,8 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
                     <button className="secondary-button" type="button" onClick={() => setApproval("pending")}>恢复待确认</button>
                   )}
                 </div>
-              </article>
+                </article>
+              </div>
             </div>
           </div>
 

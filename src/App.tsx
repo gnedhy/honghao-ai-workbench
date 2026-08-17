@@ -17,6 +17,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [conversationView, setConversationView] = useState<ConversationView>("new");
   const [conversationTitle, setConversationTitle] = useState("跨部门 AI 需求诊断");
+  const [conversationMode, setConversationMode] = useState<"聊天" | "工作">("工作");
   const [selectedKnowledgeTitle, setSelectedKnowledgeTitle] = useState(knowledgeItems[0].title);
   const [selectedSkill, setSelectedSkill] = useState(skills[0]);
   const [selectedTask, setSelectedTask] = useState(tasks[0]);
@@ -71,16 +72,17 @@ function App() {
         onMobileClose={() => setMobileOpen(false)}
         onOpenSettings={() => { setProfileOpen(false); setSettingsOpen(true); }}
       />
-      {section === "chat" && <ConversationScreen key={`${conversationView}-${conversationTitle}`} {...screenChrome} view={conversationView} conversationTitle={conversationTitle} />}
+      {section === "chat" && <ConversationScreen key={`${conversationView}-${conversationTitle}`} {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} />}
       {section === "knowledge" && <KnowledgeScreen {...screenChrome} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
       {section === "automation" && <AutomationScreen {...screenChrome} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} />}
       {section === "tasks" && <TaskBoardScreen {...screenChrome} selectedTask={selectedTask} onSelectedTaskChange={setSelectedTask} />}
       <ContextSidebar
         section={section}
-        conversationTitle={conversationView === "new" ? "新工作" : conversationTitle}
+        conversationTitle={conversationView === "new" ? (conversationMode === "聊天" ? "新聊天" : "新工作") : conversationTitle}
+        conversationMode={conversationMode}
+        conversationView={conversationView}
         open={contextOpen}
         onClose={() => setContextOpen(false)}
-        onOpenTasks={() => { setSection("tasks"); setMobileOpen(false); }}
         onReturnChat={() => { setSection("chat"); setConversationView("existing"); setMobileOpen(false); }}
         knowledgeItem={knowledgeItems.find((item) => item.title === selectedKnowledgeTitle) ?? knowledgeItems[0]}
         skill={selectedSkill}

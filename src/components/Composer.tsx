@@ -104,6 +104,22 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
           >
             <Plus size={18} />
           </button>
+          {knowledgeContextEnabled && (
+            <button
+              className="composer__context-control"
+              type="button"
+              aria-label="关闭知识库引用"
+              aria-pressed="true"
+              title="关闭知识库引用"
+              onClick={() => setKnowledgeContextEnabled(false)}
+            >
+              <span className="composer__context-icon" aria-hidden="true">
+                <span className="composer__context-icon-default"><LibraryBig size={14} /></span>
+                <span className="composer__context-icon-remove"><X size={10} /></span>
+              </span>
+              <span>知识库</span>
+            </button>
+          )}
           <input className="composer__file-input" ref={fileInputRef} type="file" aria-label="选择文件" />
           <textarea
             aria-label="输入聊天消息"
@@ -214,7 +230,7 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
       <div className="composer__toolbar">
         <div className="composer__tools">
           <button
-            className={`icon-button composer__add-trigger${planningMode ? " is-planning" : ""}`}
+            className="icon-button composer__add-trigger"
             type="button"
             aria-label="打开工作工具菜单"
             aria-haspopup="menu"
@@ -278,6 +294,38 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
               )}
             </div>
           ))}
+          {knowledgeContextEnabled && (
+            <button
+              className="composer__context-control"
+              type="button"
+              aria-label="关闭知识库引用"
+              aria-pressed="true"
+              title="关闭知识库引用"
+              onClick={() => setKnowledgeContextEnabled(false)}
+            >
+              <span className="composer__context-icon" aria-hidden="true">
+                <span className="composer__context-icon-default"><LibraryBig size={14} /></span>
+                <span className="composer__context-icon-remove"><X size={10} /></span>
+              </span>
+              <span>知识库</span>
+            </button>
+          )}
+          {planningMode && (
+            <button
+              className="composer__context-control"
+              type="button"
+              aria-label="关闭计划模式"
+              aria-pressed="true"
+              title="关闭计划模式"
+              onClick={() => setPlanningMode(false)}
+            >
+              <span className="composer__context-icon" aria-hidden="true">
+                <span className="composer__context-icon-default"><ListChecks size={14} /></span>
+                <span className="composer__context-icon-remove"><X size={10} /></span>
+              </span>
+              <span>计划模式</span>
+            </button>
+          )}
         </div>
         <button className="round-action composer__submit" type="button" aria-label="交给智能体执行" onClick={submit} disabled={!message.trim()}>
           <ArrowUp size={16} />
