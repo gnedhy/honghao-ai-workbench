@@ -35,6 +35,24 @@ npm.cmd run dev
 
 默认地址：`http://127.0.0.1:4173/`
 
+## 在另一台电脑继续开发
+
+首次在新电脑上接续项目：
+
+```powershell
+gh auth login
+gh repo clone gnedhy/honghao-ai-workbench
+cd honghao-ai-workbench
+npm.cmd install
+npm.cmd run dev
+```
+
+后续开始工作前同步远端更新：
+
+```powershell
+git pull --ff-only
+```
+
 ## 当前阶段
 
 1. 完成立项基线与“个人 AI 会话优先”的 V0.2 信息架构方案。
