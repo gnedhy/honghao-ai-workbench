@@ -64,8 +64,8 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
         <div className="composer__tools">
           <button className="icon-button" type="button" aria-label="添加附件"><Paperclip size={18} /></button>
         </div>
-        <button className="primary-button composer__submit" type="button" onClick={submit} disabled={!message.trim()}>
-          <ArrowUp size={17} /><span>交给智能体执行</span>
+        <button className="round-action composer__submit" type="button" aria-label="交给智能体执行" onClick={submit} disabled={!message.trim()}>
+          <ArrowUp size={17} />
         </button>
       </div>
     </div>

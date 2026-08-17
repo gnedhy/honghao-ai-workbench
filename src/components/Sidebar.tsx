@@ -70,11 +70,10 @@ export function Sidebar({
       {mobileOpen && <button className="sidebar-backdrop" type="button" aria-label="关闭导航" onClick={onMobileClose} />}
       <aside className={mobileOpen ? "sidebar is-mobile-open" : "sidebar"}>
         <div className="sidebar__brand">
-          <button className="brand-button" type="button" aria-label="切换工作空间">
+          <div className="brand-button">
             <BrandMark />
             <span className="brand-button__label">宏昊 AI</span>
-            <ChevronDown className="brand-button__chevron" size={14} />
-          </button>
+          </div>
           <div className="sidebar__brand-actions">
             <button className="icon-button sidebar__search" type="button" aria-label="搜索"><Search size={18} /></button>
             <button className="icon-button sidebar__close" type="button" aria-label="关闭导航" onClick={onMobileClose}><X size={18} /></button>

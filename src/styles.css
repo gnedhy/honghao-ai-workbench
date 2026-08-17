@@ -68,8 +68,7 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 
 .sidebar { position: relative; z-index: 20; display: flex; min-width: 0; height: 100%; flex-direction: column; background: var(--sidebar); border-right: 1px solid rgba(213,220,225,.65); }
 .sidebar__brand { display: flex; height: 68px; align-items: center; justify-content: space-between; padding: 12px 14px 8px 16px; }
-.brand-button { display: flex; align-items: center; gap: 9px; padding: 6px; border-radius: 10px; background: transparent; font-size: 16px; font-weight: 620; cursor: pointer; }
-.brand-button:hover { background: rgba(47,48,51,.05); }
+.brand-button { display: flex; align-items: center; gap: 9px; padding: 6px; border-radius: 10px; font-size: 16px; font-weight: 620; }
 .brand-mark { display: grid; width: 32px; height: 32px; place-items: center; flex: none; }
 .brand-mark svg { display: block; width: 32px; height: 32px; }
 .brand-mark rect { fill: var(--primary); }
@@ -206,7 +205,7 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .composer textarea::placeholder { color: #a3a9af; }
 .composer__toolbar { display: flex; min-height: 44px; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 10px; }
 .composer__tools { display: flex; align-items: center; gap: 3px; }
-.composer__submit { min-height: 36px; }
+.composer__submit { width: 36px; height: 36px; min-height: 36px; }
 .composer--compact { width: min(650px, calc(100vw - 48px)); margin: 25px auto 0; border-radius: 24px; }
 .composer__compact-row { display: flex; min-height: 46px; align-items: center; gap: 3px; padding: 4px 7px; }
 .composer--compact textarea { min-width: 0; min-height: 36px; max-height: 84px; flex: 1; padding: 8px 4px; }
@@ -372,7 +371,6 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   .diff-view::-webkit-scrollbar { height: 0; }
   .changeset__footer, .task-board__toolbar { align-items: stretch; flex-direction: column; }
   .changeset__actions { justify-content: flex-end; }
-  .composer__submit span { display: none; }
   .composer__submit { width: 36px; padding: 0; border-radius: 50%; }
   .workspace-layout { display: block; height: auto; }
   .workspace-list-panel { max-height: 310px; padding: 20px 14px; border-right: 0; border-bottom: 1px solid var(--border); }
