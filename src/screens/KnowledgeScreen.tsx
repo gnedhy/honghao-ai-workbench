@@ -1,9 +1,10 @@
 import { BookOpen, FileText, MoreHorizontal, Plus, Search, ShieldCheck, UserRound } from "lucide-react";
 import { useState } from "react";
 import { SegmentedControl } from "../components/SegmentedControl";
+import { TopBar, type ScreenChromeProps } from "../components/TopBar";
 import { knowledgeItems } from "../data";
 
-export function KnowledgeScreen() {
+export function KnowledgeScreen({ contextOpen, onOpenNavigation, onToggleContext }: ScreenChromeProps) {
   const [scope, setScope] = useState<"个人知识" | "公共知识">("个人知识");
   const [selected, setSelected] = useState(knowledgeItems[0].title);
   const visibleItems = knowledgeItems.filter((item) => item.scope === scope);
@@ -11,10 +12,15 @@ export function KnowledgeScreen() {
 
   return (
     <main className="app-main">
-      <header className="screen-header screen-header--centered-tabs">
-        <SegmentedControl value={scope} options={["个人知识", "公共知识"] as const} onChange={(value) => { setScope(value); setSelected(knowledgeItems.find((item) => item.scope === value)?.title ?? ""); }} label="知识范围" />
-        <button className="primary-button header-action" type="button"><Plus size={16} />新建知识</button>
-      </header>
+      <TopBar
+        title="知识"
+        subtitle={`${visibleItems.length} 条内容`}
+        tabs={<SegmentedControl value={scope} options={["个人知识", "公共知识"] as const} onChange={(value) => { setScope(value); setSelected(knowledgeItems.find((item) => item.scope === value)?.title ?? ""); }} label="知识范围" />}
+        action={<button className="primary-button header-action" type="button"><Plus size={16} /><span>新建知识</span></button>}
+        contextOpen={contextOpen}
+        onOpenNavigation={onOpenNavigation}
+        onToggleContext={onToggleContext}
+      />
       <section className="workspace-layout">
         <aside className="workspace-list-panel">
           <div className="workspace-panel-title"><div><h1>知识</h1><p>{visibleItems.length} 条内容</p></div><button className="icon-button" type="button"><MoreHorizontal size={17} /></button></div>

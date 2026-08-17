@@ -1,19 +1,25 @@
 import { CheckCircle2, ChevronRight, MoreHorizontal, Play, Plus, Search, WandSparkles, Workflow } from "lucide-react";
 import { useState } from "react";
 import { SegmentedControl } from "../components/SegmentedControl";
+import { TopBar, type ScreenChromeProps } from "../components/TopBar";
 import { skills } from "../data";
 
-export function AutomationScreen() {
+export function AutomationScreen({ contextOpen, onOpenNavigation, onToggleContext }: ScreenChromeProps) {
   const [tab, setTab] = useState<"Skills" | "Workflows">("Skills");
   const [selectedSkill, setSelectedSkill] = useState(skills[0]);
   const [testResult, setTestResult] = useState("");
 
   return (
     <main className="app-main">
-      <header className="screen-header screen-header--centered-tabs">
-        <SegmentedControl value={tab} options={["Skills", "Workflows"] as const} onChange={setTab} label="自动化类型" />
-        <button className="primary-button header-action" type="button"><Plus size={16} />{tab === "Skills" ? "创建 Skill" : "创建 Workflow"}</button>
-      </header>
+      <TopBar
+        title="自动化"
+        subtitle={tab === "Skills" ? "企业能力库" : "流程编排"}
+        tabs={<SegmentedControl value={tab} options={["Skills", "Workflows"] as const} onChange={setTab} label="自动化类型" />}
+        action={<button className="primary-button header-action" type="button"><Plus size={16} /><span>{tab === "Skills" ? "创建 Skill" : "创建 Workflow"}</span></button>}
+        contextOpen={contextOpen}
+        onOpenNavigation={onOpenNavigation}
+        onToggleContext={onToggleContext}
+      />
       {tab === "Skills" ? (
         <section className="workspace-layout">
           <aside className="workspace-list-panel">

@@ -2,20 +2,28 @@ import { Check, Circle, ExternalLink, Info, MoreHorizontal, Sparkles } from "luc
 import { useState } from "react";
 import { Composer } from "../components/Composer";
 import { SegmentedControl } from "../components/SegmentedControl";
+import { TopBar, type ScreenChromeProps } from "../components/TopBar";
 import { runSteps } from "../data";
 import type { WorkApproval } from "../types";
 
-export function ConversationScreen() {
+type ConversationScreenProps = ScreenChromeProps & { onOpenTasks: () => void };
+
+export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleContext, onOpenTasks }: ConversationScreenProps) {
   const [mode, setMode] = useState<"聊天" | "工作">("工作");
   const [approval, setApproval] = useState<WorkApproval>("pending");
   const [lastMessage, setLastMessage] = useState("");
 
   return (
     <main className="app-main conversation-screen">
-      <header className="screen-header screen-header--centered-tabs">
-        <SegmentedControl value={mode} options={["聊天", "工作"] as const} onChange={setMode} label="会话模式" />
-        {mode === "工作" && <button className="secondary-button header-action" type="button"><ExternalLink size={16} />打开到任务看板</button>}
-      </header>
+      <TopBar
+        title={mode === "工作" ? "跨部门 AI 需求诊断" : "新聊天"}
+        subtitle={mode === "工作" ? "正在执行 · 等待确认" : "个人智能体"}
+        tabs={<SegmentedControl value={mode} options={["聊天", "工作"] as const} onChange={setMode} label="会话模式" />}
+        action={mode === "工作" ? <button className="secondary-button header-action" type="button" onClick={onOpenTasks}><ExternalLink size={16} /><span>打开任务看板</span></button> : undefined}
+        contextOpen={contextOpen}
+        onOpenNavigation={onOpenNavigation}
+        onToggleContext={onToggleContext}
+      />
 
       {mode === "聊天" ? (
         <section className="chat-empty-state">
@@ -28,11 +36,6 @@ export function ConversationScreen() {
         </section>
       ) : (
         <section className="work-thread">
-          <div className="work-thread__title-row">
-            <h1>跨部门 AI 需求诊断</h1>
-            <button className="icon-button" type="button" aria-label="更多操作"><MoreHorizontal size={18} /></button>
-          </div>
-
           <div className="message-row message-row--user">
             <span className="avatar avatar--blue">张</span>
             <div className="message-bubble">请根据访谈材料整理 AI 需求诊断卡，并生成项目卡草案。</div>

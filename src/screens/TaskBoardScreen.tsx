@@ -1,17 +1,23 @@
 import { ArrowUpRight, CheckCircle2, CircleDot, Clock3, MoreHorizontal, PauseCircle, RotateCcw, Search } from "lucide-react";
 import { useState } from "react";
 import { SegmentedControl } from "../components/SegmentedControl";
+import { TopBar, type ScreenChromeProps } from "../components/TopBar";
 import { tasks } from "../data";
 
-export function TaskBoardScreen() {
+export function TaskBoardScreen({ contextOpen, onOpenNavigation, onToggleContext }: ScreenChromeProps) {
   const [tab, setTab] = useState<"任务管理" | "运行记录">("任务管理");
   const [activeTask, setActiveTask] = useState(tasks[0]);
 
   return (
     <main className="app-main">
-      <header className="screen-header screen-header--centered-tabs">
-        <SegmentedControl value={tab} options={["任务管理", "运行记录"] as const} onChange={setTab} label="任务看板类型" />
-      </header>
+      <TopBar
+        title="任务看板"
+        subtitle={tab === "任务管理" ? "3 个任务" : "运行与审批历史"}
+        tabs={<SegmentedControl value={tab} options={["任务管理", "运行记录"] as const} onChange={setTab} label="任务看板类型" />}
+        contextOpen={contextOpen}
+        onOpenNavigation={onOpenNavigation}
+        onToggleContext={onToggleContext}
+      />
       {tab === "任务管理" ? (
         <section className="task-board">
           <div className="task-board__toolbar"><div><h1>任务管理</h1><p>由工作模式产生的持久执行对象</p></div><label className="search-field search-field--short"><Search size={16} /><input aria-label="搜索任务" placeholder="搜索任务" /></label></div>

@@ -1,5 +1,6 @@
 import { Check, ChevronRight, ShieldCheck, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { ContextSidebar } from "./components/ContextSidebar";
 import { Sidebar } from "./components/Sidebar";
 import { AutomationScreen } from "./screens/AutomationScreen";
 import { ConversationScreen } from "./screens/ConversationScreen";
@@ -11,6 +12,7 @@ function App() {
   const [section, setSection] = useState<Section>("chat");
   const [profileOpen, setProfileOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(() => window.matchMedia("(min-width: 1180px)").matches);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
@@ -19,27 +21,57 @@ function App() {
         setProfileOpen(false);
         setSettingsOpen(false);
         setMobileOpen(false);
+        setContextOpen(false);
       }
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, []);
 
+  useEffect(() => {
+    const desktopQuery = window.matchMedia("(min-width: 1180px)");
+    const syncContext = (event: MediaQueryListEvent) => setContextOpen(event.matches);
+    desktopQuery.addEventListener("change", syncContext);
+    return () => desktopQuery.removeEventListener("change", syncContext);
+  }, []);
+
+  const openNavigation = () => {
+    setContextOpen(false);
+    setMobileOpen(true);
+  };
+
+  const toggleContext = () => {
+    setMobileOpen(false);
+    setContextOpen((open) => !open);
+  };
+
+  const screenChrome = {
+    contextOpen,
+    onOpenNavigation: openNavigation,
+    onToggleContext: toggleContext,
+  };
+
   return (
-    <div className="app-shell">
+    <div className={contextOpen ? "app-shell has-context" : "app-shell"}>
       <Sidebar
         activeSection={section}
-        onSectionChange={(nextSection) => { setSection(nextSection); setProfileOpen(false); }}
+        onSectionChange={(nextSection) => { setSection(nextSection); setProfileOpen(false); setMobileOpen(false); }}
         profileOpen={profileOpen}
         onProfileToggle={() => setProfileOpen((open) => !open)}
         mobileOpen={mobileOpen}
-        onMobileToggle={() => setMobileOpen((open) => !open)}
+        onMobileClose={() => setMobileOpen(false)}
         onOpenSettings={() => { setProfileOpen(false); setSettingsOpen(true); }}
       />
-      {section === "chat" && <ConversationScreen />}
-      {section === "knowledge" && <KnowledgeScreen />}
-      {section === "automation" && <AutomationScreen />}
-      {section === "tasks" && <TaskBoardScreen />}
+      {section === "chat" && <ConversationScreen {...screenChrome} onOpenTasks={() => setSection("tasks")} />}
+      {section === "knowledge" && <KnowledgeScreen {...screenChrome} />}
+      {section === "automation" && <AutomationScreen {...screenChrome} />}
+      {section === "tasks" && <TaskBoardScreen {...screenChrome} />}
+      <ContextSidebar
+        section={section}
+        open={contextOpen}
+        onClose={() => setContextOpen(false)}
+        onOpenTasks={() => { setSection("tasks"); setMobileOpen(false); }}
+      />
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
     </div>
   );

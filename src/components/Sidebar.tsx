@@ -5,7 +5,6 @@ import {
   FolderKanban,
   LibraryBig,
   LogOut,
-  Menu,
   MessageCircle,
   PenLine,
   Pin,
@@ -24,7 +23,7 @@ type SidebarProps = {
   profileOpen: boolean;
   onProfileToggle: () => void;
   mobileOpen: boolean;
-  onMobileToggle: () => void;
+  onMobileClose: () => void;
   onOpenSettings: () => void;
 };
 
@@ -41,20 +40,17 @@ export function Sidebar({
   profileOpen,
   onProfileToggle,
   mobileOpen,
-  onMobileToggle,
+  onMobileClose,
   onOpenSettings,
 }: SidebarProps) {
   const selectSection = (section: Section) => {
     onSectionChange(section);
-    onMobileToggle();
+    onMobileClose();
   };
 
   return (
     <>
-      <button className="mobile-menu-button icon-button" type="button" onClick={onMobileToggle} aria-label="打开导航">
-        <Menu size={19} />
-      </button>
-      {mobileOpen && <button className="sidebar-backdrop" type="button" aria-label="关闭导航" onClick={onMobileToggle} />}
+      {mobileOpen && <button className="sidebar-backdrop" type="button" aria-label="关闭导航" onClick={onMobileClose} />}
       <aside className={mobileOpen ? "sidebar is-mobile-open" : "sidebar"}>
         <div className="sidebar__brand">
           <button className="brand-button" type="button" aria-label="切换工作空间">
@@ -66,7 +62,7 @@ export function Sidebar({
           </button>
           <div className="sidebar__brand-actions">
             <button className="icon-button" type="button" aria-label="搜索"><Search size={18} /></button>
-            <button className="icon-button sidebar__close" type="button" aria-label="关闭导航" onClick={onMobileToggle}><X size={18} /></button>
+            <button className="icon-button sidebar__close" type="button" aria-label="关闭导航" onClick={onMobileClose}><X size={18} /></button>
           </div>
         </div>
 
