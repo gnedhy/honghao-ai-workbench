@@ -1,10 +1,14 @@
 export const pinnedConversations = ["跨部门 AI 需求诊断", "个人知识整理"];
 
 export const projectGroups = [
-  { title: "宏昊 AI 中台", conversations: ["产品原型与交互", "模型接口验证", "首条工作流"] },
-  { title: "部门需求治理", conversations: ["客服知识库优化", "部门访谈整理"] },
-  { title: "知识与技能", conversations: ["知识沉淀规则", "技能使用复盘"] },
+  { title: "宏昊 AI 中台", conversations: ["产品原型与交互", "模型接口验证", "首条工作流", "项目周报更新"] },
+  { title: "部门需求治理", conversations: ["跨部门 AI 需求诊断", "客服知识库优化", "部门访谈整理"] },
+  { title: "知识与技能", conversations: ["个人知识整理", "知识沉淀规则", "技能使用复盘"] },
 ];
+
+export const initialConversationProjects = Object.fromEntries(
+  projectGroups.flatMap((project) => project.conversations.map((title) => [title, project.title])),
+) as Record<string, string>;
 
 export const recentConversations = [
   "客服知识库优化",
@@ -22,10 +26,10 @@ export const runSteps = [
 ] as const;
 
 export const knowledgeItems = [
-  { title: "AI 需求诊断方法", scope: "个人知识", updated: "今天 10:24", tags: ["需求诊断", "方法"] },
-  { title: "跨部门访谈问题清单", scope: "个人知识", updated: "昨天 17:40", tags: ["访谈", "项目"] },
+  { title: "AI 需求诊断方法", scope: "个人知识", updated: "今天 10:24", tags: ["需求诊断", "方法"], project: "部门需求治理" },
+  { title: "跨部门访谈问题清单", scope: "个人知识", updated: "昨天 17:40", tags: ["访谈", "项目"], project: "部门需求治理" },
   { title: "企业知识发布规范", scope: "公共知识", updated: "8 月 15 日", tags: ["制度", "审核"] },
-  { title: "修改确认边界", scope: "公共知识", updated: "8 月 14 日", tags: ["安全", "审批"] },
+  { title: "修改确认边界", scope: "公共知识", updated: "8 月 14 日", tags: ["安全", "审批"], project: "宏昊 AI 中台" },
 ];
 
 export const skills = [
@@ -41,7 +45,7 @@ export const workflows = [
 ];
 
 export const tasks = [
-  { title: "跨部门 AI 需求诊断", status: "等待确认", owner: "张伟", updated: "刚刚", progress: "4 / 5" },
-  { title: "客服知识库优化", status: "运行中", owner: "张伟", updated: "12 分钟前", progress: "2 / 4" },
-  { title: "部门访谈整理", status: "已完成", owner: "张伟", updated: "昨天", progress: "5 / 5" },
+  { title: "跨部门 AI 需求诊断", status: "等待确认", owner: "张伟", updated: "刚刚", progress: "4 / 5", project: "部门需求治理" },
+  { title: "客服知识库优化", status: "运行中", owner: "张伟", updated: "12 分钟前", progress: "2 / 4", project: "部门需求治理" },
+  { title: "部门访谈整理", status: "已完成", owner: "张伟", updated: "昨天", progress: "5 / 5", project: "部门需求治理" },
 ];

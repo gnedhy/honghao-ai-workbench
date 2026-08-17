@@ -11,9 +11,11 @@ type ConversationScreenProps = ScreenChromeProps & {
   conversationTitle: string;
   mode: "聊天" | "工作";
   onModeChange: (mode: "聊天" | "工作") => void;
+  projectTitle: string | null;
+  onProjectChange: (project: string | null) => void;
 };
 
-export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleContext, view, conversationTitle, mode, onModeChange }: ConversationScreenProps) {
+export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleContext, view, conversationTitle, mode, onModeChange, projectTitle, onProjectChange }: ConversationScreenProps) {
   const [approval, setApproval] = useState<WorkApproval>("pending");
   const [lastMessage, setLastMessage] = useState("");
 
@@ -33,7 +35,7 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
         <section key={mode} className={`new-conversation-empty new-conversation-empty--${mode === "工作" ? "work" : "chat"}`}>
           <div className="new-conversation-empty__content">
             <h1>{mode === "工作" ? "我们该处理什么工作？" : "随时可以开始。"}</h1>
-            <Composer compact={mode === "聊天"} empty mode={mode} onSubmit={setLastMessage} />
+            <Composer compact={mode === "聊天"} empty mode={mode} onSubmit={setLastMessage} project={projectTitle} onProjectChange={onProjectChange} />
           </div>
         </section>
       ) : mode === "聊天" ? (
@@ -120,7 +122,7 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
             </div>
           </div>
 
-          <Composer mode="工作" onSubmit={setLastMessage} />
+          <Composer mode="工作" onSubmit={setLastMessage} project={projectTitle} onProjectChange={onProjectChange} />
         </section>
       )}
     </main>

@@ -16,7 +16,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import userAvatar from "../assets/avatar-zhang-wei-v1.png";
 import { pinnedConversations, projectGroups, recentConversations } from "../data";
 import type { Section } from "../types";
@@ -24,6 +24,8 @@ import type { Section } from "../types";
 type SidebarProps = {
   activeSection: Section;
   selectedConversationTitle: string | null;
+  selectedProjectTitle: string | null;
+  conversationProjects: Record<string, string>;
   onSectionChange: (section: Section) => void;
   onNewConversation: () => void;
   onConversationOpen: (title: string) => void;
@@ -44,6 +46,8 @@ const navItems = [
 export function Sidebar({
   activeSection,
   selectedConversationTitle,
+  selectedProjectTitle,
+  conversationProjects,
   onSectionChange,
   onNewConversation,
   onConversationOpen,
@@ -54,6 +58,10 @@ export function Sidebar({
   onOpenSettings,
 }: SidebarProps) {
   const [expandedProject, setExpandedProject] = useState(projectGroups[0].title);
+
+  useEffect(() => {
+    if (selectedProjectTitle) setExpandedProject(selectedProjectTitle);
+  }, [selectedProjectTitle]);
 
   const selectSection = (section: Section) => {
     onSectionChange(section);
@@ -113,6 +121,7 @@ export function Sidebar({
           <SidebarGroup title="项目">
             {projectGroups.map((project, index) => {
               const expanded = expandedProject === project.title;
+              const conversations = Object.entries(conversationProjects).filter(([, projectTitle]) => projectTitle === project.title).map(([title]) => title);
               return (
                 <div className="project-entry" key={project.title}>
                   <button className={expanded ? "project-row is-expanded" : "project-row"} type="button" aria-expanded={expanded} onClick={() => setExpandedProject(expanded ? "" : project.title)}>
@@ -122,7 +131,7 @@ export function Sidebar({
                   </button>
                   {expanded && (
                     <div className="project-thread-list">
-                      {project.conversations.map((title) => (
+                      {conversations.map((title) => (
                         <button className={activeSection === "chat" && selectedConversationTitle === title ? "project-thread is-active" : "project-thread"} type="button" key={title} onClick={() => openConversation(title)}>
                           <span>{title}</span>
                         </button>

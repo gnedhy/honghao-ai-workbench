@@ -9,11 +9,12 @@ type ComposerProps = {
   empty?: boolean;
   mode?: "聊天" | "工作";
   onSubmit?: (message: string) => void;
+  project?: string | null;
+  onProjectChange?: (project: string | null) => void;
 };
 
-export function Composer({ compact = false, empty = false, mode = "工作", onSubmit }: ComposerProps) {
+export function Composer({ compact = false, empty = false, mode = "工作", onSubmit, project = null, onProjectChange }: ComposerProps) {
   const [message, setMessage] = useState("");
-  const [project, setProject] = useState<string | null>("宏昊 AI 中台");
   const [chatMenuOpen, setChatMenuOpen] = useState(false);
   const [workMenuOpen, setWorkMenuOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
@@ -248,7 +249,7 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
               type="button"
               aria-label={`移除项目：${project}`}
               title="移除项目"
-              onClick={() => setProject(null)}
+              onClick={() => onProjectChange?.(null)}
             >
               <span className="composer__project-icon" aria-hidden="true">
                 <span className={`project-mark project-mark--${projectIndex + 1} composer__project-icon-default`}><FolderClosed size={14} /></span>
@@ -274,7 +275,7 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
               </button>
               {projectMenuOpen && (
                 <div className="composer__project-menu" role="menu" aria-label="选择项目">
-                  <span className="composer__menu-label">项目</span>
+                  <span className="composer__menu-label">项目上下文</span>
                   {projectGroups.map((item, index) => (
                     <button
                       className="composer__project-option"
@@ -282,7 +283,7 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
                       role="menuitem"
                       key={item.title}
                       onClick={() => {
-                        setProject(item.title);
+                        onProjectChange?.(item.title);
                         setProjectMenuOpen(false);
                       }}
                     >

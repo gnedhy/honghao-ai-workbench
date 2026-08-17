@@ -2,12 +2,12 @@ import { Check, ChevronRight, ShieldCheck, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ContextSidebar } from "./components/ContextSidebar";
 import { Sidebar } from "./components/Sidebar";
-import { knowledgeItems, skills, tasks, workflows } from "./data";
+import { initialConversationProjects, knowledgeItems, projectGroups, skills, tasks, workflows } from "./data";
 import { AutomationScreen } from "./screens/AutomationScreen";
 import { ConversationScreen } from "./screens/ConversationScreen";
 import { KnowledgeScreen } from "./screens/KnowledgeScreen";
 import { TaskBoardScreen } from "./screens/TaskBoardScreen";
-import type { ConversationView, Section } from "./types";
+import type { ConversationView, Section, TaskItem } from "./types";
 
 function App() {
   const [section, setSection] = useState<Section>("chat");
@@ -21,11 +21,13 @@ function App() {
   const [conversationView, setConversationView] = useState<ConversationView>("new");
   const [conversationTitle, setConversationTitle] = useState("跨部门 AI 需求诊断");
   const [conversationMode, setConversationMode] = useState<"聊天" | "工作">("工作");
+  const [selectedProjectTitle, setSelectedProjectTitle] = useState<string | null>(projectGroups[0].title);
+  const [conversationProjects, setConversationProjects] = useState<Record<string, string>>(() => ({ ...initialConversationProjects }));
   const [selectedKnowledgeTitle, setSelectedKnowledgeTitle] = useState(knowledgeItems[0].title);
   const [automationTab, setAutomationTab] = useState<"技能" | "工作流">("技能");
   const [selectedSkill, setSelectedSkill] = useState(skills[0]);
   const [selectedWorkflow, setSelectedWorkflow] = useState(workflows[0]);
-  const [selectedTask, setSelectedTask] = useState(tasks[0]);
+  const [selectedTask, setSelectedTask] = useState<TaskItem>(tasks[0]);
 
   const closeContext = useCallback(() => {
     if (!contextOpen) return;
@@ -84,24 +86,27 @@ function App() {
       <Sidebar
         activeSection={section}
         selectedConversationTitle={conversationView === "existing" ? conversationTitle : null}
+        conversationProjects={conversationProjects}
         onSectionChange={(nextSection) => { setSection(nextSection); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
         onNewConversation={() => { setSection("chat"); setConversationView("new"); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
-        onConversationOpen={(title) => { setSection("chat"); setConversationView("existing"); setConversationTitle(title); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
+        selectedProjectTitle={selectedProjectTitle}
+        onConversationOpen={(title) => { setSection("chat"); setConversationView("existing"); setConversationTitle(title); setSelectedProjectTitle(conversationProjects[title] ?? null); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
         profileOpen={profileOpen}
         onProfileToggle={() => setProfileOpen((open) => !open)}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
         onOpenSettings={() => { setProfileOpen(false); setSettingsOpen(true); }}
       />
-      {section === "chat" && <ConversationScreen key={`${conversationView}-${conversationTitle}`} {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} />}
-      {section === "knowledge" && <KnowledgeScreen {...screenChrome} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
+      {section === "chat" && <ConversationScreen key={`${conversationView}-${conversationTitle}`} {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projectTitle={selectedProjectTitle} onProjectChange={(project) => { setSelectedProjectTitle(project); if (conversationView === "existing") setConversationProjects((current) => { const next = { ...current }; if (project) next[conversationTitle] = project; else delete next[conversationTitle]; return next; }); }} />}
+      {section === "knowledge" && <KnowledgeScreen {...screenChrome} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={(title) => { setSelectedKnowledgeTitle(title); const item = knowledgeItems.find((knowledge) => knowledge.title === title); if (item?.project) setSelectedProjectTitle(item.project); }} />}
       {section === "automation" && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
-      {section === "tasks" && <TaskBoardScreen {...screenChrome} selectedTask={selectedTask} onSelectedTaskChange={setSelectedTask} />}
+      {section === "tasks" && <TaskBoardScreen {...screenChrome} selectedTask={selectedTask} onSelectedTaskChange={(task) => { setSelectedTask(task); if (task.project) setSelectedProjectTitle(task.project); }} />}
       <ContextSidebar
         section={section}
         conversationTitle={conversationView === "new" ? (conversationMode === "聊天" ? "新聊天" : "新工作") : conversationTitle}
         conversationMode={conversationMode}
         conversationView={conversationView}
+        projectTitle={selectedProjectTitle}
         automationTab={automationTab}
         open={contextOpen}
         closing={contextClosing}

@@ -9,6 +9,7 @@ export type KnowledgeItem = {
   scope: string;
   updated: string;
   tags: string[];
+  project?: string;
 };
 
 export type SkillItem = {
@@ -36,4 +37,5 @@ export type TaskItem = {
   owner: string;
   updated: string;
   progress: string;
+  project?: string;
 };

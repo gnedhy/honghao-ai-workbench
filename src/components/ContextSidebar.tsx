@@ -6,6 +6,7 @@ import {
   Database,
   Download,
   FileText,
+  FolderClosed,
   FolderLock,
   GitBranch,
   History,
@@ -26,6 +27,7 @@ type ContextSidebarProps = {
   conversationTitle: string;
   conversationMode: "聊天" | "工作";
   conversationView: "new" | "existing";
+  projectTitle: string | null;
   automationTab: "技能" | "工作流";
   open: boolean;
   closing: boolean;
@@ -44,6 +46,7 @@ export function ContextSidebar({
   conversationTitle,
   conversationMode,
   conversationView,
+  projectTitle,
   automationTab,
   open,
   closing,
@@ -78,12 +81,13 @@ export function ContextSidebar({
               {conversationMode === "聊天" ? (
                 <>
                   <ToolSection title="本次上下文">
+                    <PropertyRow icon={<FolderClosed size={16} />} label="关联项目" value={conversationView === "existing" ? projectTitle ?? "未关联" : "未关联"} />
                     <PropertyRow icon={<Database size={16} />} label="知识访问" value="按需引用" />
                     <PropertyRow icon={<FileText size={16} />} label="当前引用" value={conversationView === "existing" ? "2 条知识" : "暂无"} />
                     <PropertyRow icon={<FolderLock size={16} />} label="本次附件" value={conversationView === "existing" ? "1 个 · 仅当前会话" : "暂无"} />
                   </ToolSection>
                   <ToolSection title="对话边界">
-                    <PropertyRow icon={<ShieldCheck size={16} />} label="会话类型" value={conversationView === "existing" ? "项目会话" : "个人会话"} />
+                    <PropertyRow icon={<ShieldCheck size={16} />} label="会话类型" value={conversationView === "existing" && projectTitle ? "项目上下文" : "个人对话"} />
                     <PropertyRow icon={<FolderLock size={16} />} label="写入权限" value="关闭" />
                     <PropertyRow icon={<CheckCircle2 size={16} />} label="知识沉淀" value={conversationView === "existing" ? "确认后保存" : "尚未启用"} />
                   </ToolSection>
@@ -92,11 +96,12 @@ export function ContextSidebar({
               ) : (
                 <>
                   <ToolSection title="执行环境">
+                    <PropertyRow icon={<FolderClosed size={16} />} label="项目上下文" value={projectTitle ?? "未选择"} />
                     <ToolSelect icon={<Database size={16} />} label="知识范围" value={knowledgeScope} onChange={setKnowledgeScope} options={["个人与公共知识", "仅个人知识", "仅本次附件"]} />
                     <ToolSelect icon={<WandSparkles size={16} />} label="执行模型" value={model} onChange={setModel} options={["宏昊企业模型", "通用模型", "轻量模型"]} />
                     <div className="tool-setting">
                       <span className="tool-setting__label"><FolderLock size={16} /><small>工作目录</small></span>
-                      <span className="tool-setting__value"><strong>受控项目目录</strong><span><CheckCircle2 size={14} />已授权</span></span>
+                      <span className="tool-setting__value"><strong>{projectTitle ? "项目受控目录" : "临时受控目录"}</strong><span><CheckCircle2 size={14} />已授权</span></span>
                     </div>
                   </ToolSection>
                   {conversationView === "existing" ? (
@@ -111,7 +116,7 @@ export function ContextSidebar({
                       <PropertyRow icon={<ShieldCheck size={16} />} label="外部操作" value="默认禁止" />
                     </ToolSection>
                   )}
-                  <div className="tool-safety-note"><ShieldCheck size={16} /><p>任何文件写入都会先生成修改预览，并等待你的确认。</p></div>
+                  <div className="tool-safety-note"><ShieldCheck size={16} /><p>项目只提供本次工作的上下文与受控目录。任何写入仍会先生成修改预览，并等待你的确认。</p></div>
                 </>
               )}
             </>
@@ -156,6 +161,7 @@ function KnowledgeStatusTools({ item, onFeedback }: { item: KnowledgeItem; onFee
     { icon: <Download size={16} />, title: "导出 Markdown", subtitle: "保留正文与来源信息", feedback: "Markdown 导出已准备。" },
   ]} infoTitle="发布属性" properties={[
     { icon: <FileText size={16} />, label: "空间", value: "公共知识库" },
+    ...(item.project ? [{ icon: <FolderClosed size={16} />, label: "关联项目", value: item.project }] : []),
     { icon: <CheckCircle2 size={16} />, label: "状态", value: "已发布 · 只读" },
     { icon: <History size={16} />, label: "最后更新", value: item.updated },
     { icon: <ShieldCheck size={16} />, label: "来源", value: "已审查 · 可追溯" },
@@ -167,6 +173,7 @@ function KnowledgeStatusTools({ item, onFeedback }: { item: KnowledgeItem; onFee
     { icon: <History size={16} />, title: "查看编辑记录", subtitle: "回看个人沉淀过程", feedback: "已打开个人知识编辑记录。" },
   ]} infoTitle="文档属性" properties={[
     { icon: <FileText size={16} />, label: "空间", value: "个人知识库" },
+    ...(item.project ? [{ icon: <FolderClosed size={16} />, label: "关联项目", value: item.project }] : []),
     { icon: <CheckCircle2 size={16} />, label: "状态", value: "本人可编辑" },
     { icon: <History size={16} />, label: "最后更新", value: item.updated },
     { icon: <Tags size={16} />, label: "标签", value: item.tags.join("、") },
@@ -179,6 +186,7 @@ function TaskStatusTools({ task, paused, onPauseToggle, onReturnChat, onFeedback
     { icon: <ArrowLeft size={16} />, title: "返回来源会话", subtitle: task.title, onSelect: onReturnChat },
   ]} infoTitle="确认信息" properties={[
     { icon: <CheckCircle2 size={16} />, label: "检查点", value: "等待人工确认" },
+    { icon: <FolderClosed size={16} />, label: "关联项目", value: task.project ?? "未关联" },
     { icon: <History size={16} />, label: "进度", value: task.progress },
     { icon: <WandSparkles size={16} />, label: "负责人", value: task.owner },
     { icon: <FolderLock size={16} />, label: "写入状态", value: "尚未应用" },
@@ -192,6 +200,7 @@ function TaskStatusTools({ task, paused, onPauseToggle, onReturnChat, onFeedback
       { icon: <ArrowLeft size={16} />, title: "返回来源会话", subtitle: task.title, onSelect: onReturnChat },
     ]} infoTitle="执行详情" properties={[
       { icon: <History size={16} />, label: "运行状态", value: paused ? "已暂停" : "运行中" },
+      { icon: <FolderClosed size={16} />, label: "关联项目", value: task.project ?? "未关联" },
       { icon: <CheckCircle2 size={16} />, label: "进度", value: task.progress },
       { icon: <WandSparkles size={16} />, label: "负责人", value: task.owner },
       { icon: <FolderLock size={16} />, label: "工作目录", value: "受控目录" },
@@ -204,6 +213,7 @@ function TaskStatusTools({ task, paused, onPauseToggle, onReturnChat, onFeedback
     { icon: <ArrowLeft size={16} />, title: "返回来源会话", subtitle: task.title, onSelect: onReturnChat },
   ]} infoTitle="完成信息" properties={[
     { icon: <CheckCircle2 size={16} />, label: "状态", value: "已完成" },
+    { icon: <FolderClosed size={16} />, label: "关联项目", value: task.project ?? "未关联" },
     { icon: <History size={16} />, label: "最终进度", value: task.progress },
     { icon: <WandSparkles size={16} />, label: "负责人", value: task.owner },
     { icon: <ShieldCheck size={16} />, label: "结果", value: "已留痕 · 可追溯" },
