@@ -1,5 +1,4 @@
 import {
-  Bot,
   ChevronDown,
   ChevronRight,
   Columns2,
@@ -9,7 +8,7 @@ import {
   LogOut,
   MessageCircle,
   PenLine,
-  Pin,
+  Plus,
   Search,
   Settings,
   UserRound,
@@ -18,17 +17,20 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import userAvatar from "../assets/avatar-zhang-wei-v1.png";
-import { pinnedConversations, projectGroups, recentConversations } from "../data";
-import type { Section } from "../types";
+import type { Conversation, Project, Section } from "../types";
 
 type SidebarProps = {
   activeSection: Section;
-  selectedConversationTitle: string | null;
-  selectedProjectTitle: string | null;
-  conversationProjects: Record<string, string>;
+  selectedConversationId: string | null;
+  currentProjectId: string | null;
+  projects: Project[];
+  conversations: Conversation[];
+  dataState: "loading" | "ready" | "error";
   onSectionChange: (section: Section) => void;
   onNewConversation: () => void;
-  onConversationOpen: (title: string) => void;
+  onConversationOpen: (conversationId: string) => void;
+  onProjectContextChange: (projectId: string | null) => void;
+  onProjectCreate: (title: string) => void;
   profileOpen: boolean;
   onProfileToggle: () => void;
   mobileOpen: boolean;
@@ -45,32 +47,50 @@ const navItems = [
 
 export function Sidebar({
   activeSection,
-  selectedConversationTitle,
-  selectedProjectTitle,
-  conversationProjects,
+  selectedConversationId,
+  currentProjectId,
+  projects,
+  conversations,
+  dataState,
   onSectionChange,
   onNewConversation,
   onConversationOpen,
+  onProjectContextChange,
+  onProjectCreate,
   profileOpen,
   onProfileToggle,
   mobileOpen,
   onMobileClose,
   onOpenSettings,
 }: SidebarProps) {
-  const [expandedProject, setExpandedProject] = useState(projectGroups[0].title);
+  const [expandedProjectId, setExpandedProjectId] = useState("");
+  const [projectCreateOpen, setProjectCreateOpen] = useState(false);
+  const [newProjectTitle, setNewProjectTitle] = useState("");
 
   useEffect(() => {
-    if (selectedProjectTitle) setExpandedProject(selectedProjectTitle);
-  }, [selectedProjectTitle]);
+    if (currentProjectId) setExpandedProjectId(currentProjectId);
+  }, [currentProjectId]);
 
   const selectSection = (section: Section) => {
     onSectionChange(section);
     onMobileClose();
   };
 
-  const openConversation = (title: string) => {
-    onConversationOpen(title);
+  const openConversation = (conversationId: string) => {
+    onConversationOpen(conversationId);
     onMobileClose();
+  };
+
+  const visibleRecentConversations = currentProjectId
+    ? conversations.filter((conversation) => conversation.project_id === currentProjectId)
+    : conversations;
+
+  const submitProject = () => {
+    const title = newProjectTitle.trim();
+    if (!title) return;
+    onProjectCreate(title);
+    setNewProjectTitle("");
+    setProjectCreateOpen(false);
   };
 
   return (
@@ -104,36 +124,28 @@ export function Sidebar({
         </nav>
 
         <div className="sidebar__scroll">
-          <SidebarGroup title="置顶">
-            {pinnedConversations.map((title, index) => (
-              <button
-                className={activeSection === "chat" && selectedConversationTitle === title ? "conversation-row is-active" : "conversation-row"}
-                type="button"
-                key={title}
-                onClick={() => openConversation(title)}
-              >
-                {index === 0 ? <Bot size={16} /> : <Columns2 size={16} />}
-                <span>{title}</span>
-                <Pin size={14} />
-              </button>
-            ))}
-          </SidebarGroup>
-          <SidebarGroup title="项目">
-            {projectGroups.map((project, index) => {
-              const expanded = expandedProject === project.title;
-              const conversations = Object.entries(conversationProjects).filter(([, projectTitle]) => projectTitle === project.title).map(([title]) => title);
+          <SidebarGroup title="置顶"><p className="sidebar-empty">暂无置顶会话</p></SidebarGroup>
+          <SidebarGroup title="项目" action={<button className="sidebar-group__action" type="button" aria-label="新建项目" onClick={() => setProjectCreateOpen((open) => !open)}><Plus size={14} /></button>}>
+            {projectCreateOpen && <form className="project-create" onSubmit={(event) => { event.preventDefault(); submitProject(); }}><FolderClosed size={14} /><input autoFocus aria-label="项目名称" placeholder="项目名称" value={newProjectTitle} onChange={(event) => setNewProjectTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { setNewProjectTitle(""); setProjectCreateOpen(false); } }} /></form>}
+            {dataState === "loading" && <p className="sidebar-empty">正在加载项目…</p>}
+            {dataState === "error" && <p className="sidebar-empty sidebar-empty--error">项目暂时无法加载</p>}
+            {dataState === "ready" && projects.length === 0 && <p className="sidebar-empty">还没有项目</p>}
+            {projects.map((project, index) => {
+              const expanded = expandedProjectId === project.id;
+              const relatedConversations = conversations.filter((conversation) => conversation.project_id === project.id);
               return (
-                <div className="project-entry" key={project.title}>
-                  <button className={expanded ? "project-row is-expanded" : "project-row"} type="button" aria-expanded={expanded} onClick={() => setExpandedProject(expanded ? "" : project.title)}>
-                    <span className={`project-mark project-mark--${index + 1}`}><FolderClosed size={14} /></span>
+                <div className="project-entry" key={project.id}>
+                  <button className={expanded ? "project-row is-expanded" : "project-row"} type="button" aria-expanded={expanded} onClick={() => { const nextProjectId = expanded ? null : project.id; setExpandedProjectId(nextProjectId ?? ""); onProjectContextChange(nextProjectId); }}>
+                    <span className={`project-mark project-mark--${(index % 3) + 1}`}><FolderClosed size={14} /></span>
                     <span>{project.title}</span>
                     <ChevronRight className="project-row__chevron" size={14} />
                   </button>
                   {expanded && (
                     <div className="project-thread-list">
-                      {conversations.map((title) => (
-                        <button className={activeSection === "chat" && selectedConversationTitle === title ? "project-thread is-active" : "project-thread"} type="button" key={title} onClick={() => openConversation(title)}>
-                          <span>{title}</span>
+                      {relatedConversations.length === 0 && <p className="sidebar-empty sidebar-empty--nested">暂无关联会话</p>}
+                      {relatedConversations.map((conversation) => (
+                        <button className={activeSection === "chat" && selectedConversationId === conversation.id ? "project-thread is-active" : "project-thread"} type="button" key={conversation.id} onClick={() => openConversation(conversation.id)}>
+                          <span>{conversation.title}</span>
                         </button>
                       ))}
                     </div>
@@ -143,10 +155,11 @@ export function Sidebar({
             })}
           </SidebarGroup>
           <SidebarGroup title="最近">
-            {recentConversations.map((title) => (
-              <button className={activeSection === "chat" && selectedConversationTitle === title ? "conversation-row is-active" : "conversation-row"} type="button" key={title} onClick={() => openConversation(title)}>
+            {dataState === "ready" && visibleRecentConversations.length === 0 && <p className="sidebar-empty">暂无会话</p>}
+            {visibleRecentConversations.map((conversation) => (
+              <button className={activeSection === "chat" && selectedConversationId === conversation.id ? "conversation-row is-active" : "conversation-row"} type="button" key={conversation.id} onClick={() => openConversation(conversation.id)}>
                 <MessageCircle size={16} />
-                <span>{title}</span>
+                <span>{conversation.title}</span>
               </button>
             ))}
           </SidebarGroup>
@@ -185,10 +198,10 @@ function BrandMark() {
   );
 }
 
-function SidebarGroup({ title, children }: { title: string; children: React.ReactNode }) {
+function SidebarGroup({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <section className="sidebar-group">
-      <h2>{title}</h2>
+      <header><h2>{title}</h2>{action}</header>
       <div>{children}</div>
     </section>
   );

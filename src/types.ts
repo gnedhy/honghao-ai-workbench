@@ -4,6 +4,17 @@ export type ConversationView = "new" | "existing";
 
 export type WorkApproval = "pending" | "approved" | "rejected";
 
+export type Project = {
+  id: string;
+  title: string;
+};
+
+export type Conversation = {
+  id: string;
+  title: string;
+  project_id: string | null;
+};
+
 export type KnowledgeItem = {
   title: string;
   scope: string;
