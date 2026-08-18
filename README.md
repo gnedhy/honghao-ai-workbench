@@ -27,14 +27,28 @@
 - [输入上下文、固定对话列与双模式侧栏验证记录](./开工文档/15-输入上下文与双模式侧栏验证记录.md)
 - [轻项目重关联验证记录](./开工文档/16-轻项目重关联验证记录.md)
 
-## 启动前端原型
+## 启动本地工作台
 
 ```powershell
 npm.cmd install
+uv sync --group dev
 npm.cmd run dev
 ```
 
-默认地址：`http://127.0.0.1:4173/`
+`npm.cmd run dev` 会同时启动本地 API 与前端：
+
+- 前端：`http://127.0.0.1:4173/`
+- API 文档：`http://127.0.0.1:8000/docs`
+
+环境要求：Node.js 24、Python 3.12 和 [uv](https://docs.astral.sh/uv/)。Node 依赖由 `package-lock.json` 管理，Python 依赖由 `uv.lock` 管理。
+
+默认运行数据保存在仓库内的 `.data/`，其中 `.data/controlled-work/` 是后续任务使用的默认受控工作目录；整个数据目录都不会提交到 Git。可通过 `HONGHAO_DATA_DIR` 指定其他本地数据目录；测试始终使用独立临时目录，不会读写正式数据。
+
+统一验证命令：
+
+```powershell
+npm.cmd run verify
+```
 
 ## 在另一台电脑继续开发
 
@@ -45,6 +59,7 @@ gh auth login
 gh repo clone gnedhy/honghao-ai-workbench
 cd honghao-ai-workbench
 npm.cmd install
+uv sync --group dev
 npm.cmd run dev
 ```
 
@@ -58,7 +73,7 @@ git pull --ff-only
 
 1. 完成立项基线与“个人 AI 会话优先”的 V0.2 信息架构方案。
 2. 已完成 React + Vite + TypeScript 前端原型，并形成固定桌面左栏、页面级可收起右侧工具栏、PC 三栏与移动端双抽屉工作台。
-3. 下一步搭建 FastAPI + SQLite 后端骨架，先接 Mock Provider 跑通状态、审批和恢复，再接一个 OpenAI 兼容模型接口。
+3. 已完成 FastAPI + SQLite 本地运行骨架、真实健康状态和隔离测试通道；下一步持久化会话与轻项目关联，再接 Mock Provider 跑通状态、审批和恢复。
 
 当前视觉方案：
 

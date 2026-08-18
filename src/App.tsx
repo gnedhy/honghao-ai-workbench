@@ -1,5 +1,6 @@
 import { Check, ChevronRight, ShieldCheck, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchServiceHealth, type ServiceConnection } from "./api";
 import { ContextSidebar } from "./components/ContextSidebar";
 import { Sidebar } from "./components/Sidebar";
 import { initialConversationProjects, knowledgeItems, projectGroups, skills, tasks, workflows } from "./data";
@@ -28,6 +29,33 @@ function App() {
   const [selectedSkill, setSelectedSkill] = useState(skills[0]);
   const [selectedWorkflow, setSelectedWorkflow] = useState(workflows[0]);
   const [selectedTask, setSelectedTask] = useState<TaskItem>(tasks[0]);
+  const [serviceConnection, setServiceConnection] = useState<ServiceConnection>({ state: "checking" });
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const retryDelays = [0, 300, 900, 1800];
+    let retryTimer: number | null = null;
+
+    const checkService = (attempt: number) => {
+      fetchServiceHealth(controller.signal)
+        .then((health) => setServiceConnection({ state: "online", health }))
+        .catch((error: unknown) => {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          const nextAttempt = attempt + 1;
+          if (nextAttempt < retryDelays.length) {
+            retryTimer = window.setTimeout(() => checkService(nextAttempt), retryDelays[nextAttempt]);
+          } else {
+            setServiceConnection({ state: "offline" });
+          }
+        });
+    };
+
+    checkService(0);
+    return () => {
+      controller.abort();
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+    };
+  }, []);
 
   const closeContext = useCallback(() => {
     if (!contextOpen) return;
@@ -117,19 +145,25 @@ function App() {
         workflow={selectedWorkflow}
         task={selectedTask}
       />
-      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsDialog serviceConnection={serviceConnection} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }
 
-function SettingsDialog({ onClose }: { onClose: () => void }) {
+function SettingsDialog({ serviceConnection, onClose }: { serviceConnection: ServiceConnection; onClose: () => void }) {
+  const serviceCopy = serviceConnection.state === "online"
+    ? { label: "已连接", detail: `API ${serviceConnection.health.api_version} · 数据版本 ${serviceConnection.health.schema_version}` }
+    : serviceConnection.state === "checking"
+      ? { label: "连接中", detail: "正在检查本地 API 与数据库。" }
+      : { label: "未连接", detail: "请启动本地 API 后刷新页面。" };
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <header><div><h1 id="settings-title">系统设置</h1><p>管理模型、知识访问和安全边界。</p></div><button className="icon-button" type="button" aria-label="关闭设置" onClick={onClose}><X size={18} /></button></header>
         <div className="settings-dialog__body">
           <nav aria-label="设置分类"><button className="is-active" type="button">常规<ChevronRight size={15} /></button><button type="button">模型接口<ChevronRight size={15} /></button><button type="button">知识与目录<ChevronRight size={15} /></button><button type="button">安全与审查<ChevronRight size={15} /></button></nav>
-          <article><h2>常规</h2><div className="setting-row"><div><strong>默认会话模式</strong><p>新会话默认进入工作空状态。</p></div><span className="setting-value">工作<ChevronRight size={15} /></span></div><div className="setting-row"><div><strong>数据出站确认</strong><p>模型请求前展示上下文摘要。</p></div><span className="setting-enabled"><Check size={14} />已开启</span></div><div className="setting-row"><div><strong>受控工作目录</strong><p>文件操作只允许发生在授权目录内。</p></div><span className="setting-enabled"><ShieldCheck size={15} />已保护</span></div></article>
+          <article><h2>常规</h2><div className="setting-row"><div><strong>本地服务</strong><p>{serviceCopy.detail}</p></div><span className={`setting-connection setting-connection--${serviceConnection.state}`}><i />{serviceCopy.label}</span></div><div className="setting-row"><div><strong>默认会话模式</strong><p>新会话默认进入工作空状态。</p></div><span className="setting-value">工作<ChevronRight size={15} /></span></div><div className="setting-row"><div><strong>数据出站确认</strong><p>模型请求前展示上下文摘要。</p></div><span className="setting-enabled"><Check size={14} />已开启</span></div><div className="setting-row"><div><strong>受控工作目录</strong><p>文件操作只允许发生在授权目录内。</p></div><span className="setting-enabled"><ShieldCheck size={15} />已保护</span></div></article>
         </div>
       </section>
     </div>

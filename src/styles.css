@@ -498,8 +498,13 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; border-top: 1px solid var(--border); }
 .setting-row strong { font-size: 13px; }
 .setting-row p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
-.setting-value, .setting-enabled { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.setting-value, .setting-enabled, .setting-connection { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
 .setting-enabled { color: var(--green); }
+.setting-connection i { width: 7px; height: 7px; border-radius: 50%; background: #a7afb5; }
+.setting-connection--online { color: var(--green); }
+.setting-connection--online i { background: var(--green); }
+.setting-connection--offline { color: var(--danger); }
+.setting-connection--offline i { background: var(--danger); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
 
 @starting-style {

@@ -4,9 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently --kill-others --names API,WEB --prefix-colors blue,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "uv --cache-dir .uv-cache run uvicorn api.main:app --reload --host 127.0.0.1 --port 8000",
+    "dev:web": "vite",
     "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:api": "uv --cache-dir .uv-cache run pytest",
+    "verify": "npm run test:api && npm run build"
   },
   "dependencies": {
     "lucide-react": "1.31.0",
@@ -17,6 +21,7 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "6.0.5",
+    "concurrently": "^10.0.5",
     "typescript": "7.0.2",
     "vite": "8.2.1"
   }
