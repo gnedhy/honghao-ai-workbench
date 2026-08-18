@@ -4,18 +4,20 @@ import { Composer } from "../components/Composer";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { TopBar, type ScreenChromeProps } from "../components/TopBar";
 import { runSteps } from "../data";
-import type { ConversationView, WorkApproval } from "../types";
+import type { ConversationView, Project, WorkApproval } from "../types";
 
 type ConversationScreenProps = ScreenChromeProps & {
   view: ConversationView;
   conversationTitle: string;
   mode: "聊天" | "工作";
   onModeChange: (mode: "聊天" | "工作") => void;
-  projectTitle: string | null;
-  onProjectChange: (project: string | null) => void;
+  projects: Project[];
+  projectId: string | null;
+  onProjectChange: (projectId: string | null) => void;
+  onConversationCreate: (message: string) => void;
 };
 
-export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleContext, view, conversationTitle, mode, onModeChange, projectTitle, onProjectChange }: ConversationScreenProps) {
+export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleContext, view, conversationTitle, mode, onModeChange, projects, projectId, onProjectChange, onConversationCreate }: ConversationScreenProps) {
   const [approval, setApproval] = useState<WorkApproval>("pending");
   const [lastMessage, setLastMessage] = useState("");
 
@@ -35,7 +37,7 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
         <section key={mode} className={`new-conversation-empty new-conversation-empty--${mode === "工作" ? "work" : "chat"}`}>
           <div className="new-conversation-empty__content">
             <h1>{mode === "工作" ? "我们该处理什么工作？" : "随时可以开始。"}</h1>
-            <Composer compact={mode === "聊天"} empty mode={mode} onSubmit={setLastMessage} project={projectTitle} onProjectChange={onProjectChange} />
+            <Composer compact={mode === "聊天"} empty mode={mode} onSubmit={(message) => { setLastMessage(message); onConversationCreate(message); }} projects={projects} projectId={projectId} onProjectChange={onProjectChange} />
           </div>
         </section>
       ) : mode === "聊天" ? (
@@ -122,7 +124,7 @@ export function ConversationScreen({ contextOpen, onOpenNavigation, onToggleCont
             </div>
           </div>
 
-          <Composer mode="工作" onSubmit={setLastMessage} project={projectTitle} onProjectChange={onProjectChange} />
+          <Composer mode="工作" onSubmit={setLastMessage} projects={projects} projectId={projectId} onProjectChange={onProjectChange} />
         </section>
       )}
     </main>

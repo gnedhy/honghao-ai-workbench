@@ -6,5 +6,6 @@ dist/
 .uv-cache/
 .data/
 .pytest_cache/
+.playwright-cli/
 __pycache__/
 *.pyc

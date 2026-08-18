@@ -1,6 +1,7 @@
 import { ArrowUp, Check, ChevronDown, FilePlus2, FolderClosed, LibraryBig, ListChecks, Plus, Route, WandSparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { projectGroups, skills } from "../data";
+import { skills } from "../data";
+import type { Project } from "../types";
 
 const workWorkflows = ["AI 需求诊断工作流", "项目状态更新工作流"];
 
@@ -9,11 +10,12 @@ type ComposerProps = {
   empty?: boolean;
   mode?: "聊天" | "工作";
   onSubmit?: (message: string) => void;
-  project?: string | null;
-  onProjectChange?: (project: string | null) => void;
+  projects?: Project[];
+  projectId?: string | null;
+  onProjectChange?: (projectId: string | null) => void;
 };
 
-export function Composer({ compact = false, empty = false, mode = "工作", onSubmit, project = null, onProjectChange }: ComposerProps) {
+export function Composer({ compact = false, empty = false, mode = "工作", onSubmit, projects = [], projectId = null, onProjectChange }: ComposerProps) {
   const [message, setMessage] = useState("");
   const [chatMenuOpen, setChatMenuOpen] = useState(false);
   const [workMenuOpen, setWorkMenuOpen] = useState(false);
@@ -144,7 +146,8 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
     );
   }
 
-  const projectIndex = projectGroups.findIndex((item) => item.title === project);
+  const projectIndex = projects.findIndex((item) => item.id === projectId);
+  const project = projectIndex >= 0 ? projects[projectIndex] : null;
 
   return (
     <div className={`composer${empty ? " composer--empty composer--work-empty" : ""}`} ref={composerRef}>
@@ -247,15 +250,15 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
             <button
               className="composer__project composer__project--selected"
               type="button"
-              aria-label={`移除项目：${project}`}
+              aria-label={`移除项目：${project.title}`}
               title="移除项目"
               onClick={() => onProjectChange?.(null)}
             >
               <span className="composer__project-icon" aria-hidden="true">
-                <span className={`project-mark project-mark--${projectIndex + 1} composer__project-icon-default`}><FolderClosed size={14} /></span>
+                <span className={`project-mark project-mark--${(projectIndex % 3) + 1} composer__project-icon-default`}><FolderClosed size={14} /></span>
                 <span className="composer__project-icon-remove"><X size={10} /></span>
               </span>
-              <span>{project}</span>
+              <span>{project.title}</span>
             </button>
           ) : (
             <div className="composer__project-picker">
@@ -276,18 +279,19 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
               {projectMenuOpen && (
                 <div className="composer__project-menu" role="menu" aria-label="选择项目">
                   <span className="composer__menu-label">项目上下文</span>
-                  {projectGroups.map((item, index) => (
+                  {projects.length === 0 && <span className="composer__menu-empty">暂无可选项目</span>}
+                  {projects.map((item, index) => (
                     <button
                       className="composer__project-option"
                       type="button"
                       role="menuitem"
-                      key={item.title}
+                      key={item.id}
                       onClick={() => {
-                        onProjectChange?.(item.title);
+                        onProjectChange?.(item.id);
                         setProjectMenuOpen(false);
                       }}
                     >
-                      <span className={`project-mark project-mark--${index + 1}`}><FolderClosed size={14} /></span>
+                      <span className={`project-mark project-mark--${(index % 3) + 1}`}><FolderClosed size={14} /></span>
                       <span>{item.title}</span>
                     </button>
                   ))}
