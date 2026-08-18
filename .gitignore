@@ -2,3 +2,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 .vite/
+.venv/
+.uv-cache/
+.data/
+.pytest_cache/
+__pycache__/
+*.pyc
