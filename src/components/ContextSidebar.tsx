@@ -11,7 +11,6 @@ import {
   GitBranch,
   History,
   PanelRightClose,
-  Pause,
   Play,
   Rocket,
   ShieldCheck,
@@ -20,6 +19,7 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { useState } from "react";
+import { taskStatusLabel } from "../taskPresentation";
 import type { KnowledgeItem, Section, SkillItem, TaskItem, WorkflowItem } from "../types";
 
 type ContextSidebarProps = {
@@ -36,7 +36,8 @@ type ContextSidebarProps = {
   knowledgeItem: KnowledgeItem;
   skill: SkillItem;
   workflow: WorkflowItem;
-  task: TaskItem;
+  task: TaskItem | null;
+  conversationTask: TaskItem | null;
 };
 
 type Feedback = { section: Section; message: string } | null;
@@ -56,14 +57,14 @@ export function ContextSidebar({
   skill,
   workflow,
   task,
+  conversationTask,
 }: ContextSidebarProps) {
   const [knowledgeScope, setKnowledgeScope] = useState("个人与公共知识");
   const [model, setModel] = useState("宏昊企业模型");
-  const [taskPaused, setTaskPaused] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
 
   const panelTitle = section === "chat" ? (conversationMode === "聊天" ? "对话上下文" : "执行控制") : section === "knowledge" ? "文档工具" : section === "automation" ? (automationTab === "技能" ? "技能工具" : "工作流工具") : "任务详情";
-  const panelSubtitle = section === "chat" ? conversationTitle : section === "knowledge" ? knowledgeItem.title : section === "automation" ? (automationTab === "技能" ? skill.title : workflow.title) : task.title;
+  const panelSubtitle = section === "chat" ? conversationTitle : section === "knowledge" ? knowledgeItem.title : section === "automation" ? (automationTab === "技能" ? skill.title : workflow.title) : task?.objective ?? "未选择任务";
   const showFeedback = (message: string) => setFeedback({ section, message });
 
   return (
@@ -104,11 +105,11 @@ export function ContextSidebar({
                       <span className="tool-setting__value"><strong>{projectTitle ? "项目受控目录" : "临时受控目录"}</strong><span><CheckCircle2 size={14} />已授权</span></span>
                     </div>
                   </ToolSection>
-                  {conversationView === "existing" ? (
-                    <ToolSection title="当前运行">
-                      <PropertyRow icon={<History size={16} />} label="检查点" value="等待确认" />
-                      <PropertyRow icon={<CheckCircle2 size={16} />} label="执行进度" value="4 / 5" />
-                      <button className="tool-action" type="button" onClick={() => showFeedback("已定位到待确认修改。")}><FileText size={16} /><span><strong>查看待确认修改</strong><small>任务已暂停，不会继续写入</small></span></button>
+                  {conversationView === "existing" && conversationTask ? (
+                    <ToolSection title="当前任务">
+                      <PropertyRow icon={<CheckCircle2 size={16} />} label="任务状态" value={taskStatusLabel(conversationTask.status)} />
+                      <PropertyRow icon={<History size={16} />} label="最近运行" value={conversationTask.latest_run ?? "尚未运行"} />
+                      <PropertyRow icon={<FolderClosed size={16} />} label="项目快照" value={conversationTask.project_id ? "创建时已记录" : "未关联"} />
                     </ToolSection>
                   ) : (
                     <ToolSection title="执行边界">
@@ -132,8 +133,9 @@ export function ContextSidebar({
               : <WorkflowStatusTools workflow={workflow} onFeedback={showFeedback} />
           )}
 
-          {section === "tasks" && (
-            <TaskStatusTools task={task} paused={taskPaused} onPauseToggle={() => setTaskPaused((paused) => !paused)} onReturnChat={onReturnChat} onFeedback={showFeedback} />
+          {section === "tasks" && (task
+            ? <TaskStatusTools task={task} onReturnChat={onReturnChat} />
+            : <div className="tool-safety-note"><History size={16} /><p>选择一个任务后，这里会显示它的来源与项目快照。</p></div>
           )}
 
           {feedback?.section === section && <p className="tool-feedback"><CheckCircle2 size={15} />{feedback.message}</p>}
@@ -180,44 +182,19 @@ function KnowledgeStatusTools({ item, onFeedback }: { item: KnowledgeItem; onFee
   ]} note="个人知识只对本人可见。提交公共候选后仍需来源、内容和权限审查，原文不会被自动覆盖。" onFeedback={onFeedback} />;
 }
 
-function TaskStatusTools({ task, paused, onPauseToggle, onReturnChat, onFeedback }: { task: TaskItem; paused: boolean; onPauseToggle: () => void; onReturnChat: () => void; onFeedback: (message: string) => void }) {
-  if (task.status === "等待确认") return <StatusToolLayout actionTitle="等待你确认" actions={[
-    { icon: <FileText size={16} />, title: "查看待确认修改", subtitle: "检查修改内容与影响范围", feedback: "已定位到待确认修改。" },
-    { icon: <ArrowLeft size={16} />, title: "返回来源会话", subtitle: task.title, onSelect: onReturnChat },
-  ]} infoTitle="确认信息" properties={[
-    { icon: <CheckCircle2 size={16} />, label: "检查点", value: "等待人工确认" },
-    { icon: <FolderClosed size={16} />, label: "关联项目", value: task.project ?? "未关联" },
-    { icon: <History size={16} />, label: "进度", value: task.progress },
-    { icon: <WandSparkles size={16} />, label: "负责人", value: task.owner },
-    { icon: <FolderLock size={16} />, label: "写入状态", value: "尚未应用" },
-  ]} note="任务已暂停，等待人工确认。未经确认，修改不会写入项目文件或公共知识。" onFeedback={onFeedback} />;
-
-  if (task.status === "运行中") {
-    const toggleRun = () => { onPauseToggle(); onFeedback(paused ? "任务已从检查点继续执行。" : "任务已暂停在当前检查点。"); };
-    return <StatusToolLayout actionTitle="运行控制" actions={[
-      { icon: paused ? <Play size={16} /> : <Pause size={16} />, title: paused ? "继续任务" : "暂停任务", subtitle: "保留当前检查点", onSelect: toggleRun },
-      { icon: <History size={16} />, title: "查看运行记录", subtitle: "检查步骤、耗时与工具调用", feedback: "已打开当前任务运行记录。" },
-      { icon: <ArrowLeft size={16} />, title: "返回来源会话", subtitle: task.title, onSelect: onReturnChat },
-    ]} infoTitle="执行详情" properties={[
-      { icon: <History size={16} />, label: "运行状态", value: paused ? "已暂停" : "运行中" },
-      { icon: <FolderClosed size={16} />, label: "关联项目", value: task.project ?? "未关联" },
-      { icon: <CheckCircle2 size={16} />, label: "进度", value: task.progress },
-      { icon: <WandSparkles size={16} />, label: "负责人", value: task.owner },
-      { icon: <FolderLock size={16} />, label: "工作目录", value: "受控目录" },
-    ]} note="运行中的任务只能在授权目录和知识范围内操作；写入仍需经过人工确认。" onFeedback={onFeedback} />;
-  }
-
-  return <StatusToolLayout actionTitle="完成结果" actions={[
-    { icon: <FileText size={16} />, title: "查看任务产出", subtitle: "打开最终结果与引用来源", feedback: "已打开任务产出与验证记录。" },
-    { icon: <Play size={16} />, title: "基于快照重跑", subtitle: "创建新任务，不覆盖原结果", feedback: "已基于完成快照创建新的任务草稿。" },
-    { icon: <ArrowLeft size={16} />, title: "返回来源会话", subtitle: task.title, onSelect: onReturnChat },
-  ]} infoTitle="完成信息" properties={[
-    { icon: <CheckCircle2 size={16} />, label: "状态", value: "已完成" },
-    { icon: <FolderClosed size={16} />, label: "关联项目", value: task.project ?? "未关联" },
-    { icon: <History size={16} />, label: "最终进度", value: task.progress },
-    { icon: <WandSparkles size={16} />, label: "负责人", value: task.owner },
-    { icon: <ShieldCheck size={16} />, label: "结果", value: "已留痕 · 可追溯" },
-  ]} note="完成任务及其运行记录保持只读。重新执行会创建新任务，不会覆盖原始结果。" onFeedback={onFeedback} />;
+function TaskStatusTools({ task, onReturnChat }: { task: TaskItem; onReturnChat: () => void }) {
+  return <>
+    <ToolSection title="任务操作">
+      <button className="tool-action" type="button" onClick={onReturnChat}><ArrowLeft size={16} /><span><strong>返回来源会话</strong><small>继续查看或补充这项工作</small></span></button>
+    </ToolSection>
+    <ToolSection title="任务快照">
+      <PropertyRow icon={<CheckCircle2 size={16} />} label="状态" value={taskStatusLabel(task.status)} />
+      <PropertyRow icon={<FolderClosed size={16} />} label="项目关联" value={task.project_id ? "创建时已记录" : "未关联"} />
+      <PropertyRow icon={<History size={16} />} label="最近运行" value={task.latest_run ?? "尚未运行"} />
+      <PropertyRow icon={<FolderLock size={16} />} label="写入状态" value="未开始" />
+    </ToolSection>
+    <div className="tool-safety-note"><ShieldCheck size={16} /><p>当前只创建了持久任务。后续接入受控执行环境后，才会产生真实运行、检查点与停止原因。</p></div>
+  </>;
 }
 
 function SkillStatusTools({ skill, onFeedback }: { skill: SkillItem; onFeedback: (message: string) => void }) {

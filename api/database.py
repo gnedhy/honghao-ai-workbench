@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class Database:
@@ -63,6 +65,33 @@ class Database:
                 connection.execute(
                     "UPDATE schema_metadata SET value = ? WHERE key = ?",
                     (3, "schema_version"),
+                )
+                version = 3
+
+            if version == 3:
+                connection.executescript(
+                    """
+                    CREATE TABLE conversation_messages (
+                        id TEXT PRIMARY KEY,
+                        conversation_id TEXT NOT NULL REFERENCES conversations(id),
+                        mode TEXT NOT NULL CHECK (mode IN ('chat', 'work')),
+                        content TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE TABLE tasks (
+                        id TEXT PRIMARY KEY,
+                        conversation_id TEXT NOT NULL REFERENCES conversations(id),
+                        objective TEXT NOT NULL,
+                        project_id TEXT REFERENCES projects(id),
+                        status TEXT NOT NULL CHECK (status IN ('created')),
+                        created_at TEXT NOT NULL
+                    );
+                    """
+                )
+                connection.execute(
+                    "UPDATE schema_metadata SET value = ? WHERE key = ?",
+                    (4, "schema_version"),
                 )
 
         if self.schema_version() != SCHEMA_VERSION:
@@ -169,3 +198,95 @@ class Database:
             "title": str(row[1]),
             "project_id": str(row[2]) if row[2] is not None else None,
         }
+
+    def submit_conversation(self, conversation_id: str, mode: str, content: str) -> dict[str, Any] | None:
+        created_at = datetime.now(UTC).isoformat()
+        message = {
+            "id": str(uuid4()),
+            "conversation_id": conversation_id,
+            "mode": mode,
+            "content": content,
+            "created_at": created_at,
+        }
+
+        with sqlite3.connect(self.path) as connection:
+            conversation = connection.execute(
+                "SELECT project_id FROM conversations WHERE id = ?",
+                (conversation_id,),
+            ).fetchone()
+            if conversation is None:
+                return None
+
+            connection.execute(
+                "INSERT INTO conversation_messages (id, conversation_id, mode, content, created_at) VALUES (?, ?, ?, ?, ?)",
+                (message["id"], conversation_id, mode, content, created_at),
+            )
+
+            task = None
+            if mode == "work":
+                task = {
+                    "id": str(uuid4()),
+                    "conversation_id": conversation_id,
+                    "objective": content,
+                    "project_id": str(conversation[0]) if conversation[0] is not None else None,
+                    "status": "created",
+                    "created_at": created_at,
+                    "latest_run": None,
+                }
+                connection.execute(
+                    "INSERT INTO tasks (id, conversation_id, objective, project_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        task["id"],
+                        conversation_id,
+                        content,
+                        task["project_id"],
+                        task["status"],
+                        created_at,
+                    ),
+                )
+
+        return {"message": message, "task": task}
+
+    def list_messages(self, conversation_id: str) -> list[dict[str, str]]:
+        with sqlite3.connect(self.path) as connection:
+            rows = connection.execute(
+                "SELECT id, conversation_id, mode, content, created_at FROM conversation_messages WHERE conversation_id = ? ORDER BY rowid",
+                (conversation_id,),
+            ).fetchall()
+        return [
+            {
+                "id": str(row[0]),
+                "conversation_id": str(row[1]),
+                "mode": str(row[2]),
+                "content": str(row[3]),
+                "created_at": str(row[4]),
+            }
+            for row in rows
+        ]
+
+    @staticmethod
+    def _task_from_row(row: sqlite3.Row | tuple[Any, ...]) -> dict[str, Any]:
+        return {
+            "id": str(row[0]),
+            "conversation_id": str(row[1]),
+            "objective": str(row[2]),
+            "project_id": str(row[3]) if row[3] is not None else None,
+            "status": str(row[4]),
+            "created_at": str(row[5]),
+            "latest_run": None,
+        }
+
+    def list_tasks(self) -> list[dict[str, Any]]:
+        with sqlite3.connect(self.path) as connection:
+            rows = connection.execute(
+                "SELECT id, conversation_id, objective, project_id, status, created_at FROM tasks ORDER BY rowid"
+            ).fetchall()
+        return [self._task_from_row(row) for row in rows]
+
+    def get_task(self, task_id: str) -> dict[str, Any] | None:
+        with sqlite3.connect(self.path) as connection:
+            row = connection.execute(
+                "SELECT id, conversation_id, objective, project_id, status, created_at FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        return self._task_from_row(row) if row is not None else None

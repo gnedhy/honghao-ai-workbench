@@ -50,6 +50,34 @@ class ConversationProjectUpdate(BaseModel):
     project_id: str | None
 
 
+class ConversationSubmission(BaseModel):
+    mode: Literal["chat", "work"]
+    content: str
+
+
+class MessageResponse(BaseModel):
+    id: str
+    conversation_id: str
+    mode: Literal["chat", "work"]
+    content: str
+    created_at: str
+
+
+class TaskResponse(BaseModel):
+    id: str
+    conversation_id: str
+    objective: str
+    project_id: str | None
+    status: Literal["created"]
+    created_at: str
+    latest_run: None
+
+
+class SubmissionResponse(BaseModel):
+    message: MessageResponse
+    task: TaskResponse | None
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     runtime_settings = settings or Settings.from_environment()
     database = Database(runtime_settings.database_path)
@@ -114,6 +142,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if conversation is None:
             raise HTTPException(status_code=404, detail="Conversation or project not found")
         return ConversationResponse(**conversation)
+
+    @app.post(
+        "/api/conversations/{conversation_id}/submissions",
+        response_model=SubmissionResponse,
+        status_code=201,
+    )
+    def submit_conversation(
+        conversation_id: str,
+        submission: ConversationSubmission,
+        request: Request,
+    ) -> SubmissionResponse:
+        result = request.app.state.database.submit_conversation(
+            conversation_id,
+            submission.mode,
+            submission.content,
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return SubmissionResponse(**result)
+
+    @app.get(
+        "/api/conversations/{conversation_id}/messages",
+        response_model=list[MessageResponse],
+    )
+    def list_messages(conversation_id: str, request: Request) -> list[MessageResponse]:
+        return [
+            MessageResponse(**message)
+            for message in request.app.state.database.list_messages(conversation_id)
+        ]
+
+    @app.get("/api/tasks", response_model=list[TaskResponse])
+    def list_tasks(request: Request) -> list[TaskResponse]:
+        return [TaskResponse(**task) for task in request.app.state.database.list_tasks()]
+
+    @app.get("/api/tasks/{task_id}", response_model=TaskResponse)
+    def get_task(task_id: str, request: Request) -> TaskResponse:
+        task = request.app.state.database.get_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return TaskResponse(**task)
 
     return app
 

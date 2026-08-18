@@ -1,14 +1,14 @@
 import { Check, ChevronRight, ShieldCheck, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createConversation, createProject, fetchConversations, fetchProjects, fetchServiceHealth, setConversationProject, type ServiceConnection } from "./api";
+import { createConversation, createProject, fetchConversations, fetchMessages, fetchProjects, fetchServiceHealth, fetchTasks, setConversationProject, submitConversation, type ServiceConnection } from "./api";
 import { ContextSidebar } from "./components/ContextSidebar";
 import { Sidebar } from "./components/Sidebar";
-import { knowledgeItems, skills, tasks, workflows } from "./data";
+import { knowledgeItems, skills, workflows } from "./data";
 import { AutomationScreen } from "./screens/AutomationScreen";
 import { ConversationScreen } from "./screens/ConversationScreen";
 import { KnowledgeScreen } from "./screens/KnowledgeScreen";
 import { TaskBoardScreen } from "./screens/TaskBoardScreen";
-import type { Conversation, ConversationView, Project, Section, TaskItem } from "./types";
+import type { Conversation, ConversationMessage, ConversationView, Project, Section, TaskItem } from "./types";
 
 function App() {
   const [section, setSection] = useState<Section>("chat");
@@ -18,6 +18,7 @@ function App() {
   const [contextLayoutOpen, setContextLayoutOpen] = useState(false);
   const [contextClosing, setContextClosing] = useState(false);
   const contextCloseTimer = useRef<number | null>(null);
+  const projectUpdatePromise = useRef<Promise<void>>(Promise.resolve());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [conversationView, setConversationView] = useState<ConversationView>("new");
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -25,15 +26,20 @@ function App() {
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [messagesState, setMessagesState] = useState<"loading" | "ready" | "error">("ready");
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [workbenchDataState, setWorkbenchDataState] = useState<"loading" | "ready" | "error">("loading");
   const [selectedKnowledgeTitle, setSelectedKnowledgeTitle] = useState(knowledgeItems[0].title);
   const [automationTab, setAutomationTab] = useState<"技能" | "工作流">("技能");
   const [selectedSkill, setSelectedSkill] = useState(skills[0]);
   const [selectedWorkflow, setSelectedWorkflow] = useState(workflows[0]);
-  const [selectedTask, setSelectedTask] = useState<TaskItem>(tasks[0]);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [serviceConnection, setServiceConnection] = useState<ServiceConnection>({ state: "checking" });
 
   const selectedConversation = conversations.find((conversation) => conversation.id === selectedConversationId) ?? null;
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
+  const conversationTask = [...tasks].reverse().find((task) => task.conversation_id === selectedConversationId) ?? null;
   const conversationTitle = selectedConversation?.title ?? "新聊天";
   const conversationProjectId = conversationView === "existing" ? selectedConversation?.project_id ?? null : currentProjectId;
   const conversationProjectTitle = projects.find((project) => project.id === conversationProjectId)?.title ?? null;
@@ -72,10 +78,12 @@ function App() {
 
     const controller = new AbortController();
     setWorkbenchDataState("loading");
-    Promise.all([fetchProjects(controller.signal), fetchConversations(controller.signal)])
-      .then(([loadedProjects, loadedConversations]) => {
+    Promise.all([fetchProjects(controller.signal), fetchConversations(controller.signal), fetchTasks(controller.signal)])
+      .then(([loadedProjects, loadedConversations, loadedTasks]) => {
         setProjects(loadedProjects);
         setConversations(loadedConversations);
+        setTasks(loadedTasks);
+        setSelectedTaskId((current) => current ?? loadedTasks[0]?.id ?? null);
         setWorkbenchDataState("ready");
       })
       .catch((error: unknown) => {
@@ -85,6 +93,22 @@ function App() {
       });
     return () => controller.abort();
   }, [serviceConnection.state]);
+
+  useEffect(() => {
+    if (conversationView !== "existing" || !selectedConversationId || serviceConnection.state !== "online") {
+      setMessages([]);
+      setMessagesState("ready");
+      return;
+    }
+    const controller = new AbortController();
+    setMessagesState("loading");
+    fetchMessages(selectedConversationId, controller.signal)
+      .then((loadedMessages) => { setMessages(loadedMessages); setMessagesState("ready"); })
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setMessagesState("error");
+      });
+    return () => controller.abort();
+  }, [conversationView, selectedConversationId, serviceConnection.state]);
 
   const closeContext = useCallback(() => {
     if (!contextOpen) return;
@@ -138,6 +162,35 @@ function App() {
     onToggleContext: toggleContext,
   };
 
+  const submitMessage = async (content: string) => {
+    try {
+      let conversationId = selectedConversationId;
+      let createdConversation: Conversation | null = null;
+      if (conversationView === "new" || !selectedConversationId) {
+        const title = content.length > 28 ? `${content.slice(0, 28)}…` : content;
+        createdConversation = await createConversation(title, currentProjectId);
+        conversationId = createdConversation.id;
+      } else {
+        await projectUpdatePromise.current;
+      }
+      if (!conversationId) throw new Error("Conversation is unavailable");
+      const result = await submitConversation(conversationId, conversationMode === "聊天" ? "chat" : "work", content);
+      if (createdConversation) {
+        setConversations((current) => [...current, createdConversation!]);
+        setSelectedConversationId(createdConversation.id);
+        setConversationView("existing");
+      }
+      setMessages((current) => createdConversation ? [result.message] : [...current, result.message]);
+      setMessagesState("ready");
+      if (result.task) {
+        setTasks((current) => [...current, result.task!]);
+        setSelectedTaskId(result.task.id);
+      }
+    } catch {
+      setMessagesState("error");
+    }
+  };
+
   return (
     <div className={contextLayoutOpen ? "app-shell has-context" : "app-shell"}>
       <Sidebar
@@ -158,10 +211,10 @@ function App() {
         onMobileClose={() => setMobileOpen(false)}
         onOpenSettings={() => { setProfileOpen(false); setSettingsOpen(true); }}
       />
-      {section === "chat" && <ConversationScreen key={`${conversationView}-${selectedConversationId ?? "new"}`} {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversationId) { void setConversationProject(selectedConversationId, projectId).then((updated) => setConversations((current) => current.map((conversation) => conversation.id === updated.id ? updated : conversation))).catch(() => setWorkbenchDataState("error")); } else { setCurrentProjectId(projectId); } }} onConversationCreate={(message) => { const title = message.length > 28 ? `${message.slice(0, 28)}…` : message; void createConversation(title, currentProjectId).then((created) => { setConversations((current) => [...current, created]); setSelectedConversationId(created.id); setConversationView("existing"); }).catch(() => setWorkbenchDataState("error")); }} />}
+      {section === "chat" && <ConversationScreen {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversationId) { const update = projectUpdatePromise.current.catch(() => undefined).then(async () => { const updated = await setConversationProject(selectedConversationId, projectId); setConversations((current) => current.map((conversation) => conversation.id === updated.id ? updated : conversation)); }); projectUpdatePromise.current = update; void update.catch(() => setWorkbenchDataState("error")); } else { setCurrentProjectId(projectId); } }} messages={messages} messagesState={messagesState} onSubmit={(message) => { void submitMessage(message); }} />}
       {section === "knowledge" && <KnowledgeScreen {...screenChrome} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
       {section === "automation" && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
-      {section === "tasks" && <TaskBoardScreen {...screenChrome} selectedTask={selectedTask} onSelectedTaskChange={setSelectedTask} />}
+      {section === "tasks" && <TaskBoardScreen {...screenChrome} tasks={tasks} projects={projects} conversations={conversations} dataState={workbenchDataState} selectedTask={selectedTask} onSelectedTaskChange={(task) => setSelectedTaskId(task.id)} />}
       <ContextSidebar
         section={section}
         conversationTitle={conversationView === "new" ? (conversationMode === "聊天" ? "新聊天" : "新工作") : conversationTitle}
@@ -172,11 +225,12 @@ function App() {
         open={contextOpen}
         closing={contextClosing}
         onClose={closeContext}
-        onReturnChat={() => { setSection("chat"); if (selectedConversationId) setConversationView("existing"); setMobileOpen(false); }}
+        onReturnChat={() => { if (selectedTask) setSelectedConversationId(selectedTask.conversation_id); setSection("chat"); setConversationView("existing"); setMobileOpen(false); closeContext(); }}
         knowledgeItem={knowledgeItems.find((item) => item.title === selectedKnowledgeTitle) ?? knowledgeItems[0]}
         skill={selectedSkill}
         workflow={selectedWorkflow}
         task={selectedTask}
+        conversationTask={conversationTask}
       />
       {settingsOpen && <SettingsDialog serviceConnection={serviceConnection} onClose={() => setSettingsOpen(false)} />}
     </div>

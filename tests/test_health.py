@@ -19,7 +19,7 @@ def test_health_reports_database_schema_after_repeated_startup(tmp_path: Path) -
         "status": "ok",
         "service": "honghao-ai-api",
         "api_version": "0.1.0",
-        "schema_version": 3,
+        "schema_version": 4,
     }
     assert first_response.status_code == 200
     assert first_response.json() == expected

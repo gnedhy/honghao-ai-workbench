@@ -1,4 +1,4 @@
-import type { Conversation, Project } from "./types";
+import type { Conversation, ConversationMessage, Project, TaskItem } from "./types";
 
 export type ServiceHealth = {
   status: "ok";
@@ -37,6 +37,14 @@ export function fetchConversations(signal?: AbortSignal): Promise<Conversation[]
   return fetchJson<Conversation[]>("/api/conversations", { signal });
 }
 
+export function fetchTasks(signal?: AbortSignal): Promise<TaskItem[]> {
+  return fetchJson<TaskItem[]>("/api/tasks", { signal });
+}
+
+export function fetchMessages(conversationId: string, signal?: AbortSignal): Promise<ConversationMessage[]> {
+  return fetchJson<ConversationMessage[]>(`/api/conversations/${conversationId}/messages`, { signal });
+}
+
 export function createProject(title: string): Promise<Project> {
   return fetchJson<Project>("/api/projects", {
     method: "POST",
@@ -64,5 +72,17 @@ export function setConversationProject(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ project_id: projectId }),
+  });
+}
+
+export function submitConversation(
+  conversationId: string,
+  mode: "chat" | "work",
+  content: string,
+): Promise<{ message: ConversationMessage; task: TaskItem | null }> {
+  return fetchJson(`/api/conversations/${conversationId}/submissions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, content }),
   });
 }
