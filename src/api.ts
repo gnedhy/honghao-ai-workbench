@@ -79,12 +79,12 @@ export function submitConversation(
   conversationId: string,
   mode: "chat" | "work",
   content: string,
-  requestId: string,
+  submissionKey: string,
 ): Promise<{ message: ConversationMessage; task: TaskItem | null }> {
   return fetchJson(`/api/conversations/${conversationId}/submissions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode, content, request_id: requestId }),
+    body: JSON.stringify({ mode, content, submission_key: submissionKey }),
   });
 }
 
@@ -93,11 +93,11 @@ export function createConversationSubmission(
   projectId: string | null,
   mode: "chat" | "work",
   content: string,
-  requestId: string,
+  submissionKey: string,
 ): Promise<{ conversation: Conversation; message: ConversationMessage; task: TaskItem | null }> {
   return fetchJson("/api/conversation-submissions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title, project_id: projectId, mode, content, request_id: requestId }),
+    body: JSON.stringify({ title, project_id: projectId, mode, content, submission_key: submissionKey }),
   });
 }

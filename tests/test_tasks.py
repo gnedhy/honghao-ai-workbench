@@ -14,7 +14,7 @@ def test_chat_submission_creates_message_without_task(tmp_path: Path) -> None:
         conversation = client.post("/api/conversations", json={"title": "随手讨论"}).json()
         submitted = client.post(
             f"/api/conversations/{conversation['id']}/submissions",
-            json={"mode": "chat", "content": "先讨论一下知识库结构", "request_id": "742415c8-c455-4d64-b8aa-4bd5f50f1a0f"},
+            json={"mode": "chat", "content": "先讨论一下知识库结构", "submission_key": "742415c8-c455-4d64-b8aa-4bd5f50f1a0f"},
         )
         tasks = client.get("/api/tasks")
         messages = client.get(f"/api/conversations/{conversation['id']}/messages")
@@ -39,11 +39,11 @@ def test_each_work_submission_creates_an_independent_persistent_task(tmp_path: P
 
         first = client.post(
             f"/api/conversations/{conversation['id']}/submissions",
-            json={"mode": "work", "content": "整理访谈中的事实与缺口", "request_id": "39d1978c-8f61-4e14-a1ac-ce8d04132b52"},
+            json={"mode": "work", "content": "整理访谈中的事实与缺口", "submission_key": "39d1978c-8f61-4e14-a1ac-ce8d04132b52"},
         ).json()["task"]
         second = client.post(
             f"/api/conversations/{conversation['id']}/submissions",
-            json={"mode": "work", "content": "生成下一轮访谈问题", "request_id": "bfb2c77e-b960-431f-b2c7-7aa9ac721b45"},
+            json={"mode": "work", "content": "生成下一轮访谈问题", "submission_key": "bfb2c77e-b960-431f-b2c7-7aa9ac721b45"},
         ).json()["task"]
 
     assert first["id"] != second["id"]
@@ -75,7 +75,7 @@ def test_tasks_keep_project_snapshot_when_conversation_project_changes(tmp_path:
 
         first_task = client.post(
             f"/api/conversations/{conversation['id']}/submissions",
-            json={"mode": "work", "content": "第一次工作", "request_id": "6242d04f-0091-4312-a840-a77ff81d3d80"},
+            json={"mode": "work", "content": "第一次工作", "submission_key": "6242d04f-0091-4312-a840-a77ff81d3d80"},
         ).json()["task"]
         client.patch(
             f"/api/conversations/{conversation['id']}",
@@ -83,7 +83,7 @@ def test_tasks_keep_project_snapshot_when_conversation_project_changes(tmp_path:
         )
         second_task = client.post(
             f"/api/conversations/{conversation['id']}/submissions",
-            json={"mode": "work", "content": "第二次工作", "request_id": "c9068947-4063-475a-8bc0-207ab19f9080"},
+            json={"mode": "work", "content": "第二次工作", "submission_key": "c9068947-4063-475a-8bc0-207ab19f9080"},
         ).json()["task"]
         client.patch(
             f"/api/conversations/{conversation['id']}",
@@ -91,7 +91,7 @@ def test_tasks_keep_project_snapshot_when_conversation_project_changes(tmp_path:
         )
         third_task = client.post(
             f"/api/conversations/{conversation['id']}/submissions",
-            json={"mode": "work", "content": "无项目工作", "request_id": "8134094a-7254-4f7d-8c0e-28afcf7fe7c5"},
+            json={"mode": "work", "content": "无项目工作", "submission_key": "8134094a-7254-4f7d-8c0e-28afcf7fe7c5"},
         ).json()["task"]
         first_detail = client.get(f"/api/tasks/{first_task['id']}")
 
@@ -108,7 +108,7 @@ def test_submission_rejects_unknown_conversation(tmp_path: Path) -> None:
     with TestClient(create_app(settings)) as client:
         response = client.post(
             "/api/conversations/missing/submissions",
-            json={"mode": "work", "content": "不会被创建", "request_id": "0bd5fe7a-a644-4b58-870e-e6a3c77d14e8"},
+            json={"mode": "work", "content": "不会被创建", "submission_key": "0bd5fe7a-a644-4b58-870e-e6a3c77d14e8"},
         )
 
     assert response.status_code == 404
@@ -117,7 +117,7 @@ def test_submission_rejects_unknown_conversation(tmp_path: Path) -> None:
 
 def test_first_submission_creates_conversation_message_and_task_atomically(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
-    request_id = "757c2ca9-2781-4dbf-b383-25d83695cc4b"
+    submission_key = "757c2ca9-2781-4dbf-b383-25d83695cc4b"
 
     with TestClient(create_app(settings)) as client:
         response = client.post(
@@ -127,7 +127,7 @@ def test_first_submission_creates_conversation_message_and_task_atomically(tmp_p
                 "project_id": None,
                 "mode": "work",
                 "content": "整理访谈事实与缺口",
-                "request_id": request_id,
+                "submission_key": submission_key,
             },
         )
         conversations = client.get("/api/conversations")
@@ -150,7 +150,7 @@ def test_retrying_first_submission_returns_the_original_result(tmp_path: Path) -
         "project_id": None,
         "mode": "work",
         "content": "生成任务",
-        "request_id": "656ab08f-ee20-41b8-8859-764160e2b362",
+        "submission_key": "656ab08f-ee20-41b8-8859-764160e2b362",
     }
 
     with TestClient(create_app(settings)) as client:
@@ -171,7 +171,7 @@ def test_retrying_existing_conversation_submission_does_not_duplicate_task(tmp_p
     payload = {
         "mode": "work",
         "content": "只执行一次",
-        "request_id": "70b23fb9-60c8-4977-b932-c206210cdc59",
+        "submission_key": "70b23fb9-60c8-4977-b932-c206210cdc59",
     }
 
     with TestClient(create_app(settings)) as client:
@@ -198,7 +198,7 @@ def test_concurrent_retries_create_one_task(tmp_path: Path) -> None:
     payload = {
         "mode": "work",
         "content": "并发请求也只创建一次",
-        "request_id": "7480d5aa-286e-4815-81af-2b378c062c80",
+        "submission_key": "7480d5aa-286e-4815-81af-2b378c062c80",
     }
 
     with TestClient(app) as client:
@@ -230,7 +230,7 @@ def test_submission_rejects_blank_and_oversized_content(tmp_path: Path) -> None:
             json={
                 "mode": "work",
                 "content": "   ",
-                "request_id": "0163acbf-9a47-481e-9368-d027b612959a",
+                "submission_key": "0163acbf-9a47-481e-9368-d027b612959a",
             },
         )
         oversized = client.post(
@@ -238,7 +238,7 @@ def test_submission_rejects_blank_and_oversized_content(tmp_path: Path) -> None:
             json={
                 "mode": "work",
                 "content": "字" * 10_001,
-                "request_id": "ec4ab37f-1d61-4be4-9449-bd2c5149fdb3",
+                "submission_key": "ec4ab37f-1d61-4be4-9449-bd2c5149fdb3",
             },
         )
 

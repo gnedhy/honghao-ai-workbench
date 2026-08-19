@@ -169,7 +169,7 @@ function App() {
     onToggleContext: toggleContext,
   };
 
-  const submitMessage = async (content: string, requestId: string): Promise<boolean> => {
+  const submitMessage = async (content: string, submissionKey: string): Promise<boolean> => {
     const creatingConversation = conversationView === "new" || !selectedConversationId;
     const conversationId = selectedConversationId;
     try {
@@ -181,7 +181,7 @@ function App() {
           currentProjectId,
           conversationMode === "聊天" ? "chat" : "work",
           content,
-          requestId,
+          submissionKey,
         );
         setConversations((current) => [...current, created.conversation]);
         result = created;
@@ -198,7 +198,7 @@ function App() {
           conversationId,
           conversationMode === "聊天" ? "chat" : "work",
           content,
-          requestId,
+          submissionKey,
         );
         if (selectedConversationIdRef.current === conversationId) {
           setMessages((current) => [...current, result.message]);

@@ -54,7 +54,7 @@ class ConversationProjectUpdate(BaseModel):
 class ConversationSubmission(BaseModel):
     mode: Literal["chat", "work"]
     content: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=10_000)]
-    request_id: UUID
+    submission_key: UUID
 
 
 class InitialConversationSubmission(ConversationSubmission):
@@ -171,7 +171,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 submission.project_id,
                 submission.mode,
                 submission.content,
-                str(submission.request_id),
+                str(submission.submission_key),
             )
         except SubmissionConflictError as error:
             raise HTTPException(status_code=409, detail="Submission key already used") from error
@@ -194,7 +194,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 conversation_id,
                 submission.mode,
                 submission.content,
-                str(submission.request_id),
+                str(submission.submission_key),
             )
         except SubmissionConflictError as error:
             raise HTTPException(status_code=409, detail="Submission key already used") from error

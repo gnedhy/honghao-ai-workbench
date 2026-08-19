@@ -9,7 +9,7 @@ type ComposerProps = {
   compact?: boolean;
   empty?: boolean;
   mode?: "聊天" | "工作";
-  onSubmit?: (message: string, requestId: string) => Promise<boolean>;
+  onSubmit?: (message: string, submissionKey: string) => Promise<boolean>;
   projects?: Project[];
   projectId?: string | null;
   onProjectChange?: (projectId: string | null) => void;
@@ -24,7 +24,7 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
   const [planningMode, setPlanningMode] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
-  const submissionIdRef = useRef<string | null>(null);
+  const submissionKeyRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
 
@@ -63,15 +63,15 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
   const submit = async () => {
     const content = message.trim();
     if (!content || submittingRef.current) return;
-    const requestId = submissionIdRef.current ?? crypto.randomUUID();
-    submissionIdRef.current = requestId;
+    const submissionKey = submissionKeyRef.current ?? crypto.randomUUID();
+    submissionKeyRef.current = submissionKey;
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const accepted = await onSubmit?.(content, requestId) ?? true;
+      const accepted = await onSubmit?.(content, submissionKey) ?? true;
       if (accepted) {
         setMessage("");
-        submissionIdRef.current = null;
+        submissionKeyRef.current = null;
       }
     } finally {
       submittingRef.current = false;
@@ -148,7 +148,7 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
             disabled={submitting}
             onChange={(event) => {
               setMessage(event.target.value);
-              submissionIdRef.current = null;
+              submissionKeyRef.current = null;
             }}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
@@ -246,7 +246,7 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
         disabled={submitting}
         onChange={(event) => {
           setMessage(event.target.value);
-          submissionIdRef.current = null;
+          submissionKeyRef.current = null;
         }}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {

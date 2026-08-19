@@ -31,10 +31,10 @@ export function TaskBoardScreen({ contextOpen, onOpenNavigation, onToggleContext
       />
       {tab === "任务管理" ? (
         <section className="task-board">
-          <div className="task-board__toolbar"><div><h1>任务管理</h1><p>由工作模式产生的持久执行对象</p></div><label className="search-field search-field--short"><Search size={16} /><input aria-label="搜索任务" placeholder="搜索任务" value={query} onChange={(event) => setQuery(event.target.value)} /></label></div>
+          <div className="task-board__toolbar"><div><h1>任务管理</h1><p>由工作提交产生的持久执行对象</p></div><label className="search-field search-field--short"><Search size={16} /><input aria-label="搜索任务" placeholder="搜索任务" value={query} onChange={(event) => setQuery(event.target.value)} /></label></div>
           {dataState === "loading" && <p className="board-state">正在读取任务…</p>}
           {dataState === "error" && <p className="board-state board-state--error">任务读取失败，请检查本地服务后重试。</p>}
-          {dataState === "ready" && visibleTasks.length === 0 && <div className="board-empty"><Clock3 size={20} /><h2>{tasks.length === 0 ? "还没有任务" : "没有匹配的任务"}</h2><p>{tasks.length === 0 ? "在会话中切换到工作模式并提交内容后，任务会出现在这里。" : "换一个关键词试试。"}</p></div>}
+          {dataState === "ready" && visibleTasks.length === 0 && <div className="board-empty"><Clock3 size={20} /><h2>{tasks.length === 0 ? "还没有任务" : "没有匹配的任务"}</h2><p>{tasks.length === 0 ? "在会话中切换到工作并提交内容后，任务会出现在这里。" : "换一个关键词试试。"}</p></div>}
           {visibleTasks.length > 0 && (
             <div className="task-table-wrap">
               <table className="task-table">

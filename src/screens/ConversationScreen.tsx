@@ -14,7 +14,7 @@ type ConversationScreenProps = ScreenChromeProps & {
   onProjectChange: (projectId: string | null) => void;
   messages: ConversationMessage[];
   messagesState: "loading" | "ready" | "error";
-  onSubmit: (message: string, requestId: string) => Promise<boolean>;
+  onSubmit: (message: string, submissionKey: string) => Promise<boolean>;
 };
 
 export function ConversationScreen({
