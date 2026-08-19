@@ -15,6 +15,16 @@ export type Conversation = {
   project_id: string | null;
 };
 
+export type ConversationMessage = {
+  id: string;
+  conversation_id: string;
+  mode: "chat" | "work";
+  content: string;
+  created_at: string;
+  task_id: string | null;
+  task_status: "created" | null;
+};
+
 export type KnowledgeItem = {
   title: string;
   scope: string;
@@ -43,10 +53,11 @@ export type WorkflowItem = {
 };
 
 export type TaskItem = {
-  title: string;
-  status: string;
-  owner: string;
-  updated: string;
-  progress: string;
-  project?: string;
+  id: string;
+  conversation_id: string;
+  objective: string;
+  project_id: string | null;
+  status: "created";
+  created_at: string;
+  latest_run: string | null;
 };
