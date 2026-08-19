@@ -14,7 +14,7 @@ type ConversationScreenProps = ScreenChromeProps & {
   onProjectChange: (projectId: string | null) => void;
   messages: ConversationMessage[];
   messagesState: "loading" | "ready" | "error";
-  onSubmit: (message: string) => void;
+  onSubmit: (message: string, requestId: string) => Promise<boolean>;
 };
 
 export function ConversationScreen({
@@ -49,6 +49,9 @@ export function ConversationScreen({
           <div className="new-conversation-empty__content">
             <h1>{mode === "工作" ? "我们该处理什么工作？" : "随时可以开始。"}</h1>
             <Composer compact={mode === "聊天"} empty mode={mode} onSubmit={onSubmit} projects={projects} projectId={projectId} onProjectChange={onProjectChange} />
+            {messagesState === "error" && (
+              <p className="conversation-state conversation-state--error" role="alert">提交失败，内容已保留，请稍后重试。</p>
+            )}
           </div>
         </section>
       ) : (
@@ -62,7 +65,7 @@ export function ConversationScreen({
             {messages.map((message) => (
               <div className="conversation-entry" key={message.id}>
                 <div className="chat-turn chat-turn--user"><p>{message.content}</p></div>
-                {message.mode === "work" && (
+                {message.task_id && message.task_status === "created" && (
                   <div className="work-tool-event"><CheckCircle2 size={14} /><span>已创建持久任务 · 待执行</span></div>
                 )}
               </div>

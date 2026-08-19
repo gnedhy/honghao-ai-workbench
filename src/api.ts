@@ -79,10 +79,25 @@ export function submitConversation(
   conversationId: string,
   mode: "chat" | "work",
   content: string,
+  requestId: string,
 ): Promise<{ message: ConversationMessage; task: TaskItem | null }> {
   return fetchJson(`/api/conversations/${conversationId}/submissions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode, content }),
+    body: JSON.stringify({ mode, content, request_id: requestId }),
+  });
+}
+
+export function createConversationSubmission(
+  title: string,
+  projectId: string | null,
+  mode: "chat" | "work",
+  content: string,
+  requestId: string,
+): Promise<{ conversation: Conversation; message: ConversationMessage; task: TaskItem | null }> {
+  return fetchJson("/api/conversation-submissions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, project_id: projectId, mode, content, request_id: requestId }),
   });
 }

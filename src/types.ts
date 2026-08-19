@@ -21,6 +21,8 @@ export type ConversationMessage = {
   mode: "chat" | "work";
   content: string;
   created_at: string;
+  task_id: string | null;
+  task_status: "created" | null;
 };
 
 export type KnowledgeItem = {

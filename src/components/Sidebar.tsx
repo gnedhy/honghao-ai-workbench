@@ -29,7 +29,6 @@ type SidebarProps = {
   onSectionChange: (section: Section) => void;
   onNewConversation: () => void;
   onConversationOpen: (conversationId: string) => void;
-  onProjectContextChange: (projectId: string | null) => void;
   onProjectCreate: (title: string) => void;
   profileOpen: boolean;
   onProfileToggle: () => void;
@@ -55,7 +54,6 @@ export function Sidebar({
   onSectionChange,
   onNewConversation,
   onConversationOpen,
-  onProjectContextChange,
   onProjectCreate,
   profileOpen,
   onProfileToggle,
@@ -81,9 +79,7 @@ export function Sidebar({
     onMobileClose();
   };
 
-  const visibleRecentConversations = currentProjectId
-    ? conversations.filter((conversation) => conversation.project_id === currentProjectId)
-    : conversations;
+  const recentConversations = [...conversations].reverse();
 
   const submitProject = () => {
     const title = newProjectTitle.trim();
@@ -135,7 +131,7 @@ export function Sidebar({
               const relatedConversations = conversations.filter((conversation) => conversation.project_id === project.id);
               return (
                 <div className="project-entry" key={project.id}>
-                  <button className={expanded ? "project-row is-expanded" : "project-row"} type="button" aria-expanded={expanded} onClick={() => { const nextProjectId = expanded ? null : project.id; setExpandedProjectId(nextProjectId ?? ""); onProjectContextChange(nextProjectId); }}>
+                  <button className={expanded ? "project-row is-expanded" : "project-row"} type="button" aria-expanded={expanded} onClick={() => setExpandedProjectId(expanded ? "" : project.id)}>
                     <span className={`project-mark project-mark--${(index % 3) + 1}`}><FolderClosed size={14} /></span>
                     <span>{project.title}</span>
                     <ChevronRight className="project-row__chevron" size={14} />
@@ -155,8 +151,8 @@ export function Sidebar({
             })}
           </SidebarGroup>
           <SidebarGroup title="最近">
-            {dataState === "ready" && visibleRecentConversations.length === 0 && <p className="sidebar-empty">暂无会话</p>}
-            {visibleRecentConversations.map((conversation) => (
+            {dataState === "ready" && recentConversations.length === 0 && <p className="sidebar-empty">暂无会话</p>}
+            {recentConversations.map((conversation) => (
               <button className={activeSection === "chat" && selectedConversationId === conversation.id ? "conversation-row is-active" : "conversation-row"} type="button" key={conversation.id} onClick={() => openConversation(conversation.id)}>
                 <MessageCircle size={16} />
                 <span>{conversation.title}</span>

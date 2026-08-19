@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Literal
+from typing import Annotated, Literal
+from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints
 
-from api.database import Database
+from api.database import Database, SubmissionConflictError
 from api.settings import Settings
 
 
@@ -52,7 +53,13 @@ class ConversationProjectUpdate(BaseModel):
 
 class ConversationSubmission(BaseModel):
     mode: Literal["chat", "work"]
-    content: str
+    content: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=10_000)]
+    request_id: UUID
+
+
+class InitialConversationSubmission(ConversationSubmission):
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+    project_id: str | None = None
 
 
 class MessageResponse(BaseModel):
@@ -61,6 +68,8 @@ class MessageResponse(BaseModel):
     mode: Literal["chat", "work"]
     content: str
     created_at: str
+    task_id: str | None
+    task_status: Literal["created"] | None
 
 
 class TaskResponse(BaseModel):
@@ -76,6 +85,10 @@ class TaskResponse(BaseModel):
 class SubmissionResponse(BaseModel):
     message: MessageResponse
     task: TaskResponse | None
+
+
+class InitialSubmissionResponse(SubmissionResponse):
+    conversation: ConversationResponse
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -144,6 +157,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return ConversationResponse(**conversation)
 
     @app.post(
+        "/api/conversation-submissions",
+        response_model=InitialSubmissionResponse,
+        status_code=201,
+    )
+    def create_conversation_submission(
+        submission: InitialConversationSubmission,
+        request: Request,
+    ) -> InitialSubmissionResponse:
+        try:
+            result = request.app.state.database.create_conversation_submission(
+                submission.title,
+                submission.project_id,
+                submission.mode,
+                submission.content,
+                str(submission.request_id),
+            )
+        except SubmissionConflictError as error:
+            raise HTTPException(status_code=409, detail="Submission key already used") from error
+        if result is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return InitialSubmissionResponse(**result)
+
+    @app.post(
         "/api/conversations/{conversation_id}/submissions",
         response_model=SubmissionResponse,
         status_code=201,
@@ -153,11 +189,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         submission: ConversationSubmission,
         request: Request,
     ) -> SubmissionResponse:
-        result = request.app.state.database.submit_conversation(
-            conversation_id,
-            submission.mode,
-            submission.content,
-        )
+        try:
+            result = request.app.state.database.submit_conversation(
+                conversation_id,
+                submission.mode,
+                submission.content,
+                str(submission.request_id),
+            )
+        except SubmissionConflictError as error:
+            raise HTTPException(status_code=409, detail="Submission key already used") from error
         if result is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         return SubmissionResponse(**result)
@@ -167,6 +207,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response_model=list[MessageResponse],
     )
     def list_messages(conversation_id: str, request: Request) -> list[MessageResponse]:
+        if request.app.state.database.get_conversation(conversation_id) is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
         return [
             MessageResponse(**message)
             for message in request.app.state.database.list_messages(conversation_id)

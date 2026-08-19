@@ -9,7 +9,7 @@ type ComposerProps = {
   compact?: boolean;
   empty?: boolean;
   mode?: "聊天" | "工作";
-  onSubmit?: (message: string) => void;
+  onSubmit?: (message: string, requestId: string) => Promise<boolean>;
   projects?: Project[];
   projectId?: string | null;
   onProjectChange?: (projectId: string | null) => void;
@@ -22,6 +22,9 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [knowledgeContextEnabled, setKnowledgeContextEnabled] = useState(false);
   const [planningMode, setPlanningMode] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const submissionIdRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
 
@@ -57,10 +60,23 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
     };
   }, [chatMenuOpen, projectMenuOpen, workMenuOpen]);
 
-  const submit = () => {
-    if (!message.trim()) return;
-    onSubmit?.(message.trim());
-    setMessage("");
+  const submit = async () => {
+    const content = message.trim();
+    if (!content || submittingRef.current) return;
+    const requestId = submissionIdRef.current ?? crypto.randomUUID();
+    submissionIdRef.current = requestId;
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      const accepted = await onSubmit?.(content, requestId) ?? true;
+      if (accepted) {
+        setMessage("");
+        submissionIdRef.current = null;
+      }
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
   };
 
   if (compact) {
@@ -129,16 +145,20 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
             placeholder="向宏昊 AI 发送消息"
             rows={1}
             value={message}
-            onChange={(event) => setMessage(event.target.value)}
+            disabled={submitting}
+            onChange={(event) => {
+              setMessage(event.target.value);
+              submissionIdRef.current = null;
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                submit();
+                void submit();
               }
             }}
           />
           <button className="composer__model" type="button">企业模型<ChevronDown size={13} /></button>
-          <button className="round-action composer__submit" type="button" aria-label="发送消息" onClick={submit} disabled={!message.trim()}>
+          <button className="round-action composer__submit" type="button" aria-label="发送消息" aria-busy={submitting} onClick={() => { void submit(); }} disabled={submitting || !message.trim()}>
             <ArrowUp size={16} />
           </button>
         </div>
@@ -223,11 +243,15 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
         placeholder={mode === "工作" ? "补充信息，或输入下一步要求…" : "向宏昊 AI 发送消息"}
         rows={2}
         value={message}
-        onChange={(event) => setMessage(event.target.value)}
+        disabled={submitting}
+        onChange={(event) => {
+          setMessage(event.target.value);
+          submissionIdRef.current = null;
+        }}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
-            submit();
+            void submit();
           }
         }}
       />
@@ -332,7 +356,7 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
             </button>
           )}
         </div>
-        <button className="round-action composer__submit" type="button" aria-label="交给智能体执行" onClick={submit} disabled={!message.trim()}>
+        <button className="round-action composer__submit" type="button" aria-label="交给智能体执行" aria-busy={submitting} onClick={() => { void submit(); }} disabled={submitting || !message.trim()}>
           <ArrowUp size={16} />
         </button>
       </div>
