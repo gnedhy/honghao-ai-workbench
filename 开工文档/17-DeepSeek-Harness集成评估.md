@@ -28,7 +28,7 @@ FastAPI 产品 API
   ├─ 会话 / 轻项目 / 任务 / 任务运行
   ├─ 知识空间 / 技能 / 工作流
   ├─ 待确认修改 / 安全与代码审查
-  └─ HarnessRuntimePort（稳定的内部接口）
+  └─ HarnessRuntime（稳定的内部接口）
                     │
                     ▼
        DeepSeek Harness Adapter
@@ -48,8 +48,8 @@ FastAPI 与 SQLite 继续作为产品业务事实源。前端只识别宏昊 AI 
 | 任务 | 无需一一对应 | 仍是宏昊 AI 的持久业务对象 |
 | 任务运行 | Agent 的一次执行尝试 | 一个任务可有多次运行，每次运行可绑定一个 Harness Session |
 | 智能体执行器 | Agent、Agent Loop、Context | 可复用的核心部分 |
-| 执行循环 | turn / step / tool pipeline | 外层停止原因必须映射为宏昊 AI 的正式状态 |
-| 技能 | Tool 或自定义 Plugin | 技能版本与发布状态仍由宏昊 AI 管理 |
+| 执行循环 | turn / step / tool pipeline | 内核事件转换为宏昊 AI 的停止原因；任务状态由产品层据此更新 |
+| 技能 | 由 Adapter 落实为内核能力调用 | 技能仍是宏昊 AI 的版本化定义，不与 Tool 或 Plugin 混称 |
 | 工作流 | 不等于 Agent Loop | 工作流仍是外层固定业务流程和人工关口 |
 | 受控工作目录 | `ctx.fs`、`ctx.sandbox` | 授权范围由宏昊 AI 发放，Harness 不得自行扩大 |
 | 待确认修改 | 无直接替代 | 正式写入仍必须经过宏昊 AI 的独立确认流程 |
@@ -79,7 +79,7 @@ FastAPI 与 SQLite 继续作为产品业务事实源。前端只识别宏昊 AI 
 2. 在独立 Node 进程运行一个固定的“需求诊断”任务，初期只允许只读 Mock 工具。
 3. 由 FastAPI 通过一个最小 Adapter 启动、取消并接收运行事件。
 4. 把事件转换为宏昊 AI 的任务运行状态、步骤、工具调用和停止原因。
-5. 在现有工作模式界面显示真实进度，不直接渲染 Harness 原始协议。
+5. 在现有工作界面显示真实进度，不直接渲染 Harness 原始协议。
 6. 验证后再决定是否接入真实模型、受控工作目录和等待确认恢复。
 
 ### 验收标准

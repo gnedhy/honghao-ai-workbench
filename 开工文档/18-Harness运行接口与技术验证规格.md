@@ -18,8 +18,8 @@
 模块暂定名为 `HarnessRuntime`。建议只有两个操作：
 
 ```text
-run(request) -> 按顺序产生 HarnessEvent，最终必须产生 run_stopped
-cancel(task_run_id) -> 请求取消；结果仍由 run_stopped 事件确认
+run(request) -> 按顺序产生 HarnessEvent；正常结束时产生 run_stopped
+cancel(task_run_id) -> 请求取消；结果由 run_stopped 或产品层失联检测确认
 ```
 
 恢复不另设第三个操作。恢复是对既有 `task_run_id` 再次调用 `run`，并在请求中携带已保存检查点和本次补充输入。这样暂停、恢复和首次执行共享同一条路径。
@@ -36,7 +36,6 @@ cancel(task_run_id) -> 请求取消；结果仍由 run_stopped 事件确认
 - 工具白名单与每项工具的参数约束。
 - 步骤、时间、模型调用、工具调用和费用预算。
 - 可选检查点与本次补充输入。
-- 取消信号。
 
 ### HarnessEvent
 
@@ -54,7 +53,7 @@ cancel(task_run_id) -> 请求取消；结果仍由 run_stopped 事件确认
 
 ### 停止原因
 
-`run_stopped` 必须是每次调用的最终事件，停止原因只能是：
+Adapter 正常结束时以 `run_stopped` 作为最终事件；若内核进程硬崩溃或连接丢失，产品层必须检测未闭合运行并补记 `failed`，保证持久记录最终只有一个停止原因。停止原因只能是：
 
 - `completed`
 - `waiting_for_user`
