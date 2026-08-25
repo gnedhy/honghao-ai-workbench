@@ -5,11 +5,12 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 
 from api.database import Database, SubmissionConflictError
+from api.identity import DuplicateIdentityError, IdentityStore, SESSION_COOKIE_NAME
 from api.modules import MODULE_IDS, ModuleId, ModuleMode, module_for_api_path
 from api.settings import Settings
 from api.workbenches import WORKBENCH_IDS, WorkbenchId, WorkbenchMode
@@ -34,6 +35,46 @@ class WorkbenchStatusResponse(BaseModel):
 class ModuleStatusResponse(BaseModel):
     id: ModuleId
     mode: ModuleMode
+
+
+class LoginRequest(BaseModel):
+    username: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    password: Annotated[str, StringConstraints(min_length=1, max_length=1_000)]
+
+
+class RoleResponse(BaseModel):
+    id: str
+    name: str
+    system: bool
+
+
+class CurrentUserResponse(BaseModel):
+    id: str
+    username: str
+    display_name: str
+    department: str | None
+    roles: list[RoleResponse]
+
+
+class UserResponse(CurrentUserResponse):
+    is_active: bool
+
+
+class RoleCreate(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+
+
+class UserCreate(BaseModel):
+    username: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9._-]+$")]
+    display_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    department: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)] | None = None
+    password: Annotated[str, StringConstraints(min_length=12, max_length=1_000)]
+    role_ids: Annotated[list[str], Field(min_length=1)]
+
+
+class UserUpdate(BaseModel):
+    is_active: bool | None = None
+    role_ids: Annotated[list[str], Field(min_length=1)] | None = None
 
 
 class ProjectCreate(BaseModel):
@@ -107,15 +148,30 @@ class InitialSubmissionResponse(SubmissionResponse):
 def create_app(settings: Settings | None = None) -> FastAPI:
     runtime_settings = settings or Settings.from_environment()
     database = Database(runtime_settings.database_path)
+    identities = IdentityStore(runtime_settings.database_path)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         runtime_settings.ensure_directories()
         database.initialize()
+        identities.initialize()
         app.state.database = database
+        app.state.identities = identities
         yield
 
     app = FastAPI(title="Honghao AI API", version=API_VERSION, lifespan=lifespan)
+
+    def current_user(request: Request) -> dict:
+        user = getattr(request.state, "current_user", None)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        return user
+
+    def require_system_admin(request: Request) -> dict:
+        user = current_user(request)
+        if not any(role["id"] == "system-admin" for role in user["roles"]):
+            raise HTTPException(status_code=403, detail="System administrator required")
+        return user
 
     def ensure_submission_modules_available(mode: Literal["chat", "work"]) -> None:
         if mode == "work" and runtime_settings.module_modes["tasks"] == "off":
@@ -128,6 +184,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse(status_code=404, content={"detail": "Module not available"})
         return await call_next(request)
 
+    @app.middleware("http")
+    async def require_authentication(request: Request, call_next):
+        if request.url.path.startswith("/api/") and request.url.path not in {"/api/health", "/api/login"}:
+            token = request.cookies.get(SESSION_COOKIE_NAME)
+            user = identities.user_for_session(token) if token else None
+            if user is None:
+                return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+            request.state.current_user = user
+        return await call_next(request)
+
     @app.get("/api/health", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:
         return HealthResponse(
@@ -136,6 +202,89 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             api_version=API_VERSION,
             schema_version=request.app.state.database.schema_version(),
         )
+
+    @app.post("/api/login", response_model=CurrentUserResponse)
+    def login(credentials: LoginRequest, response: Response) -> CurrentUserResponse:
+        authenticated = identities.login(
+            credentials.username,
+            credentials.password,
+            runtime_settings.session_ttl_seconds,
+        )
+        if authenticated is None:
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+        user, token = authenticated
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            token,
+            max_age=runtime_settings.session_ttl_seconds,
+            httponly=True,
+            samesite="strict",
+            path="/api",
+        )
+        return CurrentUserResponse(**user)
+
+    @app.get("/api/me", response_model=CurrentUserResponse)
+    def me(request: Request) -> CurrentUserResponse:
+        return CurrentUserResponse(**current_user(request))
+
+    @app.post("/api/logout", status_code=204)
+    def logout(request: Request, response: Response) -> None:
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        if token is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        identities.logout(token)
+        response.delete_cookie(SESSION_COOKIE_NAME, path="/api", httponly=True, samesite="strict")
+
+    @app.get("/api/roles", response_model=list[RoleResponse])
+    def list_roles(request: Request) -> list[RoleResponse]:
+        require_system_admin(request)
+        return [RoleResponse(**role) for role in identities.list_roles()]
+
+    @app.post("/api/roles", response_model=RoleResponse, status_code=201)
+    def create_role(role: RoleCreate, request: Request) -> RoleResponse:
+        require_system_admin(request)
+        try:
+            return RoleResponse(**identities.create_role(role.name))
+        except DuplicateIdentityError as error:
+            raise HTTPException(status_code=409, detail="Role already exists") from error
+
+    @app.post("/api/users", response_model=UserResponse, status_code=201)
+    def create_user(user: UserCreate, request: Request) -> UserResponse:
+        require_system_admin(request)
+        try:
+            return UserResponse(**identities.create_user(
+                username=user.username,
+                display_name=user.display_name,
+                department=user.department,
+                password=user.password,
+                role_ids=user.role_ids,
+            ))
+        except DuplicateIdentityError as error:
+            raise HTTPException(status_code=409, detail="User already exists") from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/api/users", response_model=list[UserResponse])
+    def list_users(request: Request) -> list[UserResponse]:
+        require_system_admin(request)
+        return [UserResponse(**user) for user in identities.list_users()]
+
+    @app.patch("/api/users/{user_id}", response_model=UserResponse)
+    def update_user(user_id: str, update: UserUpdate, request: Request) -> UserResponse:
+        require_system_admin(request)
+        if update.is_active is None and update.role_ids is None:
+            raise HTTPException(status_code=422, detail="No account changes supplied")
+        try:
+            user = identities.update_user(
+                user_id,
+                is_active=update.is_active,
+                role_ids=update.role_ids,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        return UserResponse(**user)
 
     @app.get("/api/workbenches", response_model=list[WorkbenchStatusResponse])
     def list_workbenches() -> list[WorkbenchStatusResponse]:

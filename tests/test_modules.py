@@ -1,17 +1,15 @@
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-
-from api.main import create_app
 from api.modules import default_module_modes
 from api.settings import Settings
+from tests.helpers import authenticated_client
 
 
 def test_module_registry_defaults_to_workbench_only(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         response = client.get("/api/modules")
 
     assert response.status_code == 200
@@ -30,7 +28,7 @@ def test_module_registry_reads_environment_modes(tmp_path: Path, monkeypatch) ->
     monkeypatch.setenv("HONGHAO_MODULE_WORKBENCH_MODE", "off")
     settings = Settings.from_environment()
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         response = client.get("/api/modules")
 
     assert response.status_code == 200
@@ -72,7 +70,7 @@ def test_off_module_business_routes_are_not_available(
     module_modes[module_id] = "off"
     settings = Settings.from_data_dir(tmp_path / module_id, module_modes=module_modes)
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         response = client.get(path)
 
     assert response.status_code == 404
@@ -90,7 +88,7 @@ def test_module_registry_reports_every_module_mode(
     module_modes[module_id] = mode
     settings = Settings.from_data_dir(tmp_path / f"{module_id}-{mode}", module_modes=module_modes)
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         response = client.get("/api/modules")
 
     assert response.status_code == 200
@@ -102,7 +100,7 @@ def test_work_submission_is_blocked_when_tasks_are_off(tmp_path: Path) -> None:
     module_modes["chat"] = "active"
     settings = Settings.from_data_dir(tmp_path / "tasks-off", module_modes=module_modes)
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         conversation = client.post("/api/conversations", json={"title": "只聊天"}).json()
         response = client.post(
             f"/api/conversations/{conversation['id']}/submissions",
@@ -124,7 +122,7 @@ def test_initial_work_submission_is_blocked_when_tasks_are_off(tmp_path: Path) -
     module_modes["chat"] = "active"
     settings = Settings.from_data_dir(tmp_path / "initial-tasks-off", module_modes=module_modes)
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         response = client.post(
             "/api/conversation-submissions",
             json={

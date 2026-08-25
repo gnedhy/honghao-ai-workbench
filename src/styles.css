@@ -30,6 +30,35 @@
   --shadow-composer: 0 10px 34px rgba(25,31,36,.055), 0 1px 3px rgba(25,31,36,.045);
 }
 
+.auth-loading, .login-screen { min-height: 100dvh; background: #f5f7f8; }
+.auth-loading { display: grid; place-items: center; }
+.auth-loading span { width: 22px; height: 22px; border: 2px solid #d9dee2; border-top-color: #303236; border-radius: 50%; animation: auth-spin .7s linear infinite; }
+.login-screen { display: grid; place-items: center; padding: 24px; }
+.login-card { width: min(100%, 390px); padding: 28px; border: 1px solid var(--border); border-radius: 18px; background: #fff; box-shadow: 0 18px 50px rgba(31, 35, 39, .08); }
+.login-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 42px; }
+.login-brand strong { font-size: 15px; font-weight: 650; }
+.login-heading { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 26px; }
+.login-heading__icon { display: grid; width: 34px; height: 34px; flex: none; place-items: center; border-radius: 10px; background: #f0f2f3; color: #555b60; }
+.login-heading h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: -.02em; }
+.login-heading p, .login-help { margin: 0; color: var(--muted); font-size: 12.5px; }
+.login-card form { display: grid; gap: 16px; }
+.login-card label { display: grid; gap: 7px; color: #4b5055; font-size: 12.5px; }
+.login-card input { width: 100%; height: 42px; padding: 0 12px; border: 1px solid #d7dce0; border-radius: 10px; outline: none; background: #fff; font: inherit; transition: border-color 140ms ease, box-shadow 140ms ease; }
+.login-card input:focus { border-color: #9ba4ac; box-shadow: 0 0 0 3px rgba(88, 99, 108, .1); }
+.login-card form > button { display: flex; min-height: 42px; align-items: center; justify-content: center; gap: 8px; margin-top: 4px; border-radius: 10px; background: #25272a; color: #fff; font-size: 13.5px; font-weight: 600; cursor: pointer; transition: background-color 140ms ease, transform 120ms ease; }
+.login-card form > button:hover:not(:disabled) { background: #111315; }
+.login-card form > button:active:not(:disabled) { transform: scale(.985); }
+.login-card form > button:disabled { background: #c4c9cd; cursor: default; }
+.login-error { margin: -4px 0 0; color: var(--danger); font-size: 12px; }
+.login-help { margin-top: 22px; text-align: center; }
+@keyframes auth-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 480px) {
+  .login-screen { place-items: stretch; padding: 0; background: #fff; }
+  .login-card { width: 100%; padding: 24px 20px; border: 0; border-radius: 0; box-shadow: none; }
+  .login-brand { margin-bottom: 72px; }
+}
+
 * { box-sizing: border-box; }
 html, body, #root { min-width: 320px; min-height: 100%; margin: 0; }
 body { min-height: 100vh; min-height: 100dvh; overflow: hidden; }
@@ -778,6 +807,7 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 80ms !important; }
+  .auth-loading span { animation: none !important; }
   .app-shell, .context-sidebar, .sidebar, .segmented-control__indicator, .project-row__chevron { transition-duration: .01ms !important; }
   .profile-menu, .tool-select__menu, .tool-feedback, .composer__project-menu, .composer__add-menu,
   .project-thread-list, .app-main > section,

@@ -9,6 +9,20 @@ export type ModuleStatus = {
   mode: ModuleMode;
 };
 
+export type UserRole = {
+  id: string;
+  name: string;
+  system: boolean;
+};
+
+export type CurrentUser = {
+  id: string;
+  username: string;
+  display_name: string;
+  department: string | null;
+  roles: UserRole[];
+};
+
 export type WorkbenchId = "management" | "procurement" | "research" | "sales";
 
 export type WorkbenchMode = "prototype" | "active" | "off";

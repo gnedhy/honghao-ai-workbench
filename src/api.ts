@@ -1,4 +1,4 @@
-import type { Conversation, ConversationMessage, ModuleStatus, Project, TaskItem, WorkbenchStatus } from "./types";
+import type { Conversation, ConversationMessage, CurrentUser, ModuleStatus, Project, TaskItem, WorkbenchStatus } from "./types";
 
 export type ServiceHealth = {
   status: "ok";
@@ -27,6 +27,23 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
   if (!response.ok) throw new Error(`Request failed with ${response.status}`);
   return response.json() as Promise<T>;
+}
+
+export function fetchCurrentUser(signal?: AbortSignal): Promise<CurrentUser> {
+  return fetchJson<CurrentUser>("/api/me", { signal });
+}
+
+export function login(username: string, password: string): Promise<CurrentUser> {
+  return fetchJson<CurrentUser>("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export async function logout(): Promise<void> {
+  const response = await fetch("/api/logout", { method: "POST" });
+  if (!response.ok) throw new Error(`Logout failed with ${response.status}`);
 }
 
 export function fetchProjects(signal?: AbortSignal): Promise<Project[]> {
