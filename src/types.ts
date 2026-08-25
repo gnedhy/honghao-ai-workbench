@@ -23,6 +23,40 @@ export type CurrentUser = {
   roles: UserRole[];
 };
 
+export type ManagedUser = CurrentUser & {
+  is_active: boolean;
+};
+
+export type PermissionDefinition = {
+  id: string;
+  module_id: Section;
+  name: string;
+  description: string;
+};
+
+export type RolePermissionPolicy = {
+  role_id: string;
+  permission_ids: string[];
+};
+
+export type SensitiveFieldPolicy = {
+  id: string;
+  area: string;
+  name: string;
+  description: string;
+  read_role_ids: string[];
+  write_role_ids: string[];
+};
+
+export type AuditEvent = {
+  id: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  created_at: string;
+  actor_name: string | null;
+};
+
 export type WorkbenchId = "management" | "procurement" | "research" | "sales";
 
 export type WorkbenchMode = "prototype" | "active" | "off";
