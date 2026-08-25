@@ -138,7 +138,7 @@ function App() {
       return () => controller.abort();
     }
     setWorkbenchDataState("loading");
-    Promise.all([fetchProjects(controller.signal), fetchConversations(controller.signal), enabledModules.tasks ? fetchTasks(controller.signal) : Promise.resolve([])])
+    Promise.all([fetchProjects(controller.signal), fetchConversations(controller.signal), fetchTasks(controller.signal)])
       .then(([loadedProjects, loadedConversations, loadedTasks]) => {
         setProjects(loadedProjects);
         setConversations(loadedConversations);
