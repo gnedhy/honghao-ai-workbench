@@ -2,6 +2,15 @@ export type Section = "chat" | "knowledge" | "automation" | "workbench" | "tasks
 
 export type ModuleVisibility = Record<Section, boolean>;
 
+export type WorkbenchId = "management" | "procurement" | "research" | "sales";
+
+export type WorkbenchMode = "prototype" | "active" | "off";
+
+export type WorkbenchStatus = {
+  id: WorkbenchId;
+  mode: WorkbenchMode;
+};
+
 export type ConversationView = "new" | "existing";
 
 export type WorkApproval = "pending" | "approved" | "rejected";

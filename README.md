@@ -44,6 +44,30 @@ npm.cmd run dev
 
 默认运行数据保存在仓库内的 `.data/`，其中 `.data/controlled-work/` 是后续任务使用的默认受控工作目录；整个数据目录都不会提交到 Git。可通过 `HONGHAO_DATA_DIR` 指定其他本地数据目录；测试始终使用独立临时目录，不会读写正式数据。
 
+### 职能工作台模块状态
+
+四个职能工作台默认保持当前原型，可分别通过环境变量切换为 `prototype`、`active` 或 `off`：
+
+```powershell
+$env:HONGHAO_WORKBENCH_PROCUREMENT_MODE = "prototype"
+$env:HONGHAO_WORKBENCH_RESEARCH_MODE = "prototype"
+$env:HONGHAO_WORKBENCH_SALES_MODE = "prototype"
+$env:HONGHAO_WORKBENCH_MANAGEMENT_MODE = "prototype"
+npm.cmd run dev
+```
+
+- `prototype`：显示明确标注的示例界面。
+- `active`：启用真实模块；真实实现尚未接入时，界面会安全阻断，不展示示例数据。
+- `off`：隐藏该职能入口；后续真实业务接口也必须使用同一开关阻断。
+
+配置只在启动时读取，修改后需要重启。影子验证应使用单独的 `HONGHAO_DATA_DIR` 和测试数据副本；正式实例发生异常时，先把对应模块切回 `prototype` 或 `off`，不要删除模块数据。当前 UI 基线可从标签 `workbench-ui-baseline-2026-08-25` 恢复。
+
+模块迁移前先停止本地服务，并创建不会覆盖已有文件的 SQLite 一致性备份：
+
+```powershell
+uv run python scripts/backup_database.py .data/honghao.db .data/backups/pre-procurement-v1.db
+```
+
 统一验证命令：
 
 ```powershell

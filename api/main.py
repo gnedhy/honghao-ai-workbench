@@ -10,6 +10,7 @@ from pydantic import BaseModel, StringConstraints
 
 from api.database import Database, SubmissionConflictError
 from api.settings import Settings
+from api.workbenches import WORKBENCH_IDS, WorkbenchId, WorkbenchMode
 
 
 API_VERSION = "0.1.0"
@@ -21,6 +22,11 @@ class HealthResponse(BaseModel):
     service: str
     api_version: str
     schema_version: int
+
+
+class WorkbenchStatusResponse(BaseModel):
+    id: WorkbenchId
+    mode: WorkbenchMode
 
 
 class ProjectCreate(BaseModel):
@@ -112,6 +118,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             api_version=API_VERSION,
             schema_version=request.app.state.database.schema_version(),
         )
+
+    @app.get("/api/workbenches", response_model=list[WorkbenchStatusResponse])
+    def list_workbenches() -> list[WorkbenchStatusResponse]:
+        return [
+            WorkbenchStatusResponse(id=workbench_id, mode=runtime_settings.workbench_modes[workbench_id])
+            for workbench_id in WORKBENCH_IDS
+        ]
 
     @app.post("/api/projects", response_model=ProjectResponse, status_code=201)
     def create_project(project: ProjectCreate, request: Request) -> ProjectResponse:
