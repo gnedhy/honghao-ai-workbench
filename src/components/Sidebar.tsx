@@ -7,6 +7,7 @@ import {
   LibraryBig,
   LogOut,
   MessageCircle,
+  PanelsTopLeft,
   PenLine,
   Plus,
   Search,
@@ -17,7 +18,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import userAvatar from "../assets/avatar-zhang-wei-v1.png";
-import type { Conversation, Project, Section } from "../types";
+import type { Conversation, ModuleVisibility, Project, Section } from "../types";
 
 type SidebarProps = {
   activeSection: Section;
@@ -26,10 +27,12 @@ type SidebarProps = {
   projects: Project[];
   conversations: Conversation[];
   dataState: "loading" | "ready" | "error";
+  enabledModules: ModuleVisibility;
   onSectionChange: (section: Section) => void;
   onNewConversation: () => void;
   onConversationOpen: (conversationId: string) => void;
   onProjectCreate: (title: string) => void;
+  onSearchOpen: () => void;
   profileOpen: boolean;
   onProfileToggle: () => void;
   mobileOpen: boolean;
@@ -41,6 +44,7 @@ const navItems = [
   { id: "chat", label: "新聊天", icon: PenLine },
   { id: "knowledge", label: "知识库", icon: LibraryBig },
   { id: "automation", label: "自动化", icon: WandSparkles },
+  { id: "workbench", label: "工作台", icon: PanelsTopLeft },
   { id: "tasks", label: "任务看板", icon: FolderKanban },
 ] as const;
 
@@ -51,10 +55,12 @@ export function Sidebar({
   projects,
   conversations,
   dataState,
+  enabledModules,
   onSectionChange,
   onNewConversation,
   onConversationOpen,
   onProjectCreate,
+  onSearchOpen,
   profileOpen,
   onProfileToggle,
   mobileOpen,
@@ -96,16 +102,16 @@ export function Sidebar({
         <div className="sidebar__brand">
           <div className="brand-button">
             <BrandMark />
-            <span className="brand-button__label">宏昊 AI</span>
+            <span className="brand-button__label">宏昊化工</span>
           </div>
           <div className="sidebar__brand-actions">
-            <button className="icon-button sidebar__search" type="button" aria-label="搜索"><Search size={18} /></button>
+            <button className="icon-button sidebar__search" type="button" aria-label="全局搜索" onClick={onSearchOpen}><Search size={18} /></button>
             <button className="icon-button sidebar__close" type="button" aria-label="关闭导航" onClick={onMobileClose}><X size={18} /></button>
           </div>
         </div>
 
         <nav className="primary-nav" aria-label="主要导航">
-          {navItems.map(({ id, label, icon: Icon }) => (
+          {navItems.filter(({ id }) => enabledModules[id]).map(({ id, label, icon: Icon }) => (
             <button
               className={activeSection === id && id !== "chat" ? "nav-row is-active" : "nav-row"}
               key={id}
@@ -120,8 +126,9 @@ export function Sidebar({
         </nav>
 
         <div className="sidebar__scroll">
-          <SidebarGroup title="置顶"><p className="sidebar-empty">暂无置顶会话</p></SidebarGroup>
-          <SidebarGroup title="项目" action={<button className="sidebar-group__action" type="button" aria-label="新建项目" onClick={() => setProjectCreateOpen((open) => !open)}><Plus size={14} /></button>}>
+          {enabledModules.chat && <>
+            <SidebarGroup title="置顶"><p className="sidebar-empty">暂无置顶会话</p></SidebarGroup>
+            <SidebarGroup title="项目" action={<button className="sidebar-group__action" type="button" aria-label="新建项目" onClick={() => setProjectCreateOpen((open) => !open)}><Plus size={14} /></button>}>
             {projectCreateOpen && <form className="project-create" onSubmit={(event) => { event.preventDefault(); submitProject(); }}><FolderClosed size={14} /><input autoFocus aria-label="项目名称" placeholder="项目名称" value={newProjectTitle} onChange={(event) => setNewProjectTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { setNewProjectTitle(""); setProjectCreateOpen(false); } }} /></form>}
             {dataState === "loading" && <p className="sidebar-empty">正在加载项目…</p>}
             {dataState === "error" && <p className="sidebar-empty sidebar-empty--error">项目暂时无法加载</p>}
@@ -133,7 +140,7 @@ export function Sidebar({
                 <div className="project-entry" key={project.id}>
                   <button className={expanded ? "project-row is-expanded" : "project-row"} type="button" aria-expanded={expanded} onClick={() => setExpandedProjectId(expanded ? "" : project.id)}>
                     <span className={`project-mark project-mark--${(index % 3) + 1}`}><FolderClosed size={14} /></span>
-                    <span>{project.title}</span>
+                    <ScrollingTitle>{project.title}</ScrollingTitle>
                     <ChevronRight className="project-row__chevron" size={14} />
                   </button>
                   {expanded && (
@@ -141,7 +148,7 @@ export function Sidebar({
                       {relatedConversations.length === 0 && <p className="sidebar-empty sidebar-empty--nested">暂无关联会话</p>}
                       {relatedConversations.map((conversation) => (
                         <button className={activeSection === "chat" && selectedConversationId === conversation.id ? "project-thread is-active" : "project-thread"} type="button" key={conversation.id} onClick={() => openConversation(conversation.id)}>
-                          <span>{conversation.title}</span>
+                          <ScrollingTitle>{conversation.title}</ScrollingTitle>
                         </button>
                       ))}
                     </div>
@@ -149,16 +156,17 @@ export function Sidebar({
                 </div>
               );
             })}
-          </SidebarGroup>
-          <SidebarGroup title="最近">
+            </SidebarGroup>
+            <SidebarGroup title="最近">
             {dataState === "ready" && recentConversations.length === 0 && <p className="sidebar-empty">暂无会话</p>}
             {recentConversations.map((conversation) => (
               <button className={activeSection === "chat" && selectedConversationId === conversation.id ? "conversation-row is-active" : "conversation-row"} type="button" key={conversation.id} onClick={() => openConversation(conversation.id)}>
                 <MessageCircle size={16} />
-                <span>{conversation.title}</span>
+                <ScrollingTitle>{conversation.title}</ScrollingTitle>
               </button>
             ))}
-          </SidebarGroup>
+            </SidebarGroup>
+          </>}
         </div>
 
         <div className="profile-area">
@@ -200,5 +208,13 @@ function SidebarGroup({ title, children, action }: { title: string; children: Re
       <header><h2>{title}</h2>{action}</header>
       <div>{children}</div>
     </section>
+  );
+}
+
+function ScrollingTitle({ children }: { children: string }) {
+  return (
+    <span className="sidebar-scrolling-title">
+      <span className="sidebar-scrolling-title__text">{children}</span>
+    </span>
   );
 }

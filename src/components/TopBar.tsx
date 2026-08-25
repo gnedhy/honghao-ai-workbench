@@ -13,6 +13,7 @@ type TopBarProps = ScreenChromeProps & {
   tabs: ReactNode;
   action?: ReactNode;
   minimal?: boolean;
+  contextEnabled?: boolean;
 };
 
 export function TopBar({
@@ -21,6 +22,7 @@ export function TopBar({
   tabs,
   action,
   minimal = false,
+  contextEnabled = true,
   contextOpen,
   onOpenNavigation,
   onToggleContext,
@@ -39,17 +41,19 @@ export function TopBar({
       <div className="screen-header__tabs">{tabs}</div>
       <div className="screen-header__actions">
         {action}
-        <button
-          className={`icon-button context-toggle${contextOpen ? " is-context-open" : ""}`}
-          type="button"
-          onClick={onToggleContext}
-          aria-label="打开右侧工具栏"
-          aria-expanded={contextOpen}
-          aria-hidden={contextOpen}
-          tabIndex={contextOpen ? -1 : 0}
-        >
-          <PanelRightOpen size={18} />
-        </button>
+        {contextEnabled && (
+          <button
+            className={`icon-button context-toggle${contextOpen ? " is-context-open" : ""}`}
+            type="button"
+            onClick={onToggleContext}
+            aria-label="打开右侧工具栏"
+            aria-expanded={contextOpen}
+            aria-hidden={contextOpen}
+            tabIndex={contextOpen ? -1 : 0}
+          >
+            <PanelRightOpen size={18} />
+          </button>
+        )}
       </div>
     </header>
   );

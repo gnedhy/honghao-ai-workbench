@@ -1,4 +1,6 @@
-export type Section = "chat" | "knowledge" | "automation" | "tasks";
+export type Section = "chat" | "knowledge" | "automation" | "workbench" | "tasks";
+
+export type ModuleVisibility = Record<Section, boolean>;
 
 export type ConversationView = "new" | "existing";
 
