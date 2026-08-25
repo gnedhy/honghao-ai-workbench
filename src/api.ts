@@ -1,4 +1,4 @@
-import type { Conversation, ConversationMessage, Project, TaskItem, WorkbenchStatus } from "./types";
+import type { Conversation, ConversationMessage, ModuleStatus, Project, TaskItem, WorkbenchStatus } from "./types";
 
 export type ServiceHealth = {
   status: "ok";
@@ -43,6 +43,10 @@ export function fetchTasks(signal?: AbortSignal): Promise<TaskItem[]> {
 
 export function fetchWorkbenches(signal?: AbortSignal): Promise<WorkbenchStatus[]> {
   return fetchJson<WorkbenchStatus[]>("/api/workbenches", { signal });
+}
+
+export function fetchModules(signal?: AbortSignal): Promise<ModuleStatus[]> {
+  return fetchJson<ModuleStatus[]>("/api/modules", { signal });
 }
 
 export function fetchMessages(conversationId: string, signal?: AbortSignal): Promise<ConversationMessage[]> {

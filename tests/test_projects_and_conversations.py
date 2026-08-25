@@ -3,11 +3,18 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from api.main import create_app
+from api.modules import default_module_modes
 from api.settings import Settings
 
 
+def chat_settings(data_dir: Path) -> Settings:
+    module_modes = default_module_modes()
+    module_modes["chat"] = "active"
+    return Settings.from_data_dir(data_dir, module_modes=module_modes)
+
+
 def test_project_can_be_created_and_read_after_restart(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_settings(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
         created = client.post("/api/projects", json={"title": "宏昊 AI 中台"})
@@ -26,7 +33,7 @@ def test_project_can_be_created_and_read_after_restart(tmp_path: Path) -> None:
 
 
 def test_conversation_without_project_persists_after_restart(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_settings(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
         created = client.post("/api/conversations", json={"title": "未归类的想法"})
@@ -46,7 +53,7 @@ def test_conversation_without_project_persists_after_restart(tmp_path: Path) -> 
 
 
 def test_conversation_project_association_survives_rename_and_duplicate_titles(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_settings(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
         original_project = client.post("/api/projects", json={"title": "原项目"}).json()
@@ -78,7 +85,7 @@ def test_conversation_project_association_survives_rename_and_duplicate_titles(t
 
 
 def test_current_project_context_filters_without_changing_conversation_associations(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_settings(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
         project = client.post("/api/projects", json={"title": "部门需求治理"}).json()
@@ -97,7 +104,7 @@ def test_current_project_context_filters_without_changing_conversation_associati
 
 
 def test_conversation_rejects_unknown_project_id(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_settings(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
         response = client.post(

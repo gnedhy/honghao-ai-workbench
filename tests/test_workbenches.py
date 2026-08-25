@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import create_app
+from api.modules import default_module_modes
 from api.settings import Settings
 
 
@@ -52,7 +53,9 @@ def test_invalid_workbench_mode_stops_startup(monkeypatch) -> None:
 
 
 def test_core_schema_ignores_additive_workbench_tables(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    module_modes = default_module_modes()
+    module_modes["chat"] = "active"
+    settings = Settings.from_data_dir(tmp_path / "data", module_modes=module_modes)
     with TestClient(create_app(settings)):
         pass
 

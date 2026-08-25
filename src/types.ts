@@ -2,6 +2,13 @@ export type Section = "chat" | "knowledge" | "automation" | "workbench" | "tasks
 
 export type ModuleVisibility = Record<Section, boolean>;
 
+export type ModuleMode = "off" | "prototype" | "active";
+
+export type ModuleStatus = {
+  id: Section;
+  mode: ModuleMode;
+};
+
 export type WorkbenchId = "management" | "procurement" | "research" | "sales";
 
 export type WorkbenchMode = "prototype" | "active" | "off";
