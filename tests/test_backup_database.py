@@ -17,5 +17,6 @@ def test_backup_database_creates_readable_copy_without_overwrite(tmp_path: Path)
 
     with sqlite3.connect(destination) as connection:
         assert connection.execute("SELECT value FROM evidence").fetchone() == ("baseline",)
+    assert not list(destination.parent.glob(f".{destination.name}.*.tmp"))
     with pytest.raises(FileExistsError):
         backup_database(source, destination)
