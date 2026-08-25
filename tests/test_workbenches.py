@@ -2,17 +2,15 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-
-from api.main import create_app
 from api.modules import default_module_modes
 from api.settings import Settings
+from tests.helpers import authenticated_client
 
 
 def test_workbench_registry_defaults_to_prototypes(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         response = client.get("/api/workbenches")
 
     assert response.status_code == 200
@@ -30,7 +28,7 @@ def test_workbench_registry_reads_independent_environment_modes(tmp_path: Path, 
     monkeypatch.setenv("HONGHAO_WORKBENCH_SALES_MODE", "off")
     settings = Settings.from_environment()
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         response = client.get("/api/workbenches")
 
     assert response.status_code == 200
@@ -56,7 +54,7 @@ def test_core_schema_ignores_additive_workbench_tables(tmp_path: Path) -> None:
     module_modes = default_module_modes()
     module_modes["chat"] = "active"
     settings = Settings.from_data_dir(tmp_path / "data", module_modes=module_modes)
-    with TestClient(create_app(settings)):
+    with authenticated_client(settings):
         pass
 
     with sqlite3.connect(settings.database_path) as connection:
@@ -68,7 +66,7 @@ def test_core_schema_ignores_additive_workbench_tables(tmp_path: Path) -> None:
             "CREATE TABLE procurement_cost_baselines (id TEXT PRIMARY KEY, version INTEGER NOT NULL)"
         )
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         health = client.get("/api/health")
         project = client.post("/api/projects", json={"title": "采购成本验证"})
 

@@ -18,9 +18,10 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import userAvatar from "../assets/avatar-zhang-wei-v1.png";
-import type { Conversation, ModuleVisibility, Project, Section } from "../types";
+import type { Conversation, CurrentUser, ModuleVisibility, Project, Section } from "../types";
 
 type SidebarProps = {
+  currentUser: CurrentUser;
   activeSection: Section;
   selectedConversationId: string | null;
   currentProjectId: string | null;
@@ -38,6 +39,7 @@ type SidebarProps = {
   mobileOpen: boolean;
   onMobileClose: () => void;
   onOpenSettings: () => void;
+  onLogout: () => Promise<void>;
 };
 
 const navItems = [
@@ -49,6 +51,7 @@ const navItems = [
 ] as const;
 
 export function Sidebar({
+  currentUser,
   activeSection,
   selectedConversationId,
   currentProjectId,
@@ -66,6 +69,7 @@ export function Sidebar({
   mobileOpen,
   onMobileClose,
   onOpenSettings,
+  onLogout,
 }: SidebarProps) {
   const [expandedProjectId, setExpandedProjectId] = useState("");
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
@@ -176,12 +180,12 @@ export function Sidebar({
               <button role="menuitem" type="button"><Columns2 size={16} /><span>使用情况</span></button>
               <button role="menuitem" type="button" onClick={onOpenSettings}><Settings size={16} /><span>系统设置</span><span className="profile-menu__meta">Ctrl+,</span></button>
               <div className="profile-menu__divider" />
-              <button className="is-danger" role="menuitem" type="button"><LogOut size={16} /><span>退出登录</span></button>
+              <button className="is-danger" role="menuitem" type="button" onClick={() => void onLogout()}><LogOut size={16} /><span>退出登录</span></button>
             </div>
           )}
           <button className="profile-trigger" type="button" onClick={onProfileToggle} aria-expanded={profileOpen}>
-            <span className="avatar"><img src={userAvatar} alt="张伟的虚拟头像" /></span>
-            <span className="profile-trigger__copy"><strong>张伟</strong><small>AI 项目负责人</small></span>
+            <span className="avatar"><img src={userAvatar} alt={`${currentUser.display_name}的虚拟头像`} /></span>
+            <span className="profile-trigger__copy"><strong>{currentUser.display_name}</strong><small>{currentUser.department ?? currentUser.roles[0]?.name ?? "企业员工"}</small></span>
             <ChevronDown size={15} />
           </button>
         </div>
@@ -190,7 +194,7 @@ export function Sidebar({
   );
 }
 
-function BrandMark() {
+export function BrandMark() {
   return (
     <span className="brand-mark" aria-hidden="true">
       <svg viewBox="0 0 28 28" role="presentation">

@@ -1,11 +1,9 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
-from api.main import create_app
 from api.modules import default_module_modes
 from api.settings import Settings
+from tests.helpers import authenticated_client
 
 
 def chat_and_task_settings(data_dir: Path) -> Settings:
@@ -18,7 +16,7 @@ def chat_and_task_settings(data_dir: Path) -> Settings:
 def test_chat_submission_creates_message_without_task(tmp_path: Path) -> None:
     settings = chat_and_task_settings(tmp_path / "data")
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         conversation = client.post("/api/conversations", json={"title": "随手讨论"}).json()
         submitted = client.post(
             f"/api/conversations/{conversation['id']}/submissions",
@@ -38,7 +36,7 @@ def test_chat_submission_creates_message_without_task(tmp_path: Path) -> None:
 def test_each_work_submission_creates_an_independent_persistent_task(tmp_path: Path) -> None:
     settings = chat_and_task_settings(tmp_path / "data")
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         project = client.post("/api/projects", json={"title": "部门需求治理"}).json()
         conversation = client.post(
             "/api/conversations",
@@ -63,7 +61,7 @@ def test_each_work_submission_creates_an_independent_persistent_task(tmp_path: P
     assert first["latest_run"] is None
     assert first["created_at"]
 
-    with TestClient(create_app(settings)) as restarted_client:
+    with authenticated_client(settings) as restarted_client:
         listed = restarted_client.get("/api/tasks")
 
     assert listed.status_code == 200
@@ -73,7 +71,7 @@ def test_each_work_submission_creates_an_independent_persistent_task(tmp_path: P
 def test_tasks_keep_project_snapshot_when_conversation_project_changes(tmp_path: Path) -> None:
     settings = chat_and_task_settings(tmp_path / "data")
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         first_project = client.post("/api/projects", json={"title": "原项目"}).json()
         next_project = client.post("/api/projects", json={"title": "新项目"}).json()
         conversation = client.post(
@@ -113,7 +111,7 @@ def test_tasks_keep_project_snapshot_when_conversation_project_changes(tmp_path:
 def test_submission_rejects_unknown_conversation(tmp_path: Path) -> None:
     settings = chat_and_task_settings(tmp_path / "data")
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         response = client.post(
             "/api/conversations/missing/submissions",
             json={"mode": "work", "content": "不会被创建", "submission_key": "0bd5fe7a-a644-4b58-870e-e6a3c77d14e8"},
@@ -127,7 +125,7 @@ def test_first_submission_creates_conversation_message_and_task_atomically(tmp_p
     settings = chat_and_task_settings(tmp_path / "data")
     submission_key = "757c2ca9-2781-4dbf-b383-25d83695cc4b"
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         response = client.post(
             "/api/conversation-submissions",
             json={
@@ -161,7 +159,7 @@ def test_retrying_first_submission_returns_the_original_result(tmp_path: Path) -
         "submission_key": "656ab08f-ee20-41b8-8859-764160e2b362",
     }
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         first = client.post("/api/conversation-submissions", json=payload)
         retried = client.post("/api/conversation-submissions", json=payload)
         conversations = client.get("/api/conversations")
@@ -182,7 +180,7 @@ def test_retrying_existing_conversation_submission_does_not_duplicate_task(tmp_p
         "submission_key": "70b23fb9-60c8-4977-b932-c206210cdc59",
     }
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         conversation = client.post("/api/conversations", json={"title": "重试测试"}).json()
         first = client.post(
             f"/api/conversations/{conversation['id']}/submissions",
@@ -202,14 +200,13 @@ def test_retrying_existing_conversation_submission_does_not_duplicate_task(tmp_p
 
 def test_concurrent_retries_create_one_task(tmp_path: Path) -> None:
     settings = chat_and_task_settings(tmp_path / "data")
-    app = create_app(settings)
     payload = {
         "mode": "work",
         "content": "并发请求也只创建一次",
         "submission_key": "7480d5aa-286e-4815-81af-2b378c062c80",
     }
 
-    with TestClient(app) as client:
+    with authenticated_client(settings) as client:
         conversation = client.post("/api/conversations", json={"title": "并发重试"}).json()
 
         def submit() -> tuple[int, str]:
@@ -231,7 +228,7 @@ def test_concurrent_retries_create_one_task(tmp_path: Path) -> None:
 def test_submission_rejects_blank_and_oversized_content(tmp_path: Path) -> None:
     settings = chat_and_task_settings(tmp_path / "data")
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         conversation = client.post("/api/conversations", json={"title": "内容校验"}).json()
         blank = client.post(
             f"/api/conversations/{conversation['id']}/submissions",
@@ -257,7 +254,7 @@ def test_submission_rejects_blank_and_oversized_content(tmp_path: Path) -> None:
 def test_messages_reject_unknown_conversation(tmp_path: Path) -> None:
     settings = chat_and_task_settings(tmp_path / "data")
 
-    with TestClient(create_app(settings)) as client:
+    with authenticated_client(settings) as client:
         response = client.get("/api/conversations/missing/messages")
 
     assert response.status_code == 404

@@ -33,6 +33,7 @@
 ```powershell
 npm.cmd install
 uv sync --group dev
+uv run python -m api.cli create-admin
 npm.cmd run dev
 ```
 
@@ -44,6 +45,16 @@ npm.cmd run dev
 环境要求：Node.js 24、Python 3.12 和 [uv](https://docs.astral.sh/uv/)。Node 依赖由 `package-lock.json` 管理，Python 依赖由 `uv.lock` 管理。
 
 默认运行数据保存在仓库内的 `.data/`，其中 `.data/controlled-work/` 是后续任务使用的默认受控工作目录；整个数据目录都不会提交到 Git。可通过 `HONGHAO_DATA_DIR` 指定其他本地数据目录；测试始终使用独立临时目录，不会读写正式数据。
+
+### 首次创建本地管理员
+
+系统不提供默认账号、默认密码或自助注册。首次启动前交互创建系统管理员；如设置了 `HONGHAO_DATA_DIR`，应先设置环境变量再执行：
+
+```powershell
+uv run python -m api.cli create-admin
+```
+
+密码使用随机盐和 `hashlib.scrypt` 保存；浏览器只接收 HttpOnly、SameSite=Strict 的本地登录会话 Cookie。账号停用或角色变化后，既有登录会话会立即失效。
 
 ### 顶层功能模块状态
 
@@ -104,6 +115,7 @@ gh repo clone gnedhy/honghao-ai-workbench
 cd honghao-ai-workbench
 npm.cmd install
 uv sync --group dev
+uv run python -m api.cli create-admin
 npm.cmd run dev
 ```
 

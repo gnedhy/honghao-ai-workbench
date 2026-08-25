@@ -9,7 +9,12 @@ import { ConversationScreen } from "./screens/ConversationScreen";
 import { KnowledgeScreen } from "./screens/KnowledgeScreen";
 import { TaskBoardScreen } from "./screens/TaskBoardScreen";
 import { WorkbenchScreen } from "./screens/WorkbenchScreen";
-import type { Conversation, ConversationMessage, ConversationView, ModuleStatus, ModuleVisibility, Project, Section, TaskItem, WorkbenchStatus } from "./types";
+import type { Conversation, ConversationMessage, ConversationView, CurrentUser, ModuleStatus, ModuleVisibility, Project, Section, TaskItem, WorkbenchStatus } from "./types";
+
+type AppProps = {
+  currentUser: CurrentUser;
+  onLogout: () => Promise<void>;
+};
 
 type SearchScope = "全部" | "会话" | "项目" | "知识" | "自动化" | "任务";
 type SearchResultKind = "conversation" | "project" | "knowledge" | "skill" | "workflow" | "task";
@@ -32,7 +37,7 @@ const MODULE_OPTIONS = [
   { id: "tasks", label: "任务看板", description: "任务管理与运行记录", icon: FolderKanban },
 ] as const;
 
-function App() {
+function App({ currentUser, onLogout }: AppProps) {
   const [moduleStatuses, setModuleStatuses] = useState<ModuleStatus[]>([]);
   const [moduleRegistryState, setModuleRegistryState] = useState<"loading" | "ready" | "error">("loading");
   const enabledModules = useMemo(() => MODULE_IDS.reduce<ModuleVisibility>((visibility, id) => {
@@ -311,6 +316,7 @@ function App() {
   return (
     <div className={contextLayoutOpen ? "app-shell has-context" : "app-shell"}>
       <Sidebar
+        currentUser={currentUser}
         activeSection={section}
         selectedConversationId={conversationView === "existing" ? selectedConversationId : null}
         currentProjectId={currentProjectId}
@@ -328,6 +334,7 @@ function App() {
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
         onOpenSettings={() => { setProfileOpen(false); setSettingsOpen(true); }}
+        onLogout={onLogout}
       />
       {section === "chat" && enabledModules.chat && <ConversationScreen {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversationId) { const update = projectUpdatePromise.current.catch(() => undefined).then(async () => { const updated = await setConversationProject(selectedConversationId, projectId); setConversations((current) => current.map((conversation) => conversation.id === updated.id ? updated : conversation)); }); projectUpdatePromise.current = update; void update.catch(() => setWorkbenchDataState("error")); } else { setCurrentProjectId(projectId); } }} messages={messages} messagesState={messagesState} onSubmit={submitMessage} />}
       {section === "knowledge" && enabledModules.knowledge && <KnowledgeScreen {...screenChrome} scopeTab={knowledgeScope} onScopeTabChange={setKnowledgeScope} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
