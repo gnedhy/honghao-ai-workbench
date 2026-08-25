@@ -1,4 +1,4 @@
-import { Check, ChevronRight, ShieldCheck, X } from "lucide-react";
+import { Check, ChevronRight, FolderClosed, FolderKanban, LibraryBig, MessageCircle, PanelsTopLeft, PenLine, Search, ShieldCheck, WandSparkles, Workflow, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createConversationSubmission, createProject, fetchConversations, fetchMessages, fetchProjects, fetchServiceHealth, fetchTasks, setConversationProject, submitConversation, type ServiceConnection } from "./api";
 import { ContextSidebar } from "./components/ContextSidebar";
@@ -8,11 +8,50 @@ import { AutomationScreen } from "./screens/AutomationScreen";
 import { ConversationScreen } from "./screens/ConversationScreen";
 import { KnowledgeScreen } from "./screens/KnowledgeScreen";
 import { TaskBoardScreen } from "./screens/TaskBoardScreen";
-import type { Conversation, ConversationMessage, ConversationView, Project, Section, TaskItem } from "./types";
+import { WorkbenchScreen } from "./screens/WorkbenchScreen";
+import type { Conversation, ConversationMessage, ConversationView, ModuleVisibility, Project, Section, TaskItem } from "./types";
+
+type SearchScope = "全部" | "会话" | "项目" | "知识" | "自动化" | "任务";
+type SearchResultKind = "conversation" | "project" | "knowledge" | "skill" | "workflow" | "task";
+type GlobalSearchResult = {
+  id: string;
+  sourceId: string;
+  kind: SearchResultKind;
+  scope: Exclude<SearchScope, "全部">;
+  title: string;
+  meta: string;
+  keywords: string;
+};
+
+const MODULE_VISIBILITY_KEY = "honghao-ai:modules";
+const MODULE_IDS: Section[] = ["chat", "knowledge", "automation", "workbench", "tasks"];
+const DEFAULT_MODULE_VISIBILITY: ModuleVisibility = { chat: false, knowledge: true, automation: false, workbench: true, tasks: false };
+const MODULE_OPTIONS = [
+  { id: "chat", label: "新聊天", description: "对话、工作模式及会话侧栏", icon: PenLine },
+  { id: "knowledge", label: "知识库", description: "个人与公共知识内容", icon: LibraryBig },
+  { id: "automation", label: "自动化", description: "技能与工作流管理", icon: WandSparkles },
+  { id: "workbench", label: "工作台", description: "企业职能业务工具", icon: PanelsTopLeft },
+  { id: "tasks", label: "任务看板", description: "任务管理与运行记录", icon: FolderKanban },
+] as const;
+
+function readModuleVisibility(): ModuleVisibility {
+  try {
+    const stored = JSON.parse(localStorage.getItem(MODULE_VISIBILITY_KEY) ?? "{}") as Partial<ModuleVisibility>;
+    const visibility = MODULE_IDS.reduce((result, id) => {
+      if (typeof stored[id] === "boolean") result[id] = stored[id];
+      return result;
+    }, { ...DEFAULT_MODULE_VISIBILITY });
+    return Object.values(visibility).some(Boolean) ? visibility : { ...DEFAULT_MODULE_VISIBILITY };
+  } catch {
+    return { ...DEFAULT_MODULE_VISIBILITY };
+  }
+}
 
 function App() {
-  const [section, setSection] = useState<Section>("chat");
+  const [enabledModules, setEnabledModules] = useState<ModuleVisibility>(readModuleVisibility);
+  const [section, setSection] = useState<Section>(() => enabledModules.workbench ? "workbench" : MODULE_IDS.find((id) => enabledModules[id]) ?? "knowledge");
   const [profileOpen, setProfileOpen] = useState(false);
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [contextLayoutOpen, setContextLayoutOpen] = useState(false);
@@ -32,6 +71,7 @@ function App() {
   const [messagesState, setMessagesState] = useState<"loading" | "ready" | "error">("ready");
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [workbenchDataState, setWorkbenchDataState] = useState<"loading" | "ready" | "error">("loading");
+  const [knowledgeScope, setKnowledgeScope] = useState<"个人" | "公共">("个人");
   const [selectedKnowledgeTitle, setSelectedKnowledgeTitle] = useState(knowledgeItems[0].title);
   const [automationTab, setAutomationTab] = useState<"技能" | "工作流">("技能");
   const [selectedSkill, setSelectedSkill] = useState(skills[0]);
@@ -50,6 +90,14 @@ function App() {
     selectedConversationIdRef.current = selectedConversationId;
     conversationViewRef.current = conversationView;
   }, [conversationView, selectedConversationId]);
+
+  useEffect(() => {
+    localStorage.setItem(MODULE_VISIBILITY_KEY, JSON.stringify(enabledModules));
+    if (!enabledModules[section]) {
+      const fallback = MODULE_IDS.find((id) => enabledModules[id]);
+      if (fallback) setSection(fallback);
+    }
+  }, [enabledModules, section]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -84,6 +132,11 @@ function App() {
     }
 
     const controller = new AbortController();
+    const needsConversationData = enabledModules.chat || enabledModules.tasks;
+    if (!needsConversationData) {
+      setWorkbenchDataState("ready");
+      return () => controller.abort();
+    }
     setWorkbenchDataState("loading");
     Promise.all([fetchProjects(controller.signal), fetchConversations(controller.signal), fetchTasks(controller.signal)])
       .then(([loadedProjects, loadedConversations, loadedTasks]) => {
@@ -99,10 +152,10 @@ function App() {
         }
       });
     return () => controller.abort();
-  }, [serviceConnection.state]);
+  }, [enabledModules.chat, enabledModules.tasks, serviceConnection.state]);
 
   useEffect(() => {
-    if (conversationView !== "existing" || !selectedConversationId || serviceConnection.state !== "online") {
+    if (!enabledModules.chat || conversationView !== "existing" || !selectedConversationId || serviceConnection.state !== "online") {
       setMessages([]);
       setMessagesState("ready");
       return;
@@ -115,7 +168,7 @@ function App() {
         if (!(error instanceof DOMException && error.name === "AbortError")) setMessagesState("error");
       });
     return () => controller.abort();
-  }, [conversationView, selectedConversationId, serviceConnection.state]);
+  }, [conversationView, enabledModules.chat, selectedConversationId, serviceConnection.state]);
 
   const closeContext = useCallback(() => {
     if (!contextOpen) return;
@@ -133,6 +186,7 @@ function App() {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setProfileOpen(false);
+        setGlobalSearchOpen(false);
         setSettingsOpen(false);
         setMobileOpen(false);
         closeContext();
@@ -167,6 +221,13 @@ function App() {
     contextOpen,
     onOpenNavigation: openNavigation,
     onToggleContext: toggleContext,
+  };
+
+  const toggleModule = (module: Section) => {
+    setEnabledModules((current) => {
+      const next = { ...current, [module]: !current[module] };
+      return Object.values(next).some(Boolean) ? next : current;
+    });
   };
 
   const submitMessage = async (content: string, submissionKey: string): Promise<boolean> => {
@@ -230,10 +291,12 @@ function App() {
         projects={projects}
         conversations={conversations}
         dataState={workbenchDataState}
+        enabledModules={enabledModules}
         onSectionChange={(nextSection) => { setSection(nextSection); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
         onNewConversation={() => { setSection("chat"); setConversationView("new"); setSelectedConversationId(null); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
         onConversationOpen={(conversationId) => { setSection("chat"); setConversationView("existing"); setSelectedConversationId(conversationId); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
         onProjectCreate={(title) => { void createProject(title).then((created) => { setProjects((current) => [...current, created]); setCurrentProjectId(created.id); }).catch(() => setWorkbenchDataState("error")); }}
+        onSearchOpen={() => { setProfileOpen(false); setMobileOpen(false); setGlobalSearchOpen(true); }}
         profileOpen={profileOpen}
         onProfileToggle={() => setProfileOpen((open) => !open)}
         mobileOpen={mobileOpen}
@@ -241,8 +304,9 @@ function App() {
         onOpenSettings={() => { setProfileOpen(false); setSettingsOpen(true); }}
       />
       {section === "chat" && <ConversationScreen {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversationId) { const update = projectUpdatePromise.current.catch(() => undefined).then(async () => { const updated = await setConversationProject(selectedConversationId, projectId); setConversations((current) => current.map((conversation) => conversation.id === updated.id ? updated : conversation)); }); projectUpdatePromise.current = update; void update.catch(() => setWorkbenchDataState("error")); } else { setCurrentProjectId(projectId); } }} messages={messages} messagesState={messagesState} onSubmit={submitMessage} />}
-      {section === "knowledge" && <KnowledgeScreen {...screenChrome} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
+      {section === "knowledge" && <KnowledgeScreen {...screenChrome} scopeTab={knowledgeScope} onScopeTabChange={setKnowledgeScope} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
       {section === "automation" && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
+      {section === "workbench" && <WorkbenchScreen {...screenChrome} />}
       {section === "tasks" && <TaskBoardScreen {...screenChrome} tasks={tasks} projects={projects} conversations={conversations} dataState={workbenchDataState} selectedTask={selectedTask} onSelectedTaskChange={(task) => setSelectedTaskId(task.id)} />}
       <ContextSidebar
         section={section}
@@ -261,25 +325,235 @@ function App() {
         task={selectedTask}
         conversationTask={conversationTask}
       />
-      {settingsOpen && <SettingsDialog serviceConnection={serviceConnection} onClose={() => setSettingsOpen(false)} />}
+      <GlobalSearchDialog
+        open={globalSearchOpen}
+        enabledModules={enabledModules}
+        projects={projects}
+        conversations={conversations}
+        tasks={tasks}
+        onClose={() => setGlobalSearchOpen(false)}
+        onSelect={(result) => {
+          setProfileOpen(false);
+          setMobileOpen(false);
+          closeContext();
+          if (result.kind === "conversation") {
+            setSection("chat");
+            setConversationView("existing");
+            setSelectedConversationId(result.sourceId);
+          } else if (result.kind === "project") {
+            setSection("chat");
+            setConversationView("new");
+            setSelectedConversationId(null);
+            setCurrentProjectId(result.sourceId);
+          } else if (result.kind === "knowledge") {
+            const item = knowledgeItems.find((knowledgeItem) => knowledgeItem.title === result.sourceId);
+            setKnowledgeScope(item?.scope === "公共知识" ? "公共" : "个人");
+            setSection("knowledge");
+            setSelectedKnowledgeTitle(result.sourceId);
+          } else if (result.kind === "skill") {
+            const skill = skills.find((item) => item.title === result.sourceId);
+            if (skill) setSelectedSkill(skill);
+            setAutomationTab("技能");
+            setSection("automation");
+          } else if (result.kind === "workflow") {
+            const workflow = workflows.find((item) => item.title === result.sourceId);
+            if (workflow) setSelectedWorkflow(workflow);
+            setAutomationTab("工作流");
+            setSection("automation");
+          } else {
+            setSelectedTaskId(result.sourceId);
+            setSection("tasks");
+          }
+        }}
+      />
+      {settingsOpen && <SettingsDialog serviceConnection={serviceConnection} enabledModules={enabledModules} onModuleToggle={toggleModule} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }
 
-function SettingsDialog({ serviceConnection, onClose }: { serviceConnection: ServiceConnection; onClose: () => void }) {
+function GlobalSearchDialog({
+  open,
+  enabledModules,
+  projects,
+  conversations,
+  tasks,
+  onClose,
+  onSelect,
+}: {
+  open: boolean;
+  enabledModules: ModuleVisibility;
+  projects: Project[];
+  conversations: Conversation[];
+  tasks: TaskItem[];
+  onClose: () => void;
+  onSelect: (result: GlobalSearchResult) => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState("");
+  const [scope, setScope] = useState<SearchScope>("全部");
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (open && !dialog.open) {
+      setQuery("");
+      setScope("全部");
+      dialog.showModal();
+      window.requestAnimationFrame(() => inputRef.current?.focus());
+    } else if (!open && dialog.open) {
+      dialog.close();
+    }
+  }, [open]);
+
+  const projectTitle = (projectId: string | null) => projects.find((project) => project.id === projectId)?.title;
+  const conversationTitleById = (conversationId: string) => conversations.find((conversation) => conversation.id === conversationId)?.title;
+  const results: GlobalSearchResult[] = [
+    ...[...conversations].reverse().map((conversation) => ({ id: `conversation:${conversation.id}`, sourceId: conversation.id, kind: "conversation" as const, scope: "会话" as const, title: conversation.title, meta: projectTitle(conversation.project_id) ? `会话 · ${projectTitle(conversation.project_id)}` : "会话 · 未关联项目", keywords: `${conversation.title} ${projectTitle(conversation.project_id) ?? ""}` })),
+    ...projects.map((project) => ({ id: `project:${project.id}`, sourceId: project.id, kind: "project" as const, scope: "项目" as const, title: project.title, meta: `项目 · ${conversations.filter((conversation) => conversation.project_id === project.id).length} 个会话`, keywords: project.title })),
+    ...knowledgeItems.map((item) => ({ id: `knowledge:${item.title}`, sourceId: item.title, kind: "knowledge" as const, scope: "知识" as const, title: item.title, meta: `${item.scope} · ${item.updated}`, keywords: `${item.title} ${item.scope} ${item.tags.join(" ")} ${item.project ?? ""}` })),
+    ...skills.map((item) => ({ id: `skill:${item.title}`, sourceId: item.title, kind: "skill" as const, scope: "自动化" as const, title: item.title, meta: `技能 · ${item.status} · ${item.version}`, keywords: `${item.title} ${item.description} 技能 ${item.status}` })),
+    ...workflows.map((item) => ({ id: `workflow:${item.title}`, sourceId: item.title, kind: "workflow" as const, scope: "自动化" as const, title: item.title, meta: `工作流 · ${item.status} · ${item.version}`, keywords: `${item.title} ${item.description} 工作流 ${item.status}` })),
+    ...[...tasks].reverse().map((task) => ({ id: `task:${task.id}`, sourceId: task.id, kind: "task" as const, scope: "任务" as const, title: task.objective, meta: `任务 · ${projectTitle(task.project_id) ?? conversationTitleById(task.conversation_id) ?? "未关联项目"}`, keywords: `${task.objective} ${projectTitle(task.project_id) ?? ""} ${conversationTitleById(task.conversation_id) ?? ""}` })),
+  ];
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const visibleResults = results.filter((result) => {
+    const moduleEnabled = result.scope === "知识"
+      ? enabledModules.knowledge
+      : result.scope === "自动化"
+        ? enabledModules.automation
+        : result.scope === "任务"
+          ? enabledModules.tasks
+          : enabledModules.chat;
+    const scopeMatches = scope === "全部" || result.scope === scope;
+    return moduleEnabled && scopeMatches && (!normalizedQuery || `${result.title} ${result.meta} ${result.keywords}`.toLocaleLowerCase().includes(normalizedQuery));
+  }).slice(0, 12);
+  const scopes: SearchScope[] = ["全部"];
+  if (enabledModules.chat) scopes.push("会话", "项目");
+  if (enabledModules.knowledge) scopes.push("知识");
+  if (enabledModules.automation) scopes.push("自动化");
+  if (enabledModules.tasks) scopes.push("任务");
+
+  const chooseResult = (result: GlobalSearchResult) => {
+    onSelect(result);
+    onClose();
+  };
+
+  return (
+    <dialog
+      className="global-search-dialog"
+      ref={dialogRef}
+      aria-labelledby="global-search-title"
+      onCancel={(event) => { event.preventDefault(); onClose(); }}
+      onClose={onClose}
+      onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
+    >
+      <section className="global-search" aria-label="全局搜索">
+        <h1 className="sr-only" id="global-search-title">全局搜索</h1>
+        <div className="global-search__input-row">
+          <Search size={18} />
+          <input
+            ref={inputRef}
+            aria-label="搜索全部内容"
+            placeholder="搜索已启用模块的内容"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter" && visibleResults[0]) chooseResult(visibleResults[0]); }}
+          />
+          <button className="icon-button" type="button" aria-label="关闭全局搜索" onClick={onClose}><X size={17} /></button>
+        </div>
+        <div className="global-search__scope-row">
+          <div className="global-search__scopes" role="group" aria-label="搜索范围">
+            {scopes.map((item) => <button className={scope === item ? "is-active" : ""} type="button" key={item} aria-pressed={scope === item} onClick={() => { setScope(item); inputRef.current?.focus(); }}>{item}</button>)}
+          </div>
+          <span>{visibleResults.length} 项</span>
+        </div>
+        <div className="global-search__results" aria-label="搜索结果">
+          {visibleResults.map((result) => (
+            <button type="button" key={result.id} onClick={() => chooseResult(result)}>
+              <span className="global-search__result-icon"><SearchResultIcon kind={result.kind} /></span>
+              <span className="global-search__result-copy"><strong>{result.title}</strong><small>{result.meta}</small></span>
+              <span className="global-search__result-scope">{result.scope}</span>
+            </button>
+          ))}
+          {visibleResults.length === 0 && <div className="global-search__empty"><Search size={20} /><strong>没有匹配内容</strong><p>换一个关键词或搜索范围试试。</p></div>}
+        </div>
+      </section>
+    </dialog>
+  );
+}
+
+function SearchResultIcon({ kind }: { kind: SearchResultKind }) {
+  if (kind === "conversation") return <MessageCircle size={16} />;
+  if (kind === "project") return <FolderClosed size={16} />;
+  if (kind === "knowledge") return <LibraryBig size={16} />;
+  if (kind === "skill") return <WandSparkles size={16} />;
+  if (kind === "workflow") return <Workflow size={16} />;
+  if (kind === "task") return <FolderKanban size={16} />;
+  return null;
+}
+
+function SettingsDialog({
+  serviceConnection,
+  enabledModules,
+  onModuleToggle,
+  onClose,
+}: {
+  serviceConnection: ServiceConnection;
+  enabledModules: ModuleVisibility;
+  onModuleToggle: (module: Section) => void;
+  onClose: () => void;
+}) {
   const serviceCopy = serviceConnection.state === "online"
     ? { label: "已连接", detail: `API ${serviceConnection.health.api_version} · 数据版本 ${serviceConnection.health.schema_version}` }
     : serviceConnection.state === "checking"
       ? { label: "连接中", detail: "正在检查本地 API 与数据库。" }
       : { label: "未连接", detail: "请启动本地 API 后刷新页面。" };
+  const enabledCount = Object.values(enabledModules).filter(Boolean).length;
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-        <header><div><h1 id="settings-title">系统设置</h1><p>管理模型、知识访问和安全边界。</p></div><button className="icon-button" type="button" aria-label="关闭设置" onClick={onClose}><X size={18} /></button></header>
+        <header><div><h1 id="settings-title">系统设置</h1><p>管理功能模块、模型接口和安全边界。</p></div><button className="icon-button" type="button" aria-label="关闭设置" onClick={onClose}><X size={18} /></button></header>
         <div className="settings-dialog__body">
           <nav aria-label="设置分类"><button className="is-active" type="button">常规<ChevronRight size={15} /></button><button type="button">模型接口<ChevronRight size={15} /></button><button type="button">知识与目录<ChevronRight size={15} /></button><button type="button">安全与审查<ChevronRight size={15} /></button></nav>
-          <article><h2>常规</h2><div className="setting-row"><div><strong>本地服务</strong><p>{serviceCopy.detail}</p></div><span className={`setting-connection setting-connection--${serviceConnection.state}`}><i />{serviceCopy.label}</span></div><div className="setting-row"><div><strong>默认会话模式</strong><p>新会话默认进入工作空状态。</p></div><span className="setting-value">工作<ChevronRight size={15} /></span></div><div className="setting-row"><div><strong>数据出站确认</strong><p>模型请求前展示上下文摘要。</p></div><span className="setting-enabled"><Check size={14} />已开启</span></div><div className="setting-row"><div><strong>受控工作目录</strong><p>文件操作只允许发生在授权目录内。</p></div><span className="setting-enabled"><ShieldCheck size={15} />已保护</span></div></article>
+          <article>
+            <h2>常规</h2>
+            <section className="module-settings" aria-labelledby="module-settings-title">
+              <div className="module-settings__heading">
+                <div><strong id="module-settings-title">功能模块</strong><p>关闭后隐藏入口并暂停相关数据加载，不会删除已有数据。</p></div>
+                <span>{enabledCount} 个已启用</span>
+              </div>
+              <div className="module-settings__list">
+                {MODULE_OPTIONS.map((item) => {
+                  const Icon = item.icon;
+                  const enabled = enabledModules[item.id];
+                  const lastEnabled = enabled && enabledCount === 1;
+                  return (
+                    <div className="module-setting-row" key={item.id}>
+                      <span className="module-setting-row__icon"><Icon size={16} /></span>
+                      <div><strong>{item.label}</strong><p>{item.description}</p></div>
+                      <button
+                        className="module-switch"
+                        type="button"
+                        role="switch"
+                        aria-label={`${enabled ? "关闭" : "启用"}${item.label}`}
+                        aria-checked={enabled}
+                        disabled={lastEnabled}
+                        title={lastEnabled ? "至少保留一个功能模块" : undefined}
+                        onClick={() => onModuleToggle(item.id)}
+                      ><span /></button>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+            <h3 className="settings-subheading">运行与安全</h3>
+            <div className="setting-row"><div><strong>本地服务</strong><p>{serviceCopy.detail}</p></div><span className={`setting-connection setting-connection--${serviceConnection.state}`}><i />{serviceCopy.label}</span></div>
+            <div className="setting-row"><div><strong>默认会话模式</strong><p>新会话默认进入工作空状态。</p></div><span className="setting-value">工作<ChevronRight size={15} /></span></div>
+            <div className="setting-row"><div><strong>数据出站确认</strong><p>模型请求前展示上下文摘要。</p></div><span className="setting-enabled"><Check size={14} />已开启</span></div>
+            <div className="setting-row"><div><strong>受控工作目录</strong><p>文件操作只允许发生在授权目录内。</p></div><span className="setting-enabled"><ShieldCheck size={15} />已保护</span></div>
+          </article>
         </div>
       </section>
     </div>

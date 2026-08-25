@@ -1,0 +1,162 @@
+import {
+  BadgeDollarSign,
+  Boxes,
+  ChartNoAxesCombined,
+  CheckCircle2,
+  ChevronRight,
+  Database,
+  FlaskConical,
+  ShieldCheck,
+} from "lucide-react";
+import { useState } from "react";
+import { TopBar, type ScreenChromeProps } from "../components/TopBar";
+
+const workbenches = [
+  {
+    id: "management",
+    department: "总经办",
+    title: "经营数据分析",
+    summary: "汇总销售、采购、成本与费用数据，形成面向经营决策的管理视图。",
+    icon: ChartNoAxesCombined,
+    metrics: [["本月销售额", "¥486 万", "示例汇总数据"], ["综合毛利率", "18.7%", "较上月提升 0.6%"], ["待关注事项", "3 项", "成本、回款与库存提示"]],
+    columns: ["经营指标", "本月", "较上月", "管理提示"],
+    rows: [["销售收入", "¥486 万", "+6.8%", "重点产品增长"], ["原料采购", "¥296 万", "+9.4%", "关注采购涨幅"], ["经营费用", "¥64 万", "-2.1%", "当前处于预算内"]],
+    modules: ["销售与回款分析", "采购与成本趋势", "部门经营对比"],
+    source: "销售、采购、库存及财务系统的已确认数据",
+    output: "经营概览、趋势变化与待关注事项",
+    owner: "总经办与各数据责任部门",
+  },
+  {
+    id: "procurement",
+    department: "采购部",
+    title: "原料成本管理",
+    summary: "归集供应商报价与采购附加费用，形成可追溯的原料成本基线。",
+    icon: Boxes,
+    metrics: [["跟踪原料", "18 种", "当前纳入成本基线"], ["待比价", "4 项", "需要补充有效报价"], ["本月波动", "+2.8%", "示例综合变动"]],
+    columns: ["原料", "当前参考价", "较上月", "报价状态"],
+    rows: [["聚合氯化铝", "¥2,180 / 吨", "+3.2%", "3 家已回价"], ["工业盐酸", "¥620 / 吨", "-1.4%", "待补 1 家"], ["液碱", "¥1,080 / 吨", "+4.6%", "2 家已回价"]],
+    modules: ["供应商报价归集", "到厂成本计算", "价格波动提示"],
+    source: "供应商报价、采购订单及运输费用",
+    output: "经采购确认的原料成本基线",
+    owner: "采购经办人与采购负责人",
+  },
+  {
+    id: "research",
+    department: "研发部",
+    title: "产品成本计算",
+    summary: "将配方、原料基线与制造损耗组合为可复核的产品成本测算。",
+    icon: FlaskConical,
+    metrics: [["在用配方", "12 个", "按当前配方版本统计"], ["测算成本", "¥6,840", "每吨示例成本"], ["待确认", "2 项", "原料或损耗参数"]],
+    columns: ["成本项", "测算口径", "金额 / 吨", "占比"],
+    rows: [["配方原料", "最新确认基线", "¥5,720", "83.6%"], ["能源人工", "标准工艺参数", "¥680", "9.9%"], ["包装损耗", "包装规格与损耗率", "¥440", "6.5%"]],
+    modules: ["配方版本管理", "批次成本模拟", "成本差异对比"],
+    source: "配方 BOM、原料成本基线及工艺参数",
+    output: "供研发与财务复核的产品成本估算",
+    owner: "研发工程师与财务成本会计",
+  },
+  {
+    id: "sales",
+    department: "销售部",
+    title: "产品报价管理",
+    summary: "基于已确认成本、客户条件和目标毛利生成报价并保留审批记录。",
+    icon: BadgeDollarSign,
+    metrics: [["有效报价", "9 份", "当前仍在有效期内"], ["目标毛利", "18.5%", "示例平均目标"], ["待审批", "3 份", "等待销售负责人确认"]],
+    columns: ["客户", "产品", "含税报价", "毛利率", "状态"],
+    rows: [["华南经销商", "A 系列助剂", "¥8,260 / 吨", "17.2%", "待审批"], ["重点客户 B", "净水材料", "¥7,980 / 吨", "19.1%", "已确认"], ["渠道客户 C", "工业处理剂", "¥9,460 / 吨", "16.8%", "测算中"]],
+    modules: ["成本基线引用", "毛利与费用测算", "报价版本及审批"],
+    source: "已确认产品成本、运费税费与客户条件",
+    output: "可审批、可追溯的产品报价方案",
+    owner: "销售经办人与销售负责人",
+  },
+] as const;
+
+export function WorkbenchScreen(chrome: ScreenChromeProps) {
+  const [selectedId, setSelectedId] = useState<(typeof workbenches)[number]["id"]>(workbenches[0].id);
+  const selected = workbenches.find((item) => item.id === selectedId) ?? workbenches[0];
+
+  return (
+    <main className="app-main">
+      <TopBar {...chrome} title="工作台" subtitle="4 个职能工作台" tabs={null} contextEnabled={false} />
+      <section className="workspace-layout workspace-layout--workbench">
+        <aside className="workspace-list-panel workbench-index">
+          <div className="workspace-panel-title">
+            <div>
+              <h1>职能工作台</h1>
+              <p>按部门进入日常业务工具</p>
+            </div>
+          </div>
+          <div className="workbench-list" role="list" aria-label="职能工作台">
+            {workbenches.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  className={`workbench-list-item${selected.id === item.id ? " is-active" : ""}`}
+                  type="button"
+                  key={item.id}
+                  onClick={() => setSelectedId(item.id)}
+                  aria-pressed={selected.id === item.id}
+                >
+                  <Icon size={17} />
+                  <span>
+                    <small>{item.department}</small>
+                    <strong>{item.title}</strong>
+                    <em>{item.summary}</em>
+                  </span>
+                  <ChevronRight size={15} />
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+
+        <article className="workbench-detail">
+          <header className="workbench-detail__header">
+            <div className="workbench-detail__eyebrow">
+              <span>{selected.department}</span>
+              <span>功能原型</span>
+            </div>
+            <h1>{selected.title}</h1>
+            <p>{selected.summary}</p>
+            <div className="workbench-prototype-note"><FlaskConical size={14} /><span>当前为界面与业务结构原型，页面数值均为示例数据。</span></div>
+          </header>
+
+          <div className="workbench-metrics">
+            {selected.metrics.map(([label, value, note]) => (
+              <div key={label}><small>{label}</small><strong>{value}</strong><span>{note}</span></div>
+            ))}
+          </div>
+
+          <section className="workbench-section">
+            <div className="workbench-section__heading">
+              <div><span>业务视图</span><h2>{selected.title}明细</h2></div>
+              <small>示例数据</small>
+            </div>
+            <div className="workbench-table-wrap">
+              <table className="workbench-table">
+                <thead><tr>{selected.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
+                <tbody>{selected.rows.map((row) => <tr key={row[0]}>{row.map((cell, index) => <td key={`${row[0]}-${selected.columns[index]}`}>{cell}</td>)}</tr>)}</tbody>
+              </table>
+            </div>
+          </section>
+
+          <div className="workbench-detail-grid">
+            <section className="workbench-section">
+              <div className="workbench-section__heading"><div><span>功能范围</span><h2>核心模块</h2></div></div>
+              <ul className="workbench-module-list">
+                {selected.modules.map((module) => <li key={module}><CheckCircle2 size={15} /><span>{module}</span></li>)}
+              </ul>
+            </section>
+            <section className="workbench-section workbench-boundary">
+              <div className="workbench-section__heading"><div><span>迁移准备</span><h2>数据与确认边界</h2></div></div>
+              <dl>
+                <div><Database size={15} /><dt>数据来源</dt><dd>{selected.source}</dd></div>
+                <div><ShieldCheck size={15} /><dt>形成结果</dt><dd>{selected.output}</dd></div>
+                <div><CheckCircle2 size={15} /><dt>最终确认</dt><dd>{selected.owner}</dd></div>
+              </dl>
+            </section>
+          </div>
+        </article>
+      </section>
+    </main>
+  );
+}
