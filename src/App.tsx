@@ -1,6 +1,6 @@
 import { Check, ChevronRight, FolderClosed, FolderKanban, LibraryBig, MessageCircle, PanelsTopLeft, PenLine, Search, ShieldCheck, WandSparkles, Workflow, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createConversationSubmission, createProject, fetchConversations, fetchMessages, fetchProjects, fetchServiceHealth, fetchTasks, setConversationProject, submitConversation, type ServiceConnection } from "./api";
+import { createConversationSubmission, createProject, fetchConversations, fetchMessages, fetchProjects, fetchServiceHealth, fetchTasks, fetchWorkbenches, setConversationProject, submitConversation, type ServiceConnection } from "./api";
 import { ContextSidebar } from "./components/ContextSidebar";
 import { Sidebar } from "./components/Sidebar";
 import { knowledgeItems, skills, workflows } from "./data";
@@ -9,7 +9,7 @@ import { ConversationScreen } from "./screens/ConversationScreen";
 import { KnowledgeScreen } from "./screens/KnowledgeScreen";
 import { TaskBoardScreen } from "./screens/TaskBoardScreen";
 import { WorkbenchScreen } from "./screens/WorkbenchScreen";
-import type { Conversation, ConversationMessage, ConversationView, ModuleVisibility, Project, Section, TaskItem } from "./types";
+import type { Conversation, ConversationMessage, ConversationView, ModuleVisibility, Project, Section, TaskItem, WorkbenchStatus } from "./types";
 
 type SearchScope = "全部" | "会话" | "项目" | "知识" | "自动化" | "任务";
 type SearchResultKind = "conversation" | "project" | "knowledge" | "skill" | "workflow" | "task";
@@ -71,6 +71,8 @@ function App() {
   const [messagesState, setMessagesState] = useState<"loading" | "ready" | "error">("ready");
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [workbenchDataState, setWorkbenchDataState] = useState<"loading" | "ready" | "error">("loading");
+  const [workbenchStatuses, setWorkbenchStatuses] = useState<WorkbenchStatus[]>([]);
+  const [workbenchRegistryState, setWorkbenchRegistryState] = useState<"loading" | "ready" | "error">("loading");
   const [knowledgeScope, setKnowledgeScope] = useState<"个人" | "公共">("个人");
   const [selectedKnowledgeTitle, setSelectedKnowledgeTitle] = useState(knowledgeItems[0].title);
   const [automationTab, setAutomationTab] = useState<"技能" | "工作流">("技能");
@@ -124,6 +126,27 @@ function App() {
       if (retryTimer !== null) window.clearTimeout(retryTimer);
     };
   }, []);
+
+  useEffect(() => {
+    if (!enabledModules.workbench) {
+      setWorkbenchStatuses([]);
+      setWorkbenchRegistryState("ready");
+      return;
+    }
+    if (serviceConnection.state !== "online") {
+      if (serviceConnection.state === "offline") setWorkbenchRegistryState("error");
+      return;
+    }
+
+    const controller = new AbortController();
+    setWorkbenchRegistryState("loading");
+    fetchWorkbenches(controller.signal)
+      .then((statuses) => { setWorkbenchStatuses(statuses); setWorkbenchRegistryState("ready"); })
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setWorkbenchRegistryState("error");
+      });
+    return () => controller.abort();
+  }, [enabledModules.workbench, serviceConnection.state]);
 
   useEffect(() => {
     if (serviceConnection.state !== "online") {
@@ -306,7 +329,7 @@ function App() {
       {section === "chat" && <ConversationScreen {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversationId) { const update = projectUpdatePromise.current.catch(() => undefined).then(async () => { const updated = await setConversationProject(selectedConversationId, projectId); setConversations((current) => current.map((conversation) => conversation.id === updated.id ? updated : conversation)); }); projectUpdatePromise.current = update; void update.catch(() => setWorkbenchDataState("error")); } else { setCurrentProjectId(projectId); } }} messages={messages} messagesState={messagesState} onSubmit={submitMessage} />}
       {section === "knowledge" && <KnowledgeScreen {...screenChrome} scopeTab={knowledgeScope} onScopeTabChange={setKnowledgeScope} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
       {section === "automation" && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
-      {section === "workbench" && <WorkbenchScreen {...screenChrome} />}
+      {section === "workbench" && <WorkbenchScreen {...screenChrome} statuses={workbenchStatuses} dataState={workbenchRegistryState} />}
       {section === "tasks" && <TaskBoardScreen {...screenChrome} tasks={tasks} projects={projects} conversations={conversations} dataState={workbenchDataState} selectedTask={selectedTask} onSelectedTaskChange={(task) => setSelectedTaskId(task.id)} />}
       <ContextSidebar
         section={section}

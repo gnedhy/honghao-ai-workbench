@@ -8,8 +8,9 @@ import {
   FlaskConical,
   ShieldCheck,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { TopBar, type ScreenChromeProps } from "../components/TopBar";
+import type { WorkbenchStatus } from "../types";
 
 const workbenches = [
   {
@@ -70,13 +71,37 @@ const workbenches = [
   },
 ] as const;
 
-export function WorkbenchScreen(chrome: ScreenChromeProps) {
+type WorkbenchDefinition = (typeof workbenches)[number];
+
+type WorkbenchScreenProps = ScreenChromeProps & {
+  statuses: WorkbenchStatus[];
+  dataState: "loading" | "ready" | "error";
+};
+
+export function WorkbenchScreen({ statuses, dataState, ...chrome }: WorkbenchScreenProps) {
   const [selectedId, setSelectedId] = useState<(typeof workbenches)[number]["id"]>(workbenches[0].id);
-  const selected = workbenches.find((item) => item.id === selectedId) ?? workbenches[0];
+  const modes = new Map(statuses.map((status) => [status.id, status.mode]));
+  const visibleWorkbenches = dataState === "ready"
+    ? workbenches.filter((item) => {
+        const mode = modes.get(item.id);
+        return mode === "prototype" || mode === "active";
+      })
+    : [];
+  const selected = visibleWorkbenches.find((item) => item.id === selectedId) ?? visibleWorkbenches[0] ?? null;
+
+  useEffect(() => {
+    if (selected && selected.id !== selectedId) setSelectedId(selected.id);
+  }, [selected, selectedId]);
+
+  const subtitle = dataState === "loading"
+    ? "正在读取模块状态"
+    : dataState === "error"
+      ? "模块状态暂不可用"
+      : `${visibleWorkbenches.length} 个职能工作台`;
 
   return (
     <main className="app-main">
-      <TopBar {...chrome} title="工作台" subtitle="4 个职能工作台" tabs={null} contextEnabled={false} />
+      <TopBar {...chrome} title="工作台" subtitle={subtitle} tabs={null} contextEnabled={false} />
       <section className="workspace-layout workspace-layout--workbench">
         <aside className="workspace-list-panel workbench-index">
           <div className="workspace-panel-title">
@@ -86,7 +111,10 @@ export function WorkbenchScreen(chrome: ScreenChromeProps) {
             </div>
           </div>
           <div className="workbench-list" role="list" aria-label="职能工作台">
-            {workbenches.map((item) => {
+            {dataState === "loading" && <WorkbenchState title="正在载入工作台" detail="正在确认各职能模块的运行状态。" />}
+            {dataState === "error" && <WorkbenchState title="模块状态不可用" detail="未连接本地服务，已停止加载真实功能。" />}
+            {dataState === "ready" && visibleWorkbenches.length === 0 && <WorkbenchState title="暂无已启用模块" detail="可在服务端配置中恢复需要的职能工作台。" />}
+            {dataState === "ready" && visibleWorkbenches.map((item) => {
               const Icon = item.icon;
               return (
                 <button
@@ -108,55 +136,78 @@ export function WorkbenchScreen(chrome: ScreenChromeProps) {
             })}
           </div>
         </aside>
-
-        <article className="workbench-detail">
-          <header className="workbench-detail__header">
-            <div className="workbench-detail__eyebrow">
-              <span>{selected.department}</span>
-              <span>功能原型</span>
-            </div>
-            <h1>{selected.title}</h1>
-            <p>{selected.summary}</p>
-            <div className="workbench-prototype-note"><FlaskConical size={14} /><span>当前为界面与业务结构原型，页面数值均为示例数据。</span></div>
-          </header>
-
-          <div className="workbench-metrics">
-            {selected.metrics.map(([label, value, note]) => (
-              <div key={label}><small>{label}</small><strong>{value}</strong><span>{note}</span></div>
-            ))}
-          </div>
-
-          <section className="workbench-section">
-            <div className="workbench-section__heading">
-              <div><span>业务视图</span><h2>{selected.title}明细</h2></div>
-              <small>示例数据</small>
-            </div>
-            <div className="workbench-table-wrap">
-              <table className="workbench-table">
-                <thead><tr>{selected.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
-                <tbody>{selected.rows.map((row) => <tr key={row[0]}>{row.map((cell, index) => <td key={`${row[0]}-${selected.columns[index]}`}>{cell}</td>)}</tr>)}</tbody>
-              </table>
-            </div>
-          </section>
-
-          <div className="workbench-detail-grid">
-            <section className="workbench-section">
-              <div className="workbench-section__heading"><div><span>功能范围</span><h2>核心模块</h2></div></div>
-              <ul className="workbench-module-list">
-                {selected.modules.map((module) => <li key={module}><CheckCircle2 size={15} /><span>{module}</span></li>)}
-              </ul>
-            </section>
-            <section className="workbench-section workbench-boundary">
-              <div className="workbench-section__heading"><div><span>迁移准备</span><h2>数据与确认边界</h2></div></div>
-              <dl>
-                <div><Database size={15} /><dt>数据来源</dt><dd>{selected.source}</dd></div>
-                <div><ShieldCheck size={15} /><dt>形成结果</dt><dd>{selected.output}</dd></div>
-                <div><CheckCircle2 size={15} /><dt>最终确认</dt><dd>{selected.owner}</dd></div>
-              </dl>
-            </section>
-          </div>
-        </article>
+        {dataState !== "ready" || !selected
+          ? <article className="workbench-detail workspace-detail-empty"><ShieldCheck size={22} /><strong>职能工作台未加载</strong></article>
+          : modes.get(selected.id) === "active"
+            ? <ActiveWorkbenchPending selected={selected} />
+            : <PrototypeWorkbenchDetail selected={selected} />}
       </section>
     </main>
+  );
+}
+
+function WorkbenchState({ title, detail }: { title: string; detail: string }) {
+  return <div className="workspace-empty"><ShieldCheck size={20} /><strong>{title}</strong><p>{detail}</p></div>;
+}
+
+function ActiveWorkbenchPending({ selected }: { selected: WorkbenchDefinition }) {
+  return (
+    <article className="workbench-detail workspace-detail-empty">
+      <ShieldCheck size={24} />
+      <strong>{selected.title}已进入受保护接入状态</strong>
+      <p>服务端已标记为 active，但真实模块尚未注册。为避免误用，当前不展示示例数据，也不会执行正式写入。</p>
+    </article>
+  );
+}
+
+function PrototypeWorkbenchDetail({ selected }: { selected: WorkbenchDefinition }) {
+  return (
+    <article className="workbench-detail">
+      <header className="workbench-detail__header">
+        <div className="workbench-detail__eyebrow">
+          <span>{selected.department}</span>
+          <span>功能原型</span>
+        </div>
+        <h1>{selected.title}</h1>
+        <p>{selected.summary}</p>
+        <div className="workbench-prototype-note"><FlaskConical size={14} /><span>当前为界面与业务结构原型，页面数值均为示例数据。</span></div>
+      </header>
+
+      <div className="workbench-metrics">
+        {selected.metrics.map(([label, value, note]) => (
+          <div key={label}><small>{label}</small><strong>{value}</strong><span>{note}</span></div>
+        ))}
+      </div>
+
+      <section className="workbench-section">
+        <div className="workbench-section__heading">
+          <div><span>业务视图</span><h2>{selected.title}明细</h2></div>
+          <small>示例数据</small>
+        </div>
+        <div className="workbench-table-wrap">
+          <table className="workbench-table">
+            <thead><tr>{selected.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
+            <tbody>{selected.rows.map((row) => <tr key={row[0]}>{row.map((cell, index) => <td key={`${row[0]}-${selected.columns[index]}`}>{cell}</td>)}</tr>)}</tbody>
+          </table>
+        </div>
+      </section>
+
+      <div className="workbench-detail-grid">
+        <section className="workbench-section">
+          <div className="workbench-section__heading"><div><span>功能范围</span><h2>核心模块</h2></div></div>
+          <ul className="workbench-module-list">
+            {selected.modules.map((module) => <li key={module}><CheckCircle2 size={15} /><span>{module}</span></li>)}
+          </ul>
+        </section>
+        <section className="workbench-section workbench-boundary">
+          <div className="workbench-section__heading"><div><span>迁移准备</span><h2>数据与确认边界</h2></div></div>
+          <dl>
+            <div><Database size={15} /><dt>数据来源</dt><dd>{selected.source}</dd></div>
+            <div><ShieldCheck size={15} /><dt>形成结果</dt><dd>{selected.output}</dd></div>
+            <div><CheckCircle2 size={15} /><dt>最终确认</dt><dd>{selected.owner}</dd></div>
+          </dl>
+        </section>
+      </div>
+    </article>
   );
 }

@@ -365,7 +365,7 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .knowledge-list-item__copy small span { padding-left: 7px; border-left: 1px solid #d8dde1; }
 .workspace-empty, .workspace-detail-empty { display: grid; place-items: center; align-content: center; min-height: 170px; padding: 24px; color: #92989e; text-align: center; }
 .workspace-empty strong, .workspace-detail-empty strong { margin-top: 9px; color: #5d646a; font-size: 12.5px; }
-.workspace-empty p { margin: 4px 0 0; font-size: 11px; }
+.workspace-empty p, .workspace-detail-empty p { max-width: 440px; margin: 4px 0 0; font-size: 11px; line-height: 1.6; }
 
 .knowledge-reader { padding: 31px 38px 56px; scroll-behavior: smooth; }
 .knowledge-reader__header { max-width: 760px; padding-bottom: 25px; border-bottom: 1px solid var(--border); }
