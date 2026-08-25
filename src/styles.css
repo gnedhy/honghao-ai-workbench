@@ -522,15 +522,13 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .module-settings__heading p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .module-settings__heading > span { flex: none; color: #878f96; font-size: 10.5px; }
 .module-settings__list { display: grid; }
-.module-setting-row { display: grid; min-width: 0; grid-template-columns: 32px minmax(0, 1fr) 38px; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid #eceeef; }
+.module-setting-row { display: grid; min-width: 0; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid #eceeef; }
 .module-setting-row__icon { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; color: #626b72; background: #f1f3f4; }
 .module-setting-row strong { font-size: 12.5px; font-weight: 600; }
 .module-setting-row p { margin: 3px 0 0; overflow: hidden; color: #7d858c; font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
-.module-switch { position: relative; width: 36px; height: 20px; padding: 0; border-radius: 10px; background: #d9dee2; cursor: pointer; transition: background-color var(--motion-fast) ease; }
-.module-switch > span { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(28,34,39,.2); transition: transform var(--motion-fast) var(--ease-out); }
-.module-switch[aria-checked="true"] { background: var(--primary); }
-.module-switch[aria-checked="true"] > span { transform: translateX(16px); }
-.module-switch:disabled { cursor: not-allowed; opacity: .55; }
+.module-mode-label { min-width: 42px; padding: 3px 6px; border-radius: 6px; color: #7c848b; background: #f0f2f3; font-size: 10px; text-align: center; }
+.module-mode-label[data-mode="active"] { color: #147a49; background: #eaf5ef; }
+.module-mode-label[data-mode="prototype"] { color: #9a6818; background: #fbf3e5; }
 .settings-subheading { margin: 24px 0 2px; color: #858d94; font-size: 11px; font-weight: 560; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; border-top: 1px solid var(--border); }
 .setting-row strong { font-size: 13px; }

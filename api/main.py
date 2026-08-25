@@ -6,9 +6,11 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, StringConstraints
 
 from api.database import Database, SubmissionConflictError
+from api.modules import MODULE_IDS, ModuleId, ModuleMode, module_for_api_path
 from api.settings import Settings
 from api.workbenches import WORKBENCH_IDS, WorkbenchId, WorkbenchMode
 
@@ -27,6 +29,11 @@ class HealthResponse(BaseModel):
 class WorkbenchStatusResponse(BaseModel):
     id: WorkbenchId
     mode: WorkbenchMode
+
+
+class ModuleStatusResponse(BaseModel):
+    id: ModuleId
+    mode: ModuleMode
 
 
 class ProjectCreate(BaseModel):
@@ -110,6 +117,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="Honghao AI API", version=API_VERSION, lifespan=lifespan)
 
+    def ensure_submission_modules_available(mode: Literal["chat", "work"]) -> None:
+        if mode == "work" and runtime_settings.module_modes["tasks"] == "off":
+            raise HTTPException(status_code=404, detail="Module not available")
+
+    @app.middleware("http")
+    async def guard_disabled_modules(request: Request, call_next):
+        module_id = module_for_api_path(request.url.path)
+        if module_id is not None and runtime_settings.module_modes[module_id] == "off":
+            return JSONResponse(status_code=404, content={"detail": "Module not available"})
+        return await call_next(request)
+
     @app.get("/api/health", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:
         return HealthResponse(
@@ -124,6 +142,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return [
             WorkbenchStatusResponse(id=workbench_id, mode=runtime_settings.workbench_modes[workbench_id])
             for workbench_id in WORKBENCH_IDS
+        ]
+
+    @app.get("/api/modules", response_model=list[ModuleStatusResponse])
+    def list_modules() -> list[ModuleStatusResponse]:
+        return [
+            ModuleStatusResponse(id=module_id, mode=runtime_settings.module_modes[module_id])
+            for module_id in MODULE_IDS
         ]
 
     @app.post("/api/projects", response_model=ProjectResponse, status_code=201)
@@ -178,6 +203,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         submission: InitialConversationSubmission,
         request: Request,
     ) -> InitialSubmissionResponse:
+        ensure_submission_modules_available(submission.mode)
         try:
             result = request.app.state.database.create_conversation_submission(
                 submission.title,
@@ -202,6 +228,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         submission: ConversationSubmission,
         request: Request,
     ) -> SubmissionResponse:
+        ensure_submission_modules_available(submission.mode)
         try:
             result = request.app.state.database.submit_conversation(
                 conversation_id,

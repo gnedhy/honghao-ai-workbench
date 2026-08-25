@@ -1,10 +1,12 @@
 import { Menu, PanelRightOpen } from "lucide-react";
 import type { ReactNode } from "react";
+import type { ModuleMode } from "../types";
 
 export type ScreenChromeProps = {
   contextOpen: boolean;
   onOpenNavigation: () => void;
   onToggleContext: () => void;
+  moduleMode: ModuleMode;
 };
 
 type TopBarProps = ScreenChromeProps & {
@@ -26,6 +28,7 @@ export function TopBar({
   contextOpen,
   onOpenNavigation,
   onToggleContext,
+  moduleMode,
 }: TopBarProps) {
   return (
     <header className={minimal ? "screen-header screen-header--minimal" : "screen-header"}>
@@ -35,7 +38,7 @@ export function TopBar({
         </button>
         <div className="screen-header__title">
           <strong>{title}</strong>
-          {subtitle && <span>{subtitle}</span>}
+          {(subtitle || moduleMode === "prototype") && <span>{moduleMode === "prototype" ? `功能原型 · 演示数据${subtitle ? ` · ${subtitle}` : ""}` : subtitle}</span>}
         </div>
       </div>
       <div className="screen-header__tabs">{tabs}</div>

@@ -1,6 +1,6 @@
 import { Check, ChevronRight, FolderClosed, FolderKanban, LibraryBig, MessageCircle, PanelsTopLeft, PenLine, Search, ShieldCheck, WandSparkles, Workflow, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { createConversationSubmission, createProject, fetchConversations, fetchMessages, fetchProjects, fetchServiceHealth, fetchTasks, fetchWorkbenches, setConversationProject, submitConversation, type ServiceConnection } from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createConversationSubmission, createProject, fetchConversations, fetchMessages, fetchModules, fetchProjects, fetchServiceHealth, fetchTasks, fetchWorkbenches, setConversationProject, submitConversation, type ServiceConnection } from "./api";
 import { ContextSidebar } from "./components/ContextSidebar";
 import { Sidebar } from "./components/Sidebar";
 import { knowledgeItems, skills, workflows } from "./data";
@@ -9,7 +9,7 @@ import { ConversationScreen } from "./screens/ConversationScreen";
 import { KnowledgeScreen } from "./screens/KnowledgeScreen";
 import { TaskBoardScreen } from "./screens/TaskBoardScreen";
 import { WorkbenchScreen } from "./screens/WorkbenchScreen";
-import type { Conversation, ConversationMessage, ConversationView, ModuleVisibility, Project, Section, TaskItem, WorkbenchStatus } from "./types";
+import type { Conversation, ConversationMessage, ConversationView, ModuleStatus, ModuleVisibility, Project, Section, TaskItem, WorkbenchStatus } from "./types";
 
 type SearchScope = "全部" | "会话" | "项目" | "知识" | "自动化" | "任务";
 type SearchResultKind = "conversation" | "project" | "knowledge" | "skill" | "workflow" | "task";
@@ -23,9 +23,7 @@ type GlobalSearchResult = {
   keywords: string;
 };
 
-const MODULE_VISIBILITY_KEY = "honghao-ai:modules";
 const MODULE_IDS: Section[] = ["chat", "knowledge", "automation", "workbench", "tasks"];
-const DEFAULT_MODULE_VISIBILITY: ModuleVisibility = { chat: false, knowledge: true, automation: false, workbench: true, tasks: false };
 const MODULE_OPTIONS = [
   { id: "chat", label: "新聊天", description: "对话、工作模式及会话侧栏", icon: PenLine },
   { id: "knowledge", label: "知识库", description: "个人与公共知识内容", icon: LibraryBig },
@@ -34,22 +32,14 @@ const MODULE_OPTIONS = [
   { id: "tasks", label: "任务看板", description: "任务管理与运行记录", icon: FolderKanban },
 ] as const;
 
-function readModuleVisibility(): ModuleVisibility {
-  try {
-    const stored = JSON.parse(localStorage.getItem(MODULE_VISIBILITY_KEY) ?? "{}") as Partial<ModuleVisibility>;
-    const visibility = MODULE_IDS.reduce((result, id) => {
-      if (typeof stored[id] === "boolean") result[id] = stored[id];
-      return result;
-    }, { ...DEFAULT_MODULE_VISIBILITY });
-    return Object.values(visibility).some(Boolean) ? visibility : { ...DEFAULT_MODULE_VISIBILITY };
-  } catch {
-    return { ...DEFAULT_MODULE_VISIBILITY };
-  }
-}
-
 function App() {
-  const [enabledModules, setEnabledModules] = useState<ModuleVisibility>(readModuleVisibility);
-  const [section, setSection] = useState<Section>(() => enabledModules.workbench ? "workbench" : MODULE_IDS.find((id) => enabledModules[id]) ?? "knowledge");
+  const [moduleStatuses, setModuleStatuses] = useState<ModuleStatus[]>([]);
+  const [moduleRegistryState, setModuleRegistryState] = useState<"loading" | "ready" | "error">("loading");
+  const enabledModules = useMemo(() => MODULE_IDS.reduce<ModuleVisibility>((visibility, id) => {
+    visibility[id] = moduleStatuses.some((module) => module.id === id && module.mode !== "off");
+    return visibility;
+  }, { chat: false, knowledge: false, automation: false, workbench: false, tasks: false }), [moduleStatuses]);
+  const [section, setSection] = useState<Section>("workbench");
   const [profileOpen, setProfileOpen] = useState(false);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -94,12 +84,12 @@ function App() {
   }, [conversationView, selectedConversationId]);
 
   useEffect(() => {
-    localStorage.setItem(MODULE_VISIBILITY_KEY, JSON.stringify(enabledModules));
+    if (moduleRegistryState !== "ready") return;
     if (!enabledModules[section]) {
       const fallback = MODULE_IDS.find((id) => enabledModules[id]);
       if (fallback) setSection(fallback);
     }
-  }, [enabledModules, section]);
+  }, [enabledModules, moduleRegistryState, section]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -126,6 +116,25 @@ function App() {
       if (retryTimer !== null) window.clearTimeout(retryTimer);
     };
   }, []);
+
+  useEffect(() => {
+    if (serviceConnection.state !== "online") {
+      if (serviceConnection.state === "offline") setModuleRegistryState("error");
+      return;
+    }
+
+    const controller = new AbortController();
+    setModuleRegistryState("loading");
+    fetchModules(controller.signal)
+      .then((statuses) => { setModuleStatuses(statuses); setModuleRegistryState("ready"); })
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setModuleStatuses([]);
+          setModuleRegistryState("error");
+        }
+      });
+    return () => controller.abort();
+  }, [serviceConnection.state]);
 
   useEffect(() => {
     if (!enabledModules.workbench) {
@@ -244,13 +253,7 @@ function App() {
     contextOpen,
     onOpenNavigation: openNavigation,
     onToggleContext: toggleContext,
-  };
-
-  const toggleModule = (module: Section) => {
-    setEnabledModules((current) => {
-      const next = { ...current, [module]: !current[module] };
-      return Object.values(next).some(Boolean) ? next : current;
-    });
+    moduleMode: moduleStatuses.find((module) => module.id === section)?.mode ?? "off" as const,
   };
 
   const submitMessage = async (content: string, submissionKey: string): Promise<boolean> => {
@@ -326,11 +329,11 @@ function App() {
         onMobileClose={() => setMobileOpen(false)}
         onOpenSettings={() => { setProfileOpen(false); setSettingsOpen(true); }}
       />
-      {section === "chat" && <ConversationScreen {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversationId) { const update = projectUpdatePromise.current.catch(() => undefined).then(async () => { const updated = await setConversationProject(selectedConversationId, projectId); setConversations((current) => current.map((conversation) => conversation.id === updated.id ? updated : conversation)); }); projectUpdatePromise.current = update; void update.catch(() => setWorkbenchDataState("error")); } else { setCurrentProjectId(projectId); } }} messages={messages} messagesState={messagesState} onSubmit={submitMessage} />}
-      {section === "knowledge" && <KnowledgeScreen {...screenChrome} scopeTab={knowledgeScope} onScopeTabChange={setKnowledgeScope} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
-      {section === "automation" && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
-      {section === "workbench" && <WorkbenchScreen {...screenChrome} statuses={workbenchStatuses} dataState={workbenchRegistryState} />}
-      {section === "tasks" && <TaskBoardScreen {...screenChrome} tasks={tasks} projects={projects} conversations={conversations} dataState={workbenchDataState} selectedTask={selectedTask} onSelectedTaskChange={(task) => setSelectedTaskId(task.id)} />}
+      {section === "chat" && enabledModules.chat && <ConversationScreen {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversationId) { const update = projectUpdatePromise.current.catch(() => undefined).then(async () => { const updated = await setConversationProject(selectedConversationId, projectId); setConversations((current) => current.map((conversation) => conversation.id === updated.id ? updated : conversation)); }); projectUpdatePromise.current = update; void update.catch(() => setWorkbenchDataState("error")); } else { setCurrentProjectId(projectId); } }} messages={messages} messagesState={messagesState} onSubmit={submitMessage} />}
+      {section === "knowledge" && enabledModules.knowledge && <KnowledgeScreen {...screenChrome} scopeTab={knowledgeScope} onScopeTabChange={setKnowledgeScope} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
+      {section === "automation" && enabledModules.automation && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
+      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} statuses={workbenchStatuses} dataState={workbenchRegistryState} />}
+      {section === "tasks" && enabledModules.tasks && <TaskBoardScreen {...screenChrome} tasks={tasks} projects={projects} conversations={conversations} dataState={workbenchDataState} selectedTask={selectedTask} onSelectedTaskChange={(task) => setSelectedTaskId(task.id)} />}
       <ContextSidebar
         section={section}
         conversationTitle={conversationView === "new" ? (conversationMode === "聊天" ? "新聊天" : "新工作") : conversationTitle}
@@ -389,7 +392,7 @@ function App() {
           }
         }}
       />
-      {settingsOpen && <SettingsDialog serviceConnection={serviceConnection} enabledModules={enabledModules} onModuleToggle={toggleModule} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsDialog serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }
@@ -518,13 +521,13 @@ function SearchResultIcon({ kind }: { kind: SearchResultKind }) {
 
 function SettingsDialog({
   serviceConnection,
-  enabledModules,
-  onModuleToggle,
+  moduleStatuses,
+  moduleRegistryState,
   onClose,
 }: {
   serviceConnection: ServiceConnection;
-  enabledModules: ModuleVisibility;
-  onModuleToggle: (module: Section) => void;
+  moduleStatuses: ModuleStatus[];
+  moduleRegistryState: "loading" | "ready" | "error";
   onClose: () => void;
 }) {
   const serviceCopy = serviceConnection.state === "online"
@@ -532,7 +535,7 @@ function SettingsDialog({
     : serviceConnection.state === "checking"
       ? { label: "连接中", detail: "正在检查本地 API 与数据库。" }
       : { label: "未连接", detail: "请启动本地 API 后刷新页面。" };
-  const enabledCount = Object.values(enabledModules).filter(Boolean).length;
+  const enabledCount = moduleStatuses.filter((module) => module.mode !== "off").length;
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -544,28 +547,19 @@ function SettingsDialog({
             <h2>常规</h2>
             <section className="module-settings" aria-labelledby="module-settings-title">
               <div className="module-settings__heading">
-                <div><strong id="module-settings-title">功能模块</strong><p>关闭后隐藏入口并暂停相关数据加载，不会删除已有数据。</p></div>
-                <span>{enabledCount} 个已启用</span>
+                <div><strong id="module-settings-title">功能模块</strong><p>状态由服务端配置，关闭时入口和业务接口同时停用。</p></div>
+                <span>{moduleRegistryState === "ready" ? `${enabledCount} 个已启用` : moduleRegistryState === "loading" ? "读取中" : "状态不可用"}</span>
               </div>
               <div className="module-settings__list">
                 {MODULE_OPTIONS.map((item) => {
                   const Icon = item.icon;
-                  const enabled = enabledModules[item.id];
-                  const lastEnabled = enabled && enabledCount === 1;
+                  const mode = moduleStatuses.find((module) => module.id === item.id)?.mode ?? "off";
+                  const modeLabel = mode === "active" ? "已启用" : mode === "prototype" ? "原型" : "已关闭";
                   return (
                     <div className="module-setting-row" key={item.id}>
                       <span className="module-setting-row__icon"><Icon size={16} /></span>
                       <div><strong>{item.label}</strong><p>{item.description}</p></div>
-                      <button
-                        className="module-switch"
-                        type="button"
-                        role="switch"
-                        aria-label={`${enabled ? "关闭" : "启用"}${item.label}`}
-                        aria-checked={enabled}
-                        disabled={lastEnabled}
-                        title={lastEnabled ? "至少保留一个功能模块" : undefined}
-                        onClick={() => onModuleToggle(item.id)}
-                      ><span /></button>
+                      <span className="module-mode-label" data-mode={mode}>{modeLabel}</span>
                     </div>
                   );
                 })}

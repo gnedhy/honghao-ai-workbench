@@ -45,6 +45,25 @@ npm.cmd run dev
 
 默认运行数据保存在仓库内的 `.data/`，其中 `.data/controlled-work/` 是后续任务使用的默认受控工作目录；整个数据目录都不会提交到 Git。可通过 `HONGHAO_DATA_DIR` 指定其他本地数据目录；测试始终使用独立临时目录，不会读写正式数据。
 
+### 顶层功能模块状态
+
+默认只启用工作台，知识库、AI 会话、自动化和任务看板保持关闭。状态由服务端读取，设置页只负责展示；修改环境变量后需要重启：
+
+```powershell
+$env:HONGHAO_MODULE_WORKBENCH_MODE = "active"
+$env:HONGHAO_MODULE_KNOWLEDGE_MODE = "off"
+$env:HONGHAO_MODULE_CHAT_MODE = "off"
+$env:HONGHAO_MODULE_AUTOMATION_MODE = "off"
+$env:HONGHAO_MODULE_TASKS_MODE = "off"
+npm.cmd run dev
+```
+
+- `active`：开放真实功能。
+- `prototype`：开放并明确标注为功能原型。
+- `off`：隐藏入口，相关业务接口同时返回不可用。
+
+配置缺失时使用上述默认值；配置值非法时服务拒绝启动，不会静默开放模块。
+
 ### 职能工作台模块状态
 
 四个职能工作台默认保持当前原型，可分别通过环境变量切换为 `prototype`、`active` 或 `off`：
@@ -114,7 +133,7 @@ git pull --ff-only
 - [Taste 方向 B：雾蓝精密](./设计概念/Taste方向-B-雾蓝精密.png)
 - [Taste 方向 C：石墨纸张](./设计概念/Taste方向-C-石墨纸张.png)
 - [智能体会话工作模式](./设计概念/智能体会话工作模式-V0.2-概念稿.png)
-- [知识空间](./设计概念/知识空间-V0.2-概念稿.png)
+- [知识库](./设计概念/知识空间-V0.2-概念稿.png)
 - [自动化 Skill](./设计概念/自动化Skill-V0.2-概念稿.png)
 - [任务看板](./设计概念/任务看板-V0.2-概念稿-v2.png)
 - [个人资料菜单](./设计概念/个人资料菜单-V0.2-状态稿.png)

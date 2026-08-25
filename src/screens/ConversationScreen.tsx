@@ -21,6 +21,7 @@ export function ConversationScreen({
   contextOpen,
   onOpenNavigation,
   onToggleContext,
+  moduleMode,
   view,
   conversationTitle,
   mode,
@@ -42,6 +43,7 @@ export function ConversationScreen({
         contextOpen={contextOpen}
         onOpenNavigation={onOpenNavigation}
         onToggleContext={onToggleContext}
+        moduleMode={moduleMode}
       />
 
       {view === "new" ? (

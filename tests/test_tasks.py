@@ -4,11 +4,19 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from api.main import create_app
+from api.modules import default_module_modes
 from api.settings import Settings
 
 
+def chat_and_task_settings(data_dir: Path) -> Settings:
+    module_modes = default_module_modes()
+    module_modes["chat"] = "active"
+    module_modes["tasks"] = "active"
+    return Settings.from_data_dir(data_dir, module_modes=module_modes)
+
+
 def test_chat_submission_creates_message_without_task(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_and_task_settings(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
         conversation = client.post("/api/conversations", json={"title": "随手讨论"}).json()
@@ -28,7 +36,7 @@ def test_chat_submission_creates_message_without_task(tmp_path: Path) -> None:
 
 
 def test_each_work_submission_creates_an_independent_persistent_task(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_and_task_settings(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
         project = client.post("/api/projects", json={"title": "部门需求治理"}).json()
@@ -63,7 +71,7 @@ def test_each_work_submission_creates_an_independent_persistent_task(tmp_path: P
 
 
 def test_tasks_keep_project_snapshot_when_conversation_project_changes(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_and_task_settings(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
         first_project = client.post("/api/projects", json={"title": "原项目"}).json()
@@ -103,7 +111,7 @@ def test_tasks_keep_project_snapshot_when_conversation_project_changes(tmp_path:
 
 
 def test_submission_rejects_unknown_conversation(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_and_task_settings(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
         response = client.post(
@@ -116,7 +124,7 @@ def test_submission_rejects_unknown_conversation(tmp_path: Path) -> None:
 
 
 def test_first_submission_creates_conversation_message_and_task_atomically(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_and_task_settings(tmp_path / "data")
     submission_key = "757c2ca9-2781-4dbf-b383-25d83695cc4b"
 
     with TestClient(create_app(settings)) as client:
@@ -144,7 +152,7 @@ def test_first_submission_creates_conversation_message_and_task_atomically(tmp_p
 
 
 def test_retrying_first_submission_returns_the_original_result(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_and_task_settings(tmp_path / "data")
     payload = {
         "title": "只创建一次",
         "project_id": None,
@@ -167,7 +175,7 @@ def test_retrying_first_submission_returns_the_original_result(tmp_path: Path) -
 
 
 def test_retrying_existing_conversation_submission_does_not_duplicate_task(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_and_task_settings(tmp_path / "data")
     payload = {
         "mode": "work",
         "content": "只执行一次",
@@ -193,7 +201,7 @@ def test_retrying_existing_conversation_submission_does_not_duplicate_task(tmp_p
 
 
 def test_concurrent_retries_create_one_task(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_and_task_settings(tmp_path / "data")
     app = create_app(settings)
     payload = {
         "mode": "work",
@@ -221,7 +229,7 @@ def test_concurrent_retries_create_one_task(tmp_path: Path) -> None:
 
 
 def test_submission_rejects_blank_and_oversized_content(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_and_task_settings(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
         conversation = client.post("/api/conversations", json={"title": "内容校验"}).json()
@@ -247,7 +255,7 @@ def test_submission_rejects_blank_and_oversized_content(tmp_path: Path) -> None:
 
 
 def test_messages_reject_unknown_conversation(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
+    settings = chat_and_task_settings(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
         response = client.get("/api/conversations/missing/messages")
