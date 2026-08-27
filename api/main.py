@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -12,8 +12,15 @@ from pydantic import BaseModel, Field, StringConstraints
 from api.authorization import AuthorizationStore, PERMISSIONS, permission_for_request
 from api.database import Database, SubmissionConflictError
 from api.identity import DuplicateIdentityError, IdentityStore, SESSION_COOKIE_NAME
-from api.modules import MODULE_IDS, ModuleId, ModuleMode, module_for_api_path
-from api.settings import Settings
+from api.modules import (
+    MODULE_IDS,
+    ModuleId,
+    ModuleMode,
+    load_persisted_module_modes,
+    module_for_api_path,
+    save_persisted_module_modes,
+)
+from api.settings import RuntimeEnvironment, Settings
 from api.workbenches import WORKBENCH_IDS, WorkbenchId, WorkbenchMode
 
 
@@ -26,6 +33,7 @@ class HealthResponse(BaseModel):
     service: str
     api_version: str
     schema_version: int
+    environment: RuntimeEnvironment
 
 
 class WorkbenchStatusResponse(BaseModel):
@@ -36,6 +44,22 @@ class WorkbenchStatusResponse(BaseModel):
 class ModuleStatusResponse(BaseModel):
     id: ModuleId
     mode: ModuleMode
+
+
+class AdminModuleStatusResponse(BaseModel):
+    id: ModuleId
+    current_mode: ModuleMode
+    pending_mode: ModuleMode
+
+
+class AdminModuleSettingsResponse(BaseModel):
+    environment: RuntimeEnvironment
+    modules: list[AdminModuleStatusResponse]
+
+
+class ModuleSettingUpdate(BaseModel):
+    mode: ModuleMode
+    reviews: list[Literal["business", "security", "code"]] = Field(default_factory=list)
 
 
 class LoginRequest(BaseModel):
@@ -249,6 +273,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             service=SERVICE_NAME,
             api_version=API_VERSION,
             schema_version=request.app.state.database.schema_version(),
+            environment=runtime_settings.environment,
         )
 
     @app.post("/api/login", response_model=CurrentUserResponse)
@@ -446,6 +471,71 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def list_audit_events(request: Request) -> list[AuditEventResponse]:
         require_system_admin(request)
         return [AuditEventResponse(**event) for event in authorization.list_audit_events()]
+
+    @app.get("/api/admin/module-settings", response_model=AdminModuleSettingsResponse)
+    def get_admin_module_settings(request: Request) -> AdminModuleSettingsResponse:
+        require_system_admin(request)
+        pending_modes = load_persisted_module_modes(
+            runtime_settings.data_dir,
+            runtime_settings.environment,
+            runtime_settings.module_modes,
+        )
+        return AdminModuleSettingsResponse(
+            environment=runtime_settings.environment,
+            modules=[
+                AdminModuleStatusResponse(
+                    id=module_id,
+                    current_mode=runtime_settings.module_modes[module_id],
+                    pending_mode=pending_modes[module_id],
+                )
+                for module_id in MODULE_IDS
+            ],
+        )
+
+    @app.put(
+        "/api/admin/module-settings/{module_id}",
+        response_model=AdminModuleStatusResponse,
+    )
+    def update_admin_module_setting(
+        module_id: str,
+        update: ModuleSettingUpdate,
+        request: Request,
+    ) -> AdminModuleStatusResponse:
+        actor = require_system_admin(request)
+        if module_id not in MODULE_IDS:
+            raise HTTPException(status_code=404, detail="Module not found")
+        if (
+            runtime_settings.environment == "production"
+            and update.mode == "active"
+            and set(update.reviews) != {"business", "security", "code"}
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Production activation requires business, security, and code reviews",
+            )
+        typed_module_id = cast(ModuleId, module_id)
+        pending_modes = load_persisted_module_modes(
+            runtime_settings.data_dir,
+            runtime_settings.environment,
+            runtime_settings.module_modes,
+        )
+        pending_modes[typed_module_id] = update.mode
+        save_persisted_module_modes(
+            runtime_settings.data_dir,
+            runtime_settings.environment,
+            pending_modes,
+        )
+        authorization.audit(
+            "module.mode.pending",
+            actor_user_id=actor["id"],
+            target_type="module",
+            target_id=typed_module_id,
+        )
+        return AdminModuleStatusResponse(
+            id=typed_module_id,
+            current_mode=runtime_settings.module_modes[typed_module_id],
+            pending_mode=update.mode,
+        )
 
     @app.get("/api/workbenches", response_model=list[WorkbenchStatusResponse])
     def list_workbenches() -> list[WorkbenchStatusResponse]:

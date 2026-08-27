@@ -1,6 +1,9 @@
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
+
+from api.main import create_app
 from api.modules import default_module_modes
 from api.settings import Settings
 from tests.helpers import authenticated_client
@@ -20,6 +23,168 @@ def test_module_registry_defaults_to_workbench_only(tmp_path: Path) -> None:
         {"id": "workbench", "mode": "active"},
         {"id": "tasks", "mode": "off"},
     ]
+
+
+def test_admin_can_read_environment_and_pending_module_settings(tmp_path: Path) -> None:
+    settings = Settings.from_data_dir(tmp_path / "data", environment="test")
+
+    with authenticated_client(settings) as client:
+        response = client.get("/api/admin/module-settings")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "environment": "test",
+        "modules": [
+            {"id": "chat", "current_mode": "off", "pending_mode": "off"},
+            {"id": "knowledge", "current_mode": "off", "pending_mode": "off"},
+            {"id": "automation", "current_mode": "off", "pending_mode": "off"},
+            {"id": "workbench", "current_mode": "active", "pending_mode": "active"},
+            {"id": "tasks", "current_mode": "off", "pending_mode": "off"},
+        ],
+    }
+
+
+def test_module_mode_change_is_pending_until_restart(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    settings = Settings.from_data_dir(data_dir, environment="test")
+
+    with authenticated_client(settings) as client:
+        changed = client.put(
+            "/api/admin/module-settings/knowledge",
+            json={"mode": "prototype", "reviews": []},
+        )
+        running = client.get("/api/modules")
+
+    assert changed.status_code == 200
+    assert changed.json() == {
+        "id": "knowledge",
+        "current_mode": "off",
+        "pending_mode": "prototype",
+    }
+    assert next(item for item in running.json() if item["id"] == "knowledge")["mode"] == "off"
+
+    restarted_settings = Settings.from_data_dir(data_dir, environment="test")
+    with authenticated_client(restarted_settings) as restarted_client:
+        restarted = restarted_client.get("/api/modules")
+        applied = restarted_client.get("/api/admin/module-settings")
+
+    assert next(item for item in restarted.json() if item["id"] == "knowledge")["mode"] == "prototype"
+    assert next(item for item in applied.json()["modules"] if item["id"] == "knowledge") == {
+        "id": "knowledge",
+        "current_mode": "prototype",
+        "pending_mode": "prototype",
+    }
+
+
+def test_production_activation_requires_all_three_reviews(tmp_path: Path) -> None:
+    settings = Settings.from_data_dir(tmp_path / "production", environment="production")
+
+    with authenticated_client(settings) as client:
+        blocked = client.put(
+            "/api/admin/module-settings/knowledge",
+            json={"mode": "active", "reviews": ["business", "security"]},
+        )
+        allowed = client.put(
+            "/api/admin/module-settings/knowledge",
+            json={"mode": "active", "reviews": ["business", "security", "code"]},
+        )
+
+    assert blocked.status_code == 422
+    assert blocked.json() == {
+        "detail": "Production activation requires business, security, and code reviews"
+    }
+    assert allowed.status_code == 200
+    assert allowed.json()["pending_mode"] == "active"
+
+
+def test_non_admin_cannot_read_or_change_module_settings(tmp_path: Path) -> None:
+    settings = Settings.from_data_dir(tmp_path / "data")
+    app = create_app(settings)
+
+    with authenticated_client(settings) as admin, TestClient(app) as employee:
+        created = admin.post(
+            "/api/users",
+            json={
+                "username": "employee",
+                "display_name": "普通员工",
+                "department": None,
+                "password": "Employee-Password-2026",
+                "role_ids": ["employee"],
+            },
+        )
+        assert created.status_code == 201
+        login = employee.post(
+            "/api/login",
+            json={"username": "employee", "password": "Employee-Password-2026"},
+        )
+        assert login.status_code == 200
+
+        read = employee.get("/api/admin/module-settings")
+        write = employee.put(
+            "/api/admin/module-settings/knowledge",
+            json={"mode": "active", "reviews": []},
+        )
+
+    assert read.status_code == 403
+    assert write.status_code == 403
+    assert not (settings.data_dir / "runtime-config.json").exists()
+
+
+def test_runtime_configuration_cannot_be_reused_by_another_environment(tmp_path: Path) -> None:
+    data_dir = tmp_path / "shared-by-mistake"
+    settings = Settings.from_data_dir(data_dir, environment="test")
+
+    with authenticated_client(settings) as client:
+        response = client.put(
+            "/api/admin/module-settings/knowledge",
+            json={"mode": "prototype", "reviews": []},
+        )
+
+    assert response.status_code == 200
+    with pytest.raises(ValueError, match="different environment"):
+        Settings.from_data_dir(data_dir, environment="production")
+
+
+def test_started_data_directory_is_bound_to_its_environment(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    settings = Settings.from_data_dir(data_dir, environment="test")
+
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/api/health").status_code == 200
+
+    assert (data_dir / "environment").read_text(encoding="utf-8") == "test"
+    with pytest.raises(ValueError, match="different environment"):
+        Settings.from_data_dir(data_dir, environment="production")
+
+
+def test_unregistered_module_cannot_be_enabled(tmp_path: Path) -> None:
+    settings = Settings.from_data_dir(tmp_path / "data")
+
+    with authenticated_client(settings) as client:
+        response = client.put(
+            "/api/admin/module-settings/not-installed",
+            json={"mode": "active", "reviews": []},
+        )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Module not found"}
+
+
+def test_module_mode_change_is_audited_without_configuration_values(tmp_path: Path) -> None:
+    settings = Settings.from_data_dir(tmp_path / "data")
+
+    with authenticated_client(settings) as client:
+        changed = client.put(
+            "/api/admin/module-settings/knowledge",
+            json={"mode": "prototype", "reviews": []},
+        )
+        events = client.get("/api/admin/audit-events")
+
+    assert changed.status_code == 200
+    event = next(item for item in events.json() if item["action"] == "module.mode.pending")
+    assert event["target_type"] == "module"
+    assert event["target_id"] == "knowledge"
+    assert "prototype" not in str(event)
 
 
 def test_module_registry_reads_environment_modes(tmp_path: Path, monkeypatch) -> None:
@@ -47,6 +212,21 @@ def test_invalid_module_mode_stops_startup(monkeypatch) -> None:
     with pytest.raises(
         ValueError,
         match="HONGHAO_MODULE_CHAT_MODE must be off, prototype, or active",
+    ):
+        Settings.from_environment()
+
+
+def test_production_cannot_bypass_review_gate_with_module_environment_variables(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("HONGHAO_DATA_DIR", str(tmp_path / "production"))
+    monkeypatch.setenv("HONGHAO_ENVIRONMENT", "production")
+    monkeypatch.setenv("HONGHAO_MODULE_KNOWLEDGE_MODE", "active")
+
+    with pytest.raises(
+        ValueError,
+        match="Production module modes must be changed through admin settings",
     ):
         Settings.from_environment()
 

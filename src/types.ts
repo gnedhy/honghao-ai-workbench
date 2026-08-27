@@ -4,6 +4,8 @@ export type ModuleVisibility = Record<Section, boolean>;
 
 export type ModuleMode = "off" | "prototype" | "active";
 
+export type RuntimeEnvironment = "test" | "production";
+
 export type ModuleStatus = {
   id: Section;
   mode: ModuleMode;
@@ -22,6 +24,19 @@ export type CurrentUser = {
   department: string | null;
   roles: UserRole[];
 };
+
+export type AdminModuleSetting = {
+  id: Section;
+  current_mode: ModuleMode;
+  pending_mode: ModuleMode;
+};
+
+export type AdminModuleSettings = {
+  environment: RuntimeEnvironment;
+  modules: AdminModuleSetting[];
+};
+
+export type ActivationReview = "business" | "security" | "code";
 
 export type ManagedUser = CurrentUser & {
   is_active: boolean;

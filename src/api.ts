@@ -1,10 +1,11 @@
-import type { AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleStatus, PermissionDefinition, Project, RolePermissionPolicy, SensitiveFieldPolicy, TaskItem, UserRole, WorkbenchStatus } from "./types";
+import type { ActivationReview, AdminModuleSetting, AdminModuleSettings, AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleMode, ModuleStatus, PermissionDefinition, Project, RolePermissionPolicy, Section, SensitiveFieldPolicy, TaskItem, UserRole, WorkbenchStatus } from "./types";
 
 export type ServiceHealth = {
   status: "ok";
   service: string;
   api_version: string;
   schema_version: number;
+  environment: "test" | "production";
 };
 
 export type ServiceConnection =
@@ -64,6 +65,22 @@ export function fetchWorkbenches(signal?: AbortSignal): Promise<WorkbenchStatus[
 
 export function fetchModules(signal?: AbortSignal): Promise<ModuleStatus[]> {
   return fetchJson<ModuleStatus[]>("/api/modules", { signal });
+}
+
+export function fetchAdminModuleSettings(): Promise<AdminModuleSettings> {
+  return fetchJson<AdminModuleSettings>("/api/admin/module-settings");
+}
+
+export function updateAdminModuleSetting(
+  moduleId: Section,
+  mode: ModuleMode,
+  reviews: ActivationReview[] = [],
+): Promise<AdminModuleSetting> {
+  return fetchJson<AdminModuleSetting>(`/api/admin/module-settings/${moduleId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, reviews }),
+  });
 }
 
 export function fetchRoles(): Promise<UserRole[]> {

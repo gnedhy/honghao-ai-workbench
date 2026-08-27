@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import userAvatar from "../assets/avatar-zhang-wei-v1.png";
-import type { Conversation, CurrentUser, ModuleVisibility, Project, Section } from "../types";
+import type { Conversation, CurrentUser, ModuleVisibility, Project, RuntimeEnvironment, Section } from "../types";
 
 type SidebarProps = {
   currentUser: CurrentUser;
@@ -29,6 +29,7 @@ type SidebarProps = {
   conversations: Conversation[];
   dataState: "loading" | "ready" | "error";
   enabledModules: ModuleVisibility;
+  environment: RuntimeEnvironment | null;
   onSectionChange: (section: Section) => void;
   onNewConversation: () => void;
   onConversationOpen: (conversationId: string) => void;
@@ -59,6 +60,7 @@ export function Sidebar({
   conversations,
   dataState,
   enabledModules,
+  environment,
   onSectionChange,
   onNewConversation,
   onConversationOpen,
@@ -107,6 +109,7 @@ export function Sidebar({
           <div className="brand-button">
             <BrandMark />
             <span className="brand-button__label">宏昊化工</span>
+            {environment === "test" && <span className="environment-badge">测试</span>}
           </div>
           <div className="sidebar__brand-actions">
             <button className="icon-button sidebar__search" type="button" aria-label="全局搜索" onClick={onSearchOpen}><Search size={18} /></button>

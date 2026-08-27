@@ -44,7 +44,7 @@ const knowledgeContent = {
   },
 } as const;
 
-export function KnowledgeScreen({ contextOpen, onOpenNavigation, onToggleContext, moduleMode, scopeTab, onScopeTabChange, selectedTitle, onSelectedTitleChange }: KnowledgeScreenProps) {
+export function KnowledgeScreen({ contextOpen, onOpenNavigation, onToggleContext, moduleMode, environment, scopeTab, onScopeTabChange, selectedTitle, onSelectedTitleChange }: KnowledgeScreenProps) {
   const [query, setQuery] = useState("");
   const scope = scopeByTab[scopeTab];
   const normalizedQuery = query.trim().toLowerCase();
@@ -54,7 +54,7 @@ export function KnowledgeScreen({ contextOpen, onOpenNavigation, onToggleContext
 
   return (
     <main className="app-main">
-      <TopBar title="知识库" subtitle={`${knowledgeItems.filter((item) => item.scope === scope).length} 条内容`} tabs={<SegmentedControl value={scopeTab} options={["个人", "公共"] as const} onChange={(value) => { onScopeTabChange(value); setQuery(""); onSelectedTitleChange(knowledgeItems.find((item) => item.scope === scopeByTab[value])?.title ?? ""); }} label="知识范围" />} action={<button className="primary-button header-action" type="button"><Plus size={16} /><span>新建知识</span></button>} contextOpen={contextOpen} onOpenNavigation={onOpenNavigation} onToggleContext={onToggleContext} moduleMode={moduleMode} />
+      <TopBar title="知识库" subtitle={`${knowledgeItems.filter((item) => item.scope === scope).length} 条内容`} tabs={<SegmentedControl value={scopeTab} options={["个人", "公共"] as const} onChange={(value) => { onScopeTabChange(value); setQuery(""); onSelectedTitleChange(knowledgeItems.find((item) => item.scope === scopeByTab[value])?.title ?? ""); }} label="知识范围" />} action={<button className="primary-button header-action" type="button"><Plus size={16} /><span>新建知识</span></button>} contextOpen={contextOpen} onOpenNavigation={onOpenNavigation} onToggleContext={onToggleContext} moduleMode={moduleMode} environment={environment} />
       <section className="workspace-layout workspace-layout--knowledge">
         <aside className="workspace-list-panel knowledge-index">
           <div className="workspace-panel-title"><div><h1>知识目录</h1><p>{scope === "个人知识" ? "只对你可见的沉淀" : "经审查发布的企业知识"}</p></div></div>

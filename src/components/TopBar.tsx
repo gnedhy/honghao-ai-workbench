@@ -1,12 +1,13 @@
 import { Menu, PanelRightOpen } from "lucide-react";
 import type { ReactNode } from "react";
-import type { ModuleMode } from "../types";
+import type { ModuleMode, RuntimeEnvironment } from "../types";
 
 export type ScreenChromeProps = {
   contextOpen: boolean;
   onOpenNavigation: () => void;
   onToggleContext: () => void;
   moduleMode: ModuleMode;
+  environment: RuntimeEnvironment | null;
 };
 
 type TopBarProps = ScreenChromeProps & {
@@ -29,6 +30,7 @@ export function TopBar({
   onOpenNavigation,
   onToggleContext,
   moduleMode,
+  environment,
 }: TopBarProps) {
   return (
     <header className={minimal ? "screen-header screen-header--minimal" : "screen-header"}>
@@ -37,7 +39,7 @@ export function TopBar({
           <Menu size={19} />
         </button>
         <div className="screen-header__title">
-          <strong>{title}</strong>
+          <strong>{title}{environment === "test" && <span className="mobile-environment-badge">测试</span>}</strong>
           {(subtitle || moduleMode === "prototype") && <span>{moduleMode === "prototype" ? `功能原型 · 演示数据${subtitle ? ` · ${subtitle}` : ""}` : subtitle}</span>}
         </div>
       </div>
