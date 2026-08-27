@@ -1,7 +1,8 @@
-import { Check, ChevronRight, FolderClosed, FolderKanban, LibraryBig, MessageCircle, PanelsTopLeft, PenLine, Search, ShieldCheck, WandSparkles, Workflow, X } from "lucide-react";
+import { FolderClosed, FolderKanban, LibraryBig, MessageCircle, Search, WandSparkles, Workflow, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createConversationSubmission, createProject, fetchConversations, fetchMessages, fetchModules, fetchProjects, fetchServiceHealth, fetchTasks, fetchWorkbenches, setConversationProject, submitConversation, type ServiceConnection } from "./api";
 import { ContextSidebar } from "./components/ContextSidebar";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
 import { knowledgeItems, skills, workflows } from "./data";
 import { AutomationScreen } from "./screens/AutomationScreen";
@@ -29,14 +30,6 @@ type GlobalSearchResult = {
 };
 
 const MODULE_IDS: Section[] = ["chat", "knowledge", "automation", "workbench", "tasks"];
-const MODULE_OPTIONS = [
-  { id: "chat", label: "新聊天", description: "对话、工作模式及会话侧栏", icon: PenLine },
-  { id: "knowledge", label: "知识库", description: "个人与公共知识内容", icon: LibraryBig },
-  { id: "automation", label: "自动化", description: "技能与工作流管理", icon: WandSparkles },
-  { id: "workbench", label: "工作台", description: "企业职能业务工具", icon: PanelsTopLeft },
-  { id: "tasks", label: "任务看板", description: "任务管理与运行记录", icon: FolderKanban },
-] as const;
-
 function App({ currentUser, onLogout }: AppProps) {
   const [moduleStatuses, setModuleStatuses] = useState<ModuleStatus[]>([]);
   const [moduleRegistryState, setModuleRegistryState] = useState<"loading" | "ready" | "error">("loading");
@@ -399,7 +392,7 @@ function App({ currentUser, onLogout }: AppProps) {
           }
         }}
       />
-      {settingsOpen && <SettingsDialog serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsDialog currentUser={currentUser} serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }
@@ -524,64 +517,6 @@ function SearchResultIcon({ kind }: { kind: SearchResultKind }) {
   if (kind === "workflow") return <Workflow size={16} />;
   if (kind === "task") return <FolderKanban size={16} />;
   return null;
-}
-
-function SettingsDialog({
-  serviceConnection,
-  moduleStatuses,
-  moduleRegistryState,
-  onClose,
-}: {
-  serviceConnection: ServiceConnection;
-  moduleStatuses: ModuleStatus[];
-  moduleRegistryState: "loading" | "ready" | "error";
-  onClose: () => void;
-}) {
-  const serviceCopy = serviceConnection.state === "online"
-    ? { label: "已连接", detail: `API ${serviceConnection.health.api_version} · 数据版本 ${serviceConnection.health.schema_version}` }
-    : serviceConnection.state === "checking"
-      ? { label: "连接中", detail: "正在检查本地 API 与数据库。" }
-      : { label: "未连接", detail: "请启动本地 API 后刷新页面。" };
-  const enabledCount = moduleStatuses.filter((module) => module.mode !== "off").length;
-
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-        <header><div><h1 id="settings-title">系统设置</h1><p>管理功能模块、模型接口和安全边界。</p></div><button className="icon-button" type="button" aria-label="关闭设置" onClick={onClose}><X size={18} /></button></header>
-        <div className="settings-dialog__body">
-          <nav aria-label="设置分类"><button className="is-active" type="button">常规<ChevronRight size={15} /></button><button type="button">模型接口<ChevronRight size={15} /></button><button type="button">知识与目录<ChevronRight size={15} /></button><button type="button">安全与审查<ChevronRight size={15} /></button></nav>
-          <article>
-            <h2>常规</h2>
-            <section className="module-settings" aria-labelledby="module-settings-title">
-              <div className="module-settings__heading">
-                <div><strong id="module-settings-title">功能模块</strong><p>状态由服务端配置，关闭时入口和业务接口同时停用。</p></div>
-                <span>{moduleRegistryState === "ready" ? `${enabledCount} 个已启用` : moduleRegistryState === "loading" ? "读取中" : "状态不可用"}</span>
-              </div>
-              <div className="module-settings__list">
-                {MODULE_OPTIONS.map((item) => {
-                  const Icon = item.icon;
-                  const mode = moduleStatuses.find((module) => module.id === item.id)?.mode ?? "off";
-                  const modeLabel = mode === "active" ? "已启用" : mode === "prototype" ? "原型" : "已关闭";
-                  return (
-                    <div className="module-setting-row" key={item.id}>
-                      <span className="module-setting-row__icon"><Icon size={16} /></span>
-                      <div><strong>{item.label}</strong><p>{item.description}</p></div>
-                      <span className="module-mode-label" data-mode={mode}>{modeLabel}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-            <h3 className="settings-subheading">运行与安全</h3>
-            <div className="setting-row"><div><strong>本地服务</strong><p>{serviceCopy.detail}</p></div><span className={`setting-connection setting-connection--${serviceConnection.state}`}><i />{serviceCopy.label}</span></div>
-            <div className="setting-row"><div><strong>默认会话模式</strong><p>新会话默认进入工作空状态。</p></div><span className="setting-value">工作<ChevronRight size={15} /></span></div>
-            <div className="setting-row"><div><strong>数据出站确认</strong><p>模型请求前展示上下文摘要。</p></div><span className="setting-enabled"><Check size={14} />已开启</span></div>
-            <div className="setting-row"><div><strong>受控工作目录</strong><p>文件操作只允许发生在授权目录内。</p></div><span className="setting-enabled"><ShieldCheck size={15} />已保护</span></div>
-          </article>
-        </div>
-      </section>
-    </div>
-  );
 }
 
 export default App;

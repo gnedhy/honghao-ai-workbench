@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StringConstraints
 
+from api.authorization import AuthorizationStore, PERMISSIONS, permission_for_request
 from api.database import Database, SubmissionConflictError
 from api.identity import DuplicateIdentityError, IdentityStore, SESSION_COOKIE_NAME
 from api.modules import MODULE_IDS, ModuleId, ModuleMode, module_for_api_path
@@ -75,6 +76,38 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     is_active: bool | None = None
     role_ids: Annotated[list[str], Field(min_length=1)] | None = None
+
+
+class RolePermissionsUpdate(BaseModel):
+    permission_ids: list[str]
+
+
+class RolePermissionsResponse(BaseModel):
+    role_id: str
+    permission_ids: list[str]
+
+
+class FieldPolicyUpdate(BaseModel):
+    read_role_ids: list[str]
+    write_role_ids: list[str]
+
+
+class FieldPolicyResponse(BaseModel):
+    id: str
+    area: str
+    name: str
+    description: str
+    read_role_ids: list[str]
+    write_role_ids: list[str]
+
+
+class AuditEventResponse(BaseModel):
+    id: str
+    action: str
+    target_type: str
+    target_id: str
+    created_at: str
+    actor_name: str | None
 
 
 class ProjectCreate(BaseModel):
@@ -149,14 +182,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     runtime_settings = settings or Settings.from_environment()
     database = Database(runtime_settings.database_path)
     identities = IdentityStore(runtime_settings.database_path)
+    authorization = AuthorizationStore(runtime_settings.database_path)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         runtime_settings.ensure_directories()
         database.initialize()
         identities.initialize()
+        authorization.initialize()
         app.state.database = database
         app.state.identities = identities
+        app.state.authorization = authorization
         yield
 
     app = FastAPI(title="Honghao AI API", version=API_VERSION, lifespan=lifespan)
@@ -173,15 +209,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=403, detail="System administrator required")
         return user
 
-    def ensure_submission_modules_available(mode: Literal["chat", "work"]) -> None:
-        if mode == "work" and runtime_settings.module_modes["tasks"] == "off":
+    def ensure_submission_modules_available(mode: Literal["chat", "work"], user: dict) -> None:
+        if mode != "work":
+            return
+        if runtime_settings.module_modes["tasks"] == "off":
             raise HTTPException(status_code=404, detail="Module not available")
+        if not authorization.has_permission(
+            [role["id"] for role in user["roles"]],
+            "tasks.manage",
+        ):
+            raise HTTPException(status_code=403, detail="Permission denied")
 
     @app.middleware("http")
     async def guard_disabled_modules(request: Request, call_next):
         module_id = module_for_api_path(request.url.path)
         if module_id is not None and runtime_settings.module_modes[module_id] == "off":
             return JSONResponse(status_code=404, content={"detail": "Module not available"})
+        if module_id is not None:
+            user = getattr(request.state, "current_user", None)
+            role_ids = [role["id"] for role in user["roles"]] if user else []
+            if not authorization.has_permission(role_ids, permission_for_request(module_id, request.method)):
+                return JSONResponse(status_code=403, content={"detail": "Permission denied"})
         return await call_next(request)
 
     @app.middleware("http")
@@ -211,8 +259,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             runtime_settings.session_ttl_seconds,
         )
         if authenticated is None:
+            authorization.audit(
+                "login.failed",
+                actor_user_id=None,
+                target_type="account",
+                target_id=credentials.username,
+            )
             raise HTTPException(status_code=401, detail="Invalid username or password")
         user, token = authenticated
+        authorization.audit(
+            "login.succeeded",
+            actor_user_id=user["id"],
+            target_type="account",
+            target_id=user["id"],
+        )
         response.set_cookie(
             SESSION_COOKIE_NAME,
             token,
@@ -242,27 +302,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/roles", response_model=RoleResponse, status_code=201)
     def create_role(role: RoleCreate, request: Request) -> RoleResponse:
-        require_system_admin(request)
+        actor = require_system_admin(request)
         try:
-            return RoleResponse(**identities.create_role(role.name))
+            created = identities.create_role(role.name)
         except DuplicateIdentityError as error:
             raise HTTPException(status_code=409, detail="Role already exists") from error
+        authorization.audit(
+            "role.created",
+            actor_user_id=actor["id"],
+            target_type="role",
+            target_id=created["id"],
+        )
+        return RoleResponse(**created)
 
     @app.post("/api/users", response_model=UserResponse, status_code=201)
     def create_user(user: UserCreate, request: Request) -> UserResponse:
-        require_system_admin(request)
+        actor = require_system_admin(request)
         try:
-            return UserResponse(**identities.create_user(
+            created = identities.create_user(
                 username=user.username,
                 display_name=user.display_name,
                 department=user.department,
                 password=user.password,
                 role_ids=user.role_ids,
-            ))
+            )
         except DuplicateIdentityError as error:
             raise HTTPException(status_code=409, detail="User already exists") from error
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+        authorization.audit(
+            "user.created",
+            actor_user_id=actor["id"],
+            target_type="account",
+            target_id=created["id"],
+        )
+        return UserResponse(**created)
 
     @app.get("/api/users", response_model=list[UserResponse])
     def list_users(request: Request) -> list[UserResponse]:
@@ -271,9 +345,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.patch("/api/users/{user_id}", response_model=UserResponse)
     def update_user(user_id: str, update: UserUpdate, request: Request) -> UserResponse:
-        require_system_admin(request)
+        actor = require_system_admin(request)
         if update.is_active is None and update.role_ids is None:
             raise HTTPException(status_code=422, detail="No account changes supplied")
+        if user_id == actor["id"] and (
+            update.is_active is False
+            or (update.role_ids is not None and "system-admin" not in update.role_ids)
+        ):
+            raise HTTPException(status_code=422, detail="Cannot remove access from the current administrator")
         try:
             user = identities.update_user(
                 user_id,
@@ -284,7 +363,89 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(error)) from error
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
+        authorization.audit(
+            "user.updated",
+            actor_user_id=actor["id"],
+            target_type="account",
+            target_id=user_id,
+        )
         return UserResponse(**user)
+
+    @app.get("/api/admin/permissions")
+    def list_permissions(request: Request) -> list[dict[str, str]]:
+        require_system_admin(request)
+        return [
+            {"id": permission_id, "module_id": module_id, "name": name, "description": description}
+            for permission_id, module_id, name, description in PERMISSIONS
+        ]
+
+    @app.get("/api/admin/role-permissions", response_model=list[RolePermissionsResponse])
+    def list_role_permissions(request: Request) -> list[RolePermissionsResponse]:
+        require_system_admin(request)
+        all_permission_ids = [permission[0] for permission in PERMISSIONS]
+        return [
+            RolePermissionsResponse(
+                role_id=role["id"],
+                permission_ids=(
+                    all_permission_ids
+                    if role["id"] == "system-admin"
+                    else authorization.permissions_for_role(role["id"])
+                ),
+            )
+            for role in identities.list_roles()
+        ]
+
+    @app.put("/api/admin/roles/{role_id}/permissions", response_model=RolePermissionsResponse)
+    def update_role_permissions(
+        role_id: str,
+        update: RolePermissionsUpdate,
+        request: Request,
+    ) -> RolePermissionsResponse:
+        actor = require_system_admin(request)
+        try:
+            permission_ids = authorization.set_role_permissions(role_id, update.permission_ids)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        authorization.audit(
+            "role.permissions.updated",
+            actor_user_id=actor["id"],
+            target_type="role",
+            target_id=role_id,
+        )
+        return RolePermissionsResponse(role_id=role_id, permission_ids=permission_ids)
+
+    @app.get("/api/admin/fields", response_model=list[FieldPolicyResponse])
+    def list_field_policies(request: Request) -> list[FieldPolicyResponse]:
+        require_system_admin(request)
+        return [FieldPolicyResponse(**field) for field in authorization.list_field_policies()]
+
+    @app.put("/api/admin/fields/{field_id}", response_model=FieldPolicyResponse)
+    def update_field_policy(
+        field_id: str,
+        update: FieldPolicyUpdate,
+        request: Request,
+    ) -> FieldPolicyResponse:
+        actor = require_system_admin(request)
+        try:
+            field = authorization.set_field_policy(
+                field_id,
+                update.read_role_ids,
+                update.write_role_ids,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        authorization.audit(
+            "field.policy.updated",
+            actor_user_id=actor["id"],
+            target_type="field",
+            target_id=field_id,
+        )
+        return FieldPolicyResponse(**field)
+
+    @app.get("/api/admin/audit-events", response_model=list[AuditEventResponse])
+    def list_audit_events(request: Request) -> list[AuditEventResponse]:
+        require_system_admin(request)
+        return [AuditEventResponse(**event) for event in authorization.list_audit_events()]
 
     @app.get("/api/workbenches", response_model=list[WorkbenchStatusResponse])
     def list_workbenches() -> list[WorkbenchStatusResponse]:
@@ -294,10 +455,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ]
 
     @app.get("/api/modules", response_model=list[ModuleStatusResponse])
-    def list_modules() -> list[ModuleStatusResponse]:
+    def list_modules(request: Request) -> list[ModuleStatusResponse]:
+        user = current_user(request)
+        role_ids = [role["id"] for role in user["roles"]]
         return [
             ModuleStatusResponse(id=module_id, mode=runtime_settings.module_modes[module_id])
             for module_id in MODULE_IDS
+            if authorization.has_permission(role_ids, permission_for_request(module_id, "GET"))
         ]
 
     @app.post("/api/projects", response_model=ProjectResponse, status_code=201)
@@ -352,7 +516,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         submission: InitialConversationSubmission,
         request: Request,
     ) -> InitialSubmissionResponse:
-        ensure_submission_modules_available(submission.mode)
+        ensure_submission_modules_available(submission.mode, current_user(request))
         try:
             result = request.app.state.database.create_conversation_submission(
                 submission.title,
@@ -377,7 +541,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         submission: ConversationSubmission,
         request: Request,
     ) -> SubmissionResponse:
-        ensure_submission_modules_available(submission.mode)
+        ensure_submission_modules_available(submission.mode, current_user(request))
         try:
             result = request.app.state.database.submit_conversation(
                 conversation_id,

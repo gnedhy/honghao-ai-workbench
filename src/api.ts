@@ -1,4 +1,4 @@
-import type { Conversation, ConversationMessage, CurrentUser, ModuleStatus, Project, TaskItem, WorkbenchStatus } from "./types";
+import type { AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleStatus, PermissionDefinition, Project, RolePermissionPolicy, SensitiveFieldPolicy, TaskItem, UserRole, WorkbenchStatus } from "./types";
 
 export type ServiceHealth = {
   status: "ok";
@@ -64,6 +64,79 @@ export function fetchWorkbenches(signal?: AbortSignal): Promise<WorkbenchStatus[
 
 export function fetchModules(signal?: AbortSignal): Promise<ModuleStatus[]> {
   return fetchJson<ModuleStatus[]>("/api/modules", { signal });
+}
+
+export function fetchRoles(): Promise<UserRole[]> {
+  return fetchJson<UserRole[]>("/api/roles");
+}
+
+export function createRole(name: string): Promise<UserRole> {
+  return fetchJson<UserRole>("/api/roles", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function fetchUsers(): Promise<ManagedUser[]> {
+  return fetchJson<ManagedUser[]>("/api/users");
+}
+
+export function createUser(input: {
+  username: string;
+  display_name: string;
+  department: string | null;
+  password: string;
+  role_ids: string[];
+}): Promise<ManagedUser> {
+  return fetchJson<ManagedUser>("/api/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateUser(userId: string, input: { is_active?: boolean; role_ids?: string[] }): Promise<ManagedUser> {
+  return fetchJson<ManagedUser>(`/api/users/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function fetchPermissionCatalog(): Promise<PermissionDefinition[]> {
+  return fetchJson<PermissionDefinition[]>("/api/admin/permissions");
+}
+
+export function fetchRolePermissions(): Promise<RolePermissionPolicy[]> {
+  return fetchJson<RolePermissionPolicy[]>("/api/admin/role-permissions");
+}
+
+export function updateRolePermissions(roleId: string, permissionIds: string[]): Promise<RolePermissionPolicy> {
+  return fetchJson<RolePermissionPolicy>(`/api/admin/roles/${roleId}/permissions`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ permission_ids: permissionIds }),
+  });
+}
+
+export function fetchSensitiveFields(): Promise<SensitiveFieldPolicy[]> {
+  return fetchJson<SensitiveFieldPolicy[]>("/api/admin/fields");
+}
+
+export function updateSensitiveField(
+  fieldId: string,
+  input: { read_role_ids: string[]; write_role_ids: string[] },
+): Promise<SensitiveFieldPolicy> {
+  return fetchJson<SensitiveFieldPolicy>(`/api/admin/fields/${fieldId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function fetchAuditEvents(): Promise<AuditEvent[]> {
+  return fetchJson<AuditEvent[]>("/api/admin/audit-events");
 }
 
 export function fetchMessages(conversationId: string, signal?: AbortSignal): Promise<ConversationMessage[]> {
