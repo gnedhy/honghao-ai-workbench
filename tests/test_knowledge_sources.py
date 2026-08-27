@@ -18,15 +18,7 @@ def knowledge_settings(data_dir: Path) -> Settings:
     return Settings.from_data_dir(data_dir, module_modes=modes)
 
 
-def pdf_with_text(text: str) -> bytes:
-    content = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("ascii")
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Length " + str(len(content)).encode("ascii") + b" >>\nstream\n" + content + b"\nendstream",
-    ]
+def pdf_from_objects(objects: list[bytes]) -> bytes:
     pdf = bytearray(b"%PDF-1.4\n")
     offsets = [0]
     for number, body in enumerate(objects, start=1):
@@ -41,6 +33,32 @@ def pdf_with_text(text: str) -> bytes:
         f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n".encode("ascii")
     )
     return bytes(pdf)
+
+
+def pdf_with_text(text: str) -> bytes:
+    content = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("ascii")
+    return pdf_from_objects(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            b"<< /Length " + str(len(content)).encode("ascii") + b" >>\nstream\n" + content + b"\nendstream",
+        ]
+    )
+
+
+def image_only_pdf() -> bytes:
+    content = b"q 100 0 0 100 72 600 cm /Im1 Do Q"
+    return pdf_from_objects(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im1 4 0 R >> >> /Contents 5 0 R >>",
+            b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 1 >>\nstream\n\x80\nendstream",
+            b"<< /Length " + str(len(content)).encode("ascii") + b" >>\nstream\n" + content + b"\nendstream",
+        ]
+    )
 
 
 def encrypted_pdf() -> bytes:
@@ -112,7 +130,7 @@ def test_safe_text_pdf_creates_reviewable_markdown_version(tmp_path: Path) -> No
 
 def test_image_only_pdf_waits_for_ocr_and_keeps_original(tmp_path: Path) -> None:
     settings = knowledge_settings(tmp_path / "data")
-    pdf = pdf_with_text("")
+    pdf = image_only_pdf()
 
     with authenticated_client(settings) as client:
         uploaded = client.post(
