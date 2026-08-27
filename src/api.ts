@@ -141,6 +141,16 @@ export function fetchSensitiveFields(): Promise<SensitiveFieldPolicy[]> {
   return fetchJson<SensitiveFieldPolicy[]>("/api/admin/fields");
 }
 
+export function createSensitiveField(
+  input: Omit<SensitiveFieldPolicy, "id">,
+): Promise<SensitiveFieldPolicy> {
+  return fetchJson<SensitiveFieldPolicy>("/api/admin/fields", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
 export function updateSensitiveField(
   fieldId: string,
   input: { read_role_ids: string[]; write_role_ids: string[] },

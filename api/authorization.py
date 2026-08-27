@@ -10,7 +10,7 @@ from uuid import uuid4
 from api.modules import ModuleId
 
 
-AUTHORIZATION_SCHEMA_VERSION = 1
+AUTHORIZATION_SCHEMA_VERSION = 2
 SYSTEM_ADMIN_ROLE_ID = "system-admin"
 
 PERMISSIONS: tuple[tuple[str, ModuleId, str, str], ...] = (
@@ -57,6 +57,9 @@ class AuthorizationStore:
                 "CREATE TABLE IF NOT EXISTS authorization_field_policies (field_id TEXT PRIMARY KEY, read_role_ids TEXT NOT NULL, write_role_ids TEXT NOT NULL)"
             )
             connection.execute(
+                "CREATE TABLE IF NOT EXISTS authorization_custom_fields (id TEXT PRIMARY KEY, area TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL, UNIQUE (area, name))"
+            )
+            connection.execute(
                 "CREATE TABLE IF NOT EXISTS authorization_audit_events (id TEXT PRIMARY KEY, actor_user_id TEXT, action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, created_at TEXT NOT NULL)"
             )
             version = connection.execute(
@@ -74,6 +77,11 @@ class AuthorizationStore:
                         for role_id, permission_ids in _DEFAULT_ROLE_PERMISSIONS.items()
                         for permission_id in permission_ids
                     ],
+                )
+            elif int(version[0]) == 1:
+                connection.execute(
+                    "UPDATE schema_metadata SET value = ? WHERE key = 'authorization_schema_version'",
+                    (AUTHORIZATION_SCHEMA_VERSION,),
                 )
             elif int(version[0]) != AUTHORIZATION_SCHEMA_VERSION:
                 raise RuntimeError("Unsupported authorization schema version")
@@ -132,8 +140,34 @@ class AuthorizationStore:
                 "read_role_ids": rows.get(field_id, ([], []))[0],
                 "write_role_ids": rows.get(field_id, ([], []))[1],
             }
-            for field_id, area, name, description in FIELD_CATALOG
+            for field_id, area, name, description in self._field_catalog()
         ]
+
+    def create_field(
+        self,
+        area: str,
+        name: str,
+        description: str,
+        read_role_ids: list[str],
+        write_role_ids: list[str],
+    ) -> dict[str, Any]:
+        field_id = f"custom.{uuid4()}"
+        read_ids = list(dict.fromkeys(read_role_ids))
+        write_ids = list(dict.fromkeys(write_role_ids))
+        with sqlite3.connect(self.path) as connection:
+            self._ensure_roles_exist(connection, [*read_ids, *write_ids])
+            try:
+                connection.execute(
+                    "INSERT INTO authorization_custom_fields (id, area, name, description) VALUES (?, ?, ?, ?)",
+                    (field_id, area, name, description),
+                )
+                connection.execute(
+                    "INSERT INTO authorization_field_policies (field_id, read_role_ids, write_role_ids) VALUES (?, ?, ?)",
+                    (field_id, json.dumps(read_ids), json.dumps(write_ids)),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError("Field already exists") from error
+        return next(field for field in self.list_field_policies() if field["id"] == field_id)
 
     def set_field_policy(
         self,
@@ -141,7 +175,7 @@ class AuthorizationStore:
         read_role_ids: list[str],
         write_role_ids: list[str],
     ) -> dict[str, Any]:
-        if field_id not in {field[0] for field in FIELD_CATALOG}:
+        if field_id not in {field[0] for field in self._field_catalog()}:
             raise ValueError("Unknown field")
         read_ids = list(dict.fromkeys(read_role_ids))
         write_ids = list(dict.fromkeys(write_role_ids))
@@ -210,6 +244,13 @@ class AuthorizationStore:
                 (field_id,),
             ).fetchone()
         return row is not None and bool(set(json.loads(str(row[0]))) & set(role_ids))
+
+    def _field_catalog(self) -> list[tuple[str, str, str, str]]:
+        with sqlite3.connect(self.path) as connection:
+            custom_fields = connection.execute(
+                "SELECT id, area, name, description FROM authorization_custom_fields ORDER BY rowid"
+            ).fetchall()
+        return [*FIELD_CATALOG, *(tuple(str(value) for value in row) for row in custom_fields)]
 
     @staticmethod
     def _ensure_roles_exist(connection: sqlite3.Connection, role_ids: list[str]) -> None:

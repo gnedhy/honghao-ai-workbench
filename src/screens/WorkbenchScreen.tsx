@@ -8,11 +8,11 @@ import {
   FlaskConical,
   ShieldCheck,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { TopBar, type ScreenChromeProps } from "../components/TopBar";
-import type { WorkbenchStatus } from "../types";
+import type { WorkbenchId, WorkbenchStatus } from "../types";
 
-const workbenches = [
+export const workbenches = [
   {
     id: "management",
     department: "总经办",
@@ -76,10 +76,11 @@ type WorkbenchDefinition = (typeof workbenches)[number];
 type WorkbenchScreenProps = ScreenChromeProps & {
   statuses: WorkbenchStatus[];
   dataState: "loading" | "ready" | "error";
+  selectedId: WorkbenchId;
+  onSelectedIdChange: (id: WorkbenchId) => void;
 };
 
-export function WorkbenchScreen({ statuses, dataState, ...chrome }: WorkbenchScreenProps) {
-  const [selectedId, setSelectedId] = useState<(typeof workbenches)[number]["id"]>(workbenches[0].id);
+export function WorkbenchScreen({ statuses, dataState, selectedId, onSelectedIdChange, ...chrome }: WorkbenchScreenProps) {
   const modes = new Map(statuses.map((status) => [status.id, status.mode]));
   const visibleWorkbenches = dataState === "ready"
     ? workbenches.filter((item) => {
@@ -90,8 +91,8 @@ export function WorkbenchScreen({ statuses, dataState, ...chrome }: WorkbenchScr
   const selected = visibleWorkbenches.find((item) => item.id === selectedId) ?? visibleWorkbenches[0] ?? null;
 
   useEffect(() => {
-    if (selected && selected.id !== selectedId) setSelectedId(selected.id);
-  }, [selected, selectedId]);
+    if (selected && selected.id !== selectedId) onSelectedIdChange(selected.id);
+  }, [onSelectedIdChange, selected, selectedId]);
 
   const subtitle = dataState === "loading"
     ? "正在读取模块状态"
@@ -121,7 +122,7 @@ export function WorkbenchScreen({ statuses, dataState, ...chrome }: WorkbenchScr
                   className={`workbench-list-item${selected.id === item.id ? " is-active" : ""}`}
                   type="button"
                   key={item.id}
-                  onClick={() => setSelectedId(item.id)}
+                  onClick={() => onSelectedIdChange(item.id)}
                   aria-pressed={selected.id === item.id}
                 >
                   <Icon size={17} />
