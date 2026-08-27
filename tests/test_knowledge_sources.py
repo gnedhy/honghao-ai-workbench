@@ -65,7 +65,8 @@ def test_admin_can_upload_and_retrieve_quarantined_pdf_source(tmp_path: Path) ->
         assert uploaded.status_code == 201
         source = uploaded.json()
         assert source["filename"] == "产品说明书.pdf"
-        assert source["status"] == "quarantined"
+        assert source["safety_status"] == "quarantined"
+        assert source["processing_status"] == "not_started"
         assert source["size_bytes"] == len(pdf)
         assert "stored_path" not in source
 
@@ -89,7 +90,8 @@ def test_safe_text_pdf_creates_reviewable_markdown_version(tmp_path: Path) -> No
         confirmed_again = client.post(f"/api/knowledge/sources/{uploaded['id']}/confirm-safe")
 
         assert confirmed.status_code == 200
-        assert confirmed.json()["status"] == "parsed"
+        assert confirmed.json()["safety_status"] == "confirmed"
+        assert confirmed.json()["processing_status"] == "parsed"
         assert confirmed_again.status_code == 200
 
         versions = client.get(f"/api/knowledge/sources/{uploaded['id']}/versions")
@@ -123,7 +125,8 @@ def test_image_only_pdf_waits_for_ocr_and_keeps_original(tmp_path: Path) -> None
         original = client.get(f"/api/knowledge/sources/{uploaded['id']}/file")
 
     assert confirmed.status_code == 200
-    assert confirmed.json()["status"] == "awaiting_ocr"
+    assert confirmed.json()["safety_status"] == "confirmed"
+    assert confirmed.json()["processing_status"] == "awaiting_ocr"
     assert confirmed.json()["failure_reason"] == "no_extractable_text"
     assert versions.json() == []
     assert original.content == pdf
@@ -143,7 +146,8 @@ def test_damaged_pdf_reports_stable_failure_and_keeps_original(tmp_path: Path) -
         original = client.get(f"/api/knowledge/sources/{uploaded['id']}/file")
 
     assert confirmed.status_code == 200
-    assert confirmed.json()["status"] == "parse_failed"
+    assert confirmed.json()["safety_status"] == "confirmed"
+    assert confirmed.json()["processing_status"] == "parse_failed"
     assert confirmed.json()["failure_reason"] == "invalid_or_damaged_pdf"
     assert original.content == pdf
 
@@ -160,7 +164,8 @@ def test_encrypted_pdf_is_not_parsed(tmp_path: Path) -> None:
         confirmed = client.post(f"/api/knowledge/sources/{uploaded['id']}/confirm-safe")
 
     assert confirmed.status_code == 200
-    assert confirmed.json()["status"] == "encrypted"
+    assert confirmed.json()["safety_status"] == "confirmed"
+    assert confirmed.json()["processing_status"] == "encrypted"
     assert confirmed.json()["failure_reason"] == "encrypted_pdf"
 
 
@@ -251,10 +256,14 @@ def test_resource_acl_hides_admin_source_from_other_knowledge_roles(tmp_path: Pa
             cannot_confirm = knowledge_user.post(
                 f"/api/knowledge/sources/{own_source['id']}/confirm-safe"
             )
+            quarantined_file = knowledge_user.get(
+                f"/api/knowledge/sources/{own_source['id']}/file"
+            )
 
     assert login.status_code == 200
     assert hidden.status_code == 404
     assert cannot_confirm.status_code == 403
+    assert quarantined_file.status_code == 423
 
 
 def test_source_storage_has_no_static_or_traversal_url(tmp_path: Path) -> None:
@@ -290,3 +299,53 @@ def test_derived_index_is_rebuilt_on_restart(tmp_path: Path) -> None:
 
     assert versions.status_code == 200
     assert len(versions.json()) == 1
+
+
+def test_multi_source_markdown_requires_access_to_every_source(tmp_path: Path) -> None:
+    settings = knowledge_settings(tmp_path / "data")
+
+    with authenticated_client(settings) as admin:
+        private_source = admin.post(
+            "/api/knowledge/sources",
+            files={"file": ("管理员来源.pdf", pdf_with_text("private"), "application/pdf")},
+        ).json()
+        admin.post(
+            "/api/users",
+            json={
+                "username": "knowledge-reader",
+                "display_name": "知识读取人",
+                "department": "知识管理",
+                "password": "Knowledge-Reader-2026",
+                "role_ids": ["knowledge-admin"],
+            },
+        )
+
+        with TestClient(create_app(settings)) as reader:
+            reader.post(
+                "/api/login",
+                json={"username": "knowledge-reader", "password": "Knowledge-Reader-2026"},
+            )
+            shared_source = reader.post(
+                "/api/knowledge/sources",
+                files={"file": ("共享来源.pdf", pdf_with_text("shared"), "application/pdf")},
+            ).json()
+            admin.post(f"/api/knowledge/sources/{shared_source['id']}/confirm-safe")
+            version = reader.get(
+                f"/api/knowledge/sources/{shared_source['id']}/versions"
+            ).json()[0]
+
+            with sqlite3.connect(settings.database_path) as connection:
+                connection.execute(
+                    "INSERT INTO knowledge_version_sources (version_id, source_id) VALUES (?, ?)",
+                    (version["id"], private_source["id"]),
+                )
+
+            hidden_versions = reader.get(
+                f"/api/knowledge/sources/{shared_source['id']}/versions"
+            )
+            hidden_markdown = reader.get(
+                f"/api/knowledge/sources/{shared_source['id']}/versions/{version['id']}/markdown"
+            )
+
+    assert hidden_versions.json() == []
+    assert hidden_markdown.status_code == 404

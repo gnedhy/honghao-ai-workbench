@@ -13,7 +13,7 @@ from typing import Any, BinaryIO
 from uuid import uuid4
 
 
-KNOWLEDGE_SCHEMA_VERSION = 3
+KNOWLEDGE_SCHEMA_VERSION = 4
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
 
 
@@ -40,8 +40,9 @@ class KnowledgeStore:
                     size_bytes INTEGER NOT NULL,
                     sha256 TEXT NOT NULL,
                     stored_name TEXT NOT NULL UNIQUE,
-                    status TEXT NOT NULL CHECK (status IN ('quarantined')),
-                    processing_status TEXT NOT NULL DEFAULT 'quarantined',
+                    legacy_storage_status TEXT NOT NULL DEFAULT 'quarantined' CHECK (legacy_storage_status IN ('quarantined')),
+                    safety_status TEXT NOT NULL DEFAULT 'quarantined' CHECK (safety_status IN ('quarantined', 'confirmed')),
+                    processing_status TEXT NOT NULL DEFAULT 'not_started',
                     processing_error TEXT,
                     duplicate_of TEXT REFERENCES knowledge_sources(id),
                     created_by_user_id TEXT NOT NULL REFERENCES identity_users(id),
@@ -111,6 +112,30 @@ class KnowledgeStore:
                     "UPDATE schema_metadata SET value = ? WHERE key = ?",
                     (3, "knowledge_schema_version"),
                 )
+                version_number = 3
+            if version_number == 3:
+                columns = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(knowledge_sources)")
+                }
+                if "safety_status" not in columns:
+                    connection.execute(
+                        "ALTER TABLE knowledge_sources ADD COLUMN safety_status TEXT NOT NULL DEFAULT 'quarantined'"
+                    )
+                if "status" in columns:
+                    connection.execute(
+                        "ALTER TABLE knowledge_sources RENAME COLUMN status TO legacy_storage_status"
+                    )
+                connection.execute(
+                    "UPDATE knowledge_sources SET safety_status = 'confirmed' WHERE processing_status <> 'quarantined'"
+                )
+                connection.execute(
+                    "UPDATE knowledge_sources SET processing_status = 'not_started' WHERE processing_status = 'quarantined'"
+                )
+                connection.execute(
+                    "UPDATE schema_metadata SET value = ? WHERE key = ?",
+                    (4, "knowledge_schema_version"),
+                )
             connection.execute(
                 "CREATE VIEW IF NOT EXISTS knowledge_derived_index AS SELECT versions.id AS version_id, links.source_id, sources.filename, sources.sha256 FROM knowledge_versions AS versions JOIN knowledge_version_sources AS links ON links.version_id = versions.id JOIN knowledge_sources AS sources ON sources.id = links.source_id"
             )
@@ -171,7 +196,7 @@ class KnowledgeStore:
                 ).fetchone()
                 connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
-                    "INSERT INTO knowledge_sources (id, filename, mime_type, size_bytes, sha256, stored_name, status, duplicate_of, created_by_user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, 'quarantined', ?, ?, ?)",
+                    "INSERT INTO knowledge_sources (id, filename, mime_type, size_bytes, sha256, stored_name, legacy_storage_status, duplicate_of, created_by_user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, 'quarantined', ?, ?, ?)",
                     (
                         source_id,
                         Path(filename).name,
@@ -203,7 +228,7 @@ class KnowledgeStore:
     def get_source(self, source_id: str) -> dict[str, Any] | None:
         with sqlite3.connect(self.database_path) as connection:
             row = connection.execute(
-                "SELECT id, filename, mime_type, size_bytes, sha256, stored_name, processing_status, duplicate_of, created_at, processing_error FROM knowledge_sources WHERE id = ?",
+                "SELECT id, filename, mime_type, size_bytes, sha256, stored_name, safety_status, processing_status, duplicate_of, created_at, processing_error FROM knowledge_sources WHERE id = ?",
                 (source_id,),
             ).fetchone()
             if row is None:
@@ -219,10 +244,11 @@ class KnowledgeStore:
             "size_bytes": int(row[3]),
             "sha256": str(row[4]),
             "stored_name": str(row[5]),
-            "status": str(row[6]),
-            "duplicate_of": str(row[7]) if row[7] is not None else None,
-            "created_at": str(row[8]),
-            "failure_reason": str(row[9]) if row[9] is not None else None,
+            "safety_status": str(row[6]),
+            "processing_status": str(row[7]),
+            "duplicate_of": str(row[8]) if row[8] is not None else None,
+            "created_at": str(row[9]),
+            "failure_reason": str(row[10]) if row[10] is not None else None,
             "read_role_ids": [str(role[0]) for role in role_rows],
         }
 
@@ -236,7 +262,7 @@ class KnowledgeStore:
         source = self.get_source(source_id)
         if source is None:
             return None
-        if source["status"] != "quarantined":
+        if source["safety_status"] != "quarantined":
             return source
         try:
             completed = subprocess.run(
@@ -259,7 +285,7 @@ class KnowledgeStore:
 
         with sqlite3.connect(self.database_path) as connection:
             connection.execute(
-                "UPDATE knowledge_sources SET processing_status = ?, processing_error = ? WHERE id = ?",
+                "UPDATE knowledge_sources SET safety_status = 'confirmed', processing_status = ?, processing_error = ? WHERE id = ?",
                 (status, result.get("reason"), source_id),
             )
         return self.get_source(source_id)

@@ -211,7 +211,8 @@ class KnowledgeSourceResponse(BaseModel):
     mime_type: str
     size_bytes: int
     sha256: str
-    status: Literal["quarantined", "parsed", "awaiting_ocr", "encrypted", "parse_failed"]
+    safety_status: Literal["quarantined", "confirmed"]
+    processing_status: Literal["not_started", "parsed", "awaiting_ocr", "encrypted", "parse_failed"]
     failure_reason: str | None
     duplicate_of: str | None
     created_at: str
@@ -270,12 +271,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ):
             raise HTTPException(status_code=403, detail="Permission denied")
 
+    def can_read_source(source: dict, user: dict) -> bool:
+        role_ids = [role["id"] for role in user["roles"]]
+        return "system-admin" in role_ids or bool(set(role_ids) & set(source["read_role_ids"]))
+
     def readable_source(source_id: str, request: Request) -> dict:
         source = knowledge.get_source(source_id)
         if source is None:
             raise HTTPException(status_code=404, detail="Knowledge source not found")
-        role_ids = [role["id"] for role in current_user(request)["roles"]]
-        if "system-admin" not in role_ids and not set(role_ids) & set(source["read_role_ids"]):
+        if not can_read_source(source, current_user(request)):
             raise HTTPException(status_code=404, detail="Knowledge source not found")
         return source
 
@@ -620,6 +624,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/knowledge/sources/{source_id}/file")
     def download_knowledge_source(source_id: str, request: Request) -> FileResponse:
         source = readable_source(source_id, request)
+        role_ids = [role["id"] for role in current_user(request)["roles"]]
+        if source["safety_status"] == "quarantined" and "system-admin" not in role_ids:
+            raise HTTPException(status_code=423, detail="Knowledge source is quarantined")
         return FileResponse(
             knowledge.source_path(source),
             media_type="application/pdf",
@@ -646,11 +653,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     def list_knowledge_versions(source_id: str, request: Request) -> list[KnowledgeVersionResponse]:
         readable_source(source_id, request)
-        return [KnowledgeVersionResponse(**version) for version in knowledge.list_versions(source_id)]
+        user = current_user(request)
+        readable_versions = []
+        for version in knowledge.list_versions(source_id):
+            linked_sources = [knowledge.get_source(linked_id) for linked_id in version["source_ids"]]
+            if all(linked is not None and can_read_source(linked, user) for linked in linked_sources):
+                readable_versions.append(KnowledgeVersionResponse(**version))
+        return readable_versions
 
     @app.get("/api/knowledge/sources/{source_id}/versions/{version_id}/markdown")
     def download_knowledge_markdown(source_id: str, version_id: str, request: Request) -> FileResponse:
         source = readable_source(source_id, request)
+        version = next(
+            (item for item in knowledge.list_versions(source_id) if item["id"] == version_id),
+            None,
+        )
+        if version is None:
+            raise HTTPException(status_code=404, detail="Knowledge version not found")
+        for linked_source_id in version["source_ids"]:
+            readable_source(linked_source_id, request)
         path = knowledge.version_path(source_id, version_id)
         if path is None:
             raise HTTPException(status_code=404, detail="Knowledge version not found")
