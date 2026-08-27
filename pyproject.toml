@@ -5,6 +5,8 @@ description = "Local API for the Honghao AI workbench"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi>=0.116,<1",
+  "pypdf==6.16.2",
+  "python-multipart==0.0.32",
   "uvicorn[standard]>=0.35,<1",
 ]
 

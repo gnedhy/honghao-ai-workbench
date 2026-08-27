@@ -2,16 +2,18 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, StringConstraints
 
 from api.authorization import AuthorizationStore, PERMISSIONS, permission_for_request
 from api.database import Database, SubmissionConflictError
 from api.identity import DuplicateIdentityError, IdentityStore, SESSION_COOKIE_NAME
+from api.knowledge import InvalidKnowledgeSourceError, KnowledgeStore
 from api.modules import (
     MODULE_IDS,
     ModuleId,
@@ -203,11 +205,37 @@ class InitialSubmissionResponse(SubmissionResponse):
     conversation: ConversationResponse
 
 
+class KnowledgeSourceResponse(BaseModel):
+    id: str
+    filename: str
+    mime_type: str
+    size_bytes: int
+    sha256: str
+    safety_status: Literal["quarantined", "confirmed"]
+    processing_status: Literal["not_started", "processing", "parsed", "awaiting_ocr", "encrypted", "parse_failed"]
+    failure_reason: str | None
+    duplicate_of: str | None
+    created_at: str
+    read_role_ids: list[str]
+
+
+class KnowledgeVersionResponse(BaseModel):
+    id: str
+    status: Literal["draft"]
+    created_at: str
+    source_ids: list[str]
+
+
+class KnowledgeVersionCreate(BaseModel):
+    source_ids: Annotated[list[str], Field(min_length=2)]
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     runtime_settings = settings or Settings.from_environment()
     database = Database(runtime_settings.database_path)
     identities = IdentityStore(runtime_settings.database_path)
     authorization = AuthorizationStore(runtime_settings.database_path)
+    knowledge = KnowledgeStore(runtime_settings.database_path, runtime_settings.data_dir)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -215,9 +243,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database.initialize()
         identities.initialize()
         authorization.initialize()
+        knowledge.initialize()
         app.state.database = database
         app.state.identities = identities
         app.state.authorization = authorization
+        app.state.knowledge = knowledge
         yield
 
     app = FastAPI(title="Honghao AI API", version=API_VERSION, lifespan=lifespan)
@@ -244,6 +274,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "tasks.manage",
         ):
             raise HTTPException(status_code=403, detail="Permission denied")
+
+    def can_read_source(source: dict, user: dict) -> bool:
+        role_ids = [role["id"] for role in user["roles"]]
+        return "system-admin" in role_ids or bool(set(role_ids) & set(source["read_role_ids"]))
+
+    def readable_source(source_id: str, request: Request) -> dict:
+        source = knowledge.get_source(source_id)
+        if source is None:
+            raise HTTPException(status_code=404, detail="Knowledge source not found")
+        if not can_read_source(source, current_user(request)):
+            raise HTTPException(status_code=404, detail="Knowledge source not found")
+        return source
 
     @app.middleware("http")
     async def guard_disabled_modules(request: Request, call_next):
@@ -557,6 +599,109 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for module_id in MODULE_IDS
             if authorization.has_permission(role_ids, permission_for_request(module_id, "GET"))
         ]
+
+    @app.post("/api/knowledge/sources", response_model=KnowledgeSourceResponse, status_code=201)
+    def upload_knowledge_source(request: Request, file: UploadFile = File(...)) -> KnowledgeSourceResponse:
+        actor = current_user(request)
+        try:
+            source = knowledge.create_source(
+                file.file,
+                filename=file.filename or "source.pdf",
+                mime_type=file.content_type or "",
+                created_by_user_id=actor["id"],
+                read_role_ids=[role["id"] for role in actor["roles"]],
+            )
+        except InvalidKnowledgeSourceError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        authorization.audit(
+            "knowledge.source.uploaded",
+            actor_user_id=actor["id"],
+            target_type="knowledge_source",
+            target_id=source["id"],
+        )
+        return KnowledgeSourceResponse(**source)
+
+    @app.get("/api/knowledge/sources/{source_id}", response_model=KnowledgeSourceResponse)
+    def get_knowledge_source(source_id: str, request: Request) -> KnowledgeSourceResponse:
+        return KnowledgeSourceResponse(**readable_source(source_id, request))
+
+    @app.get("/api/knowledge/sources/{source_id}/file")
+    def download_knowledge_source(source_id: str, request: Request) -> FileResponse:
+        source = readable_source(source_id, request)
+        role_ids = [role["id"] for role in current_user(request)["roles"]]
+        if source["safety_status"] == "quarantined" and "system-admin" not in role_ids:
+            raise HTTPException(status_code=423, detail="Knowledge source is quarantined")
+        return FileResponse(
+            knowledge.source_path(source),
+            media_type="application/pdf",
+            filename=source["filename"],
+        )
+
+    @app.post("/api/knowledge/sources/{source_id}/confirm-safe", response_model=KnowledgeSourceResponse)
+    def confirm_knowledge_source_safe(source_id: str, request: Request) -> KnowledgeSourceResponse:
+        actor = require_system_admin(request)
+        source = knowledge.confirm_safe(source_id, actor["id"])
+        if source is None:
+            raise HTTPException(status_code=404, detail="Knowledge source not found")
+        authorization.audit(
+            "knowledge.source.confirmed_safe",
+            actor_user_id=actor["id"],
+            target_type="knowledge_source",
+            target_id=source_id,
+        )
+        return KnowledgeSourceResponse(**source)
+
+    @app.get(
+        "/api/knowledge/sources/{source_id}/versions",
+        response_model=list[KnowledgeVersionResponse],
+    )
+    def list_knowledge_versions(source_id: str, request: Request) -> list[KnowledgeVersionResponse]:
+        readable_source(source_id, request)
+        user = current_user(request)
+        readable_versions = []
+        for version in knowledge.list_versions(source_id):
+            linked_sources = [knowledge.get_source(linked_id) for linked_id in version["source_ids"]]
+            if all(linked is not None and can_read_source(linked, user) for linked in linked_sources):
+                readable_versions.append(KnowledgeVersionResponse(**version))
+        return readable_versions
+
+    @app.post("/api/knowledge/versions", response_model=KnowledgeVersionResponse, status_code=201)
+    def create_knowledge_version(
+        request_data: KnowledgeVersionCreate,
+        request: Request,
+    ) -> KnowledgeVersionResponse:
+        actor = require_system_admin(request)
+        try:
+            version = knowledge.create_version_from_sources(request_data.source_ids, actor["id"])
+        except InvalidKnowledgeSourceError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        authorization.audit(
+            "knowledge.version.created",
+            actor_user_id=actor["id"],
+            target_type="knowledge_version",
+            target_id=version["id"],
+        )
+        return KnowledgeVersionResponse(**version)
+
+    @app.get("/api/knowledge/sources/{source_id}/versions/{version_id}/markdown")
+    def download_knowledge_markdown(source_id: str, version_id: str, request: Request) -> FileResponse:
+        source = readable_source(source_id, request)
+        version = next(
+            (item for item in knowledge.list_versions(source_id) if item["id"] == version_id),
+            None,
+        )
+        if version is None:
+            raise HTTPException(status_code=404, detail="Knowledge version not found")
+        for linked_source_id in version["source_ids"]:
+            readable_source(linked_source_id, request)
+        path = knowledge.version_path(source_id, version_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="Knowledge version not found")
+        return FileResponse(
+            path,
+            media_type="text/markdown; charset=utf-8",
+            filename=f"{Path(source['filename']).stem}.md",
+        )
 
     @app.post("/api/projects", response_model=ProjectResponse, status_code=201)
     def create_project(project: ProjectCreate, request: Request) -> ProjectResponse:
