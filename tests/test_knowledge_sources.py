@@ -309,6 +309,7 @@ def test_multi_source_markdown_requires_access_to_every_source(tmp_path: Path) -
             "/api/knowledge/sources",
             files={"file": ("管理员来源.pdf", pdf_with_text("private"), "application/pdf")},
         ).json()
+        admin.post(f"/api/knowledge/sources/{private_source['id']}/confirm-safe")
         admin.post(
             "/api/users",
             json={
@@ -330,15 +331,24 @@ def test_multi_source_markdown_requires_access_to_every_source(tmp_path: Path) -
                 files={"file": ("共享来源.pdf", pdf_with_text("shared"), "application/pdf")},
             ).json()
             admin.post(f"/api/knowledge/sources/{shared_source['id']}/confirm-safe")
-            version = reader.get(
-                f"/api/knowledge/sources/{shared_source['id']}/versions"
-            ).json()[0]
-
-            with sqlite3.connect(settings.database_path) as connection:
-                connection.execute(
-                    "INSERT INTO knowledge_version_sources (version_id, source_id) VALUES (?, ?)",
-                    (version["id"], private_source["id"]),
-                )
+            combined = admin.post(
+                "/api/knowledge/versions",
+                json={"source_ids": [shared_source["id"], private_source["id"]]},
+            )
+            assert combined.status_code == 201
+            version = combined.json()
+            assert version["source_ids"] == [shared_source["id"], private_source["id"]]
+            combined_markdown = admin.get(
+                f"/api/knowledge/sources/{shared_source['id']}/versions/{version['id']}/markdown"
+            )
+            duplicate_only = admin.post(
+                "/api/knowledge/versions",
+                json={"source_ids": [shared_source["id"], shared_source["id"]]},
+            )
+            forbidden_merge = reader.post(
+                "/api/knowledge/versions",
+                json={"source_ids": [shared_source["id"], private_source["id"]]},
+            )
 
             hidden_versions = reader.get(
                 f"/api/knowledge/sources/{shared_source['id']}/versions"
@@ -347,5 +357,9 @@ def test_multi_source_markdown_requires_access_to_every_source(tmp_path: Path) -
                 f"/api/knowledge/sources/{shared_source['id']}/versions/{version['id']}/markdown"
             )
 
-    assert hidden_versions.json() == []
+    assert version["id"] not in {item["id"] for item in hidden_versions.json()}
     assert hidden_markdown.status_code == 404
+    assert duplicate_only.status_code == 422
+    assert forbidden_merge.status_code == 403
+    assert "共享来源.pdf" in combined_markdown.text
+    assert "管理员来源.pdf" in combined_markdown.text

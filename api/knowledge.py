@@ -139,6 +139,9 @@ class KnowledgeStore:
             connection.execute(
                 "CREATE VIEW IF NOT EXISTS knowledge_derived_index AS SELECT versions.id AS version_id, links.source_id, sources.filename, sources.sha256 FROM knowledge_versions AS versions JOIN knowledge_version_sources AS links ON links.version_id = versions.id JOIN knowledge_sources AS sources ON sources.id = links.source_id"
             )
+            connection.execute(
+                "UPDATE knowledge_sources SET processing_status = 'parse_failed', processing_error = 'interrupted' WHERE processing_status = 'processing'"
+            )
         if self.schema_version() != KNOWLEDGE_SCHEMA_VERSION:
             raise RuntimeError("Unsupported knowledge schema version")
 
@@ -262,8 +265,36 @@ class KnowledgeStore:
         source = self.get_source(source_id)
         if source is None:
             return None
-        if source["safety_status"] != "quarantined":
-            return source
+        with sqlite3.connect(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            claimed = connection.execute(
+                "UPDATE knowledge_sources SET safety_status = 'confirmed', processing_status = 'processing', processing_error = NULL WHERE id = ? AND safety_status = 'quarantined'",
+                (source_id,),
+            ).rowcount
+        if claimed == 0:
+            return self.get_source(source_id)
+
+        result = self._run_parser(source)
+
+        status = str(result.get("status"))
+        if status == "parsed":
+            try:
+                self._create_markdown_version([source], str(result["text"]), confirmed_by_user_id)
+            except Exception:
+                self._set_processing_result(source_id, "parse_failed", "version_write_failed")
+                raise
+        elif status not in {"awaiting_ocr", "encrypted", "parse_failed"}:
+            status = "parse_failed"
+            result = {"reason": "parser_failed"}
+
+        self._set_processing_result(
+            source_id,
+            status,
+            str(result["reason"]) if result.get("reason") is not None else None,
+        )
+        return self.get_source(source_id)
+
+    def _run_parser(self, source: dict[str, Any]) -> dict[str, Any]:
         try:
             completed = subprocess.run(
                 [sys.executable, "-m", "api.pdf_extract", str(self.source_path(source))],
@@ -272,23 +303,46 @@ class KnowledgeStore:
                 text=True,
                 timeout=30,
             )
-            result = json.loads(completed.stdout)
+            return json.loads(completed.stdout)
         except (subprocess.SubprocessError, json.JSONDecodeError):
-            result = {"status": "parse_failed", "reason": "parser_failed"}
+            return {"status": "parse_failed", "reason": "parser_failed"}
 
-        status = str(result.get("status"))
-        if status == "parsed":
-            self._create_markdown_version(source, str(result["text"]), confirmed_by_user_id)
-        elif status not in {"awaiting_ocr", "encrypted", "parse_failed"}:
-            status = "parse_failed"
-            result = {"reason": "parser_failed"}
-
+    def _set_processing_result(self, source_id: str, status: str, reason: str | None) -> None:
         with sqlite3.connect(self.database_path) as connection:
             connection.execute(
-                "UPDATE knowledge_sources SET safety_status = 'confirmed', processing_status = ?, processing_error = ? WHERE id = ?",
-                (status, result.get("reason"), source_id),
+                "UPDATE knowledge_sources SET processing_status = ?, processing_error = ? WHERE id = ?",
+                (status, reason, source_id),
             )
-        return self.get_source(source_id)
+
+    def create_version_from_sources(
+        self,
+        source_ids: list[str],
+        created_by_user_id: str,
+    ) -> dict[str, Any]:
+        unique_ids = list(dict.fromkeys(source_ids))
+        if len(unique_ids) < 2:
+            raise InvalidKnowledgeSourceError("At least two distinct sources are required")
+        sources = [self.get_source(source_id) for source_id in unique_ids]
+        if any(source is None for source in sources):
+            raise InvalidKnowledgeSourceError("Knowledge source not found")
+        confirmed_sources = [source for source in sources if source is not None]
+        if any(
+            source["safety_status"] != "confirmed" or source["processing_status"] != "parsed"
+            for source in confirmed_sources
+        ):
+            raise InvalidKnowledgeSourceError("All sources must be confirmed and parsed")
+
+        sections = []
+        for source in confirmed_sources:
+            result = self._run_parser(source)
+            if result.get("status") != "parsed":
+                raise InvalidKnowledgeSourceError("Source can no longer be parsed")
+            sections.append(f"## {source['filename']}\n\n{str(result['text']).strip()}")
+        return self._create_markdown_version(
+            confirmed_sources,
+            "\n\n".join(sections),
+            created_by_user_id,
+        )
 
     def list_versions(self, source_id: str) -> list[dict[str, Any]]:
         with sqlite3.connect(self.database_path) as connection:
@@ -327,18 +381,21 @@ class KnowledgeStore:
 
     def _create_markdown_version(
         self,
-        source: dict[str, Any],
+        sources: list[dict[str, Any]],
         text: str,
         created_by_user_id: str,
-    ) -> None:
+    ) -> dict[str, Any]:
+        source = sources[0]
         version_id = str(uuid4())
         stored_name = f"{source['id']}/{version_id}.md"
         target = self.items_dir / stored_name
         target.parent.mkdir(parents=True, exist_ok=True)
-        markdown = (
-            f"# {Path(str(source['filename'])).stem}\n\n"
-            f"> 来源 ID：{source['id']}\n> 来源文件：{source['filename']}\n> SHA-256：{source['sha256']}\n\n{text.strip()}\n"
+        provenance = "\n".join(
+            f"> - ID：{item['id']}｜文件：{item['filename']}｜SHA-256：{item['sha256']}"
+            for item in sources
         )
+        title = Path(str(source["filename"])).stem if len(sources) == 1 else "合并知识版本"
+        markdown = f"# {title}\n\n> 来源：\n{provenance}\n\n{text.strip()}\n"
         with target.open("x", encoding="utf-8") as output:
             output.write(markdown)
         try:
@@ -347,10 +404,11 @@ class KnowledgeStore:
                     "INSERT INTO knowledge_versions (id, source_id, stored_name, status, created_by_user_id, created_at) VALUES (?, ?, ?, 'draft', ?, ?)",
                     (version_id, source["id"], stored_name, created_by_user_id, datetime.now(UTC).isoformat()),
                 )
-                connection.execute(
+                connection.executemany(
                     "INSERT INTO knowledge_version_sources (version_id, source_id) VALUES (?, ?)",
-                    (version_id, source["id"]),
+                    [(version_id, item["id"]) for item in sources],
                 )
         except Exception:
             target.unlink(missing_ok=True)
             raise
+        return next(version for version in self.list_versions(source["id"]) if version["id"] == version_id)

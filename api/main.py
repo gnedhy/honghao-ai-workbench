@@ -212,7 +212,7 @@ class KnowledgeSourceResponse(BaseModel):
     size_bytes: int
     sha256: str
     safety_status: Literal["quarantined", "confirmed"]
-    processing_status: Literal["not_started", "parsed", "awaiting_ocr", "encrypted", "parse_failed"]
+    processing_status: Literal["not_started", "processing", "parsed", "awaiting_ocr", "encrypted", "parse_failed"]
     failure_reason: str | None
     duplicate_of: str | None
     created_at: str
@@ -224,6 +224,10 @@ class KnowledgeVersionResponse(BaseModel):
     status: Literal["draft"]
     created_at: str
     source_ids: list[str]
+
+
+class KnowledgeVersionCreate(BaseModel):
+    source_ids: Annotated[list[str], Field(min_length=2)]
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -660,6 +664,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if all(linked is not None and can_read_source(linked, user) for linked in linked_sources):
                 readable_versions.append(KnowledgeVersionResponse(**version))
         return readable_versions
+
+    @app.post("/api/knowledge/versions", response_model=KnowledgeVersionResponse, status_code=201)
+    def create_knowledge_version(
+        request_data: KnowledgeVersionCreate,
+        request: Request,
+    ) -> KnowledgeVersionResponse:
+        actor = require_system_admin(request)
+        try:
+            version = knowledge.create_version_from_sources(request_data.source_ids, actor["id"])
+        except InvalidKnowledgeSourceError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        authorization.audit(
+            "knowledge.version.created",
+            actor_user_id=actor["id"],
+            target_type="knowledge_version",
+            target_id=version["id"],
+        )
+        return KnowledgeVersionResponse(**version)
 
     @app.get("/api/knowledge/sources/{source_id}/versions/{version_id}/markdown")
     def download_knowledge_markdown(source_id: str, version_id: str, request: Request) -> FileResponse:
