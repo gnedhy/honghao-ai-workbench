@@ -14,7 +14,7 @@ type TaskBoardScreenProps = ScreenChromeProps & {
   onSelectedTaskChange: (task: TaskItem) => void;
 };
 
-export function TaskBoardScreen({ contextOpen, onOpenNavigation, onToggleContext, moduleMode, tasks, projects, conversations, dataState, selectedTask, onSelectedTaskChange }: TaskBoardScreenProps) {
+export function TaskBoardScreen({ contextOpen, onOpenNavigation, onToggleContext, moduleMode, environment, tasks, projects, conversations, dataState, selectedTask, onSelectedTaskChange }: TaskBoardScreenProps) {
   const [tab, setTab] = useState<"任务管理" | "运行记录">("任务管理");
   const [query, setQuery] = useState("");
   const visibleTasks = tasks.filter((task) => task.objective.toLowerCase().includes(query.trim().toLowerCase()));
@@ -29,6 +29,7 @@ export function TaskBoardScreen({ contextOpen, onOpenNavigation, onToggleContext
         onOpenNavigation={onOpenNavigation}
         onToggleContext={onToggleContext}
         moduleMode={moduleMode}
+        environment={environment}
       />
       {tab === "任务管理" ? (
         <section className="task-board">

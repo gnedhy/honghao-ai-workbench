@@ -24,7 +24,7 @@ function statusClass(status: string) {
   return status === "已发布" ? "is-published" : status === "测试中" ? "is-testing" : "is-draft";
 }
 
-export function AutomationScreen({ contextOpen, onOpenNavigation, onToggleContext, moduleMode, tab, onTabChange, selectedSkill, onSelectedSkillChange, selectedWorkflow, onSelectedWorkflowChange }: AutomationScreenProps) {
+export function AutomationScreen({ contextOpen, onOpenNavigation, onToggleContext, moduleMode, environment, tab, onTabChange, selectedSkill, onSelectedSkillChange, selectedWorkflow, onSelectedWorkflowChange }: AutomationScreenProps) {
   const [query, setQuery] = useState("");
   const normalizedQuery = query.trim().toLowerCase();
   const visibleSkills = useMemo(() => skills.filter((skill) => !normalizedQuery || `${skill.title} ${skill.description} ${skill.status}`.toLowerCase().includes(normalizedQuery)), [normalizedQuery]);
@@ -37,7 +37,7 @@ export function AutomationScreen({ contextOpen, onOpenNavigation, onToggleContex
 
   return (
     <main className="app-main">
-      <TopBar title="自动化" subtitle={tab === "技能" ? "企业能力库" : "流程编排"} tabs={<SegmentedControl value={tab} options={["技能", "工作流"] as const} onChange={(value) => { setQuery(""); onTabChange(value); }} label="自动化类型" />} action={<button className="primary-button header-action" type="button"><Plus size={16} /><span>{tab === "技能" ? "创建技能" : "创建工作流"}</span></button>} contextOpen={contextOpen} onOpenNavigation={onOpenNavigation} onToggleContext={onToggleContext} moduleMode={moduleMode} />
+      <TopBar title="自动化" subtitle={tab === "技能" ? "企业能力库" : "流程编排"} tabs={<SegmentedControl value={tab} options={["技能", "工作流"] as const} onChange={(value) => { setQuery(""); onTabChange(value); }} label="自动化类型" />} action={<button className="primary-button header-action" type="button"><Plus size={16} /><span>{tab === "技能" ? "创建技能" : "创建工作流"}</span></button>} contextOpen={contextOpen} onOpenNavigation={onOpenNavigation} onToggleContext={onToggleContext} moduleMode={moduleMode} environment={environment} />
       {tab === "技能" ? <SkillLibrary query={query} onQueryChange={setQuery} visibleSkills={visibleSkills} selectedSkill={selectedSkill} onSelectedSkillChange={onSelectedSkillChange} onOpenTools={onToggleContext} /> : <WorkflowLibrary query={query} onQueryChange={setQuery} visibleWorkflows={visibleWorkflows} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={onSelectedWorkflowChange} onOpenTools={onToggleContext} />}
     </main>
   );
