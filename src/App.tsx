@@ -247,12 +247,13 @@ function App({ currentUser, onLogout }: AppProps) {
     setContextOpen(true);
   };
 
+  const runtimeEnvironment = serviceConnection.state === "online" ? serviceConnection.health.environment : null;
   const screenChrome = {
     contextOpen,
     onOpenNavigation: openNavigation,
     onToggleContext: toggleContext,
     moduleMode: moduleStatuses.find((module) => module.id === section)?.mode ?? "off" as const,
-    environment: serviceConnection.state === "online" ? serviceConnection.health.environment : null,
+    environment: runtimeEnvironment,
   };
 
   const submitMessage = async (content: string, submissionKey: string): Promise<boolean> => {
@@ -318,7 +319,7 @@ function App({ currentUser, onLogout }: AppProps) {
         conversations={conversations}
         dataState={workbenchDataState}
         enabledModules={enabledModules}
-        environment={serviceConnection.state === "online" ? serviceConnection.health.environment : null}
+        environment={runtimeEnvironment}
         onSectionChange={(nextSection) => { setSection(nextSection); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
         onNewConversation={() => { setSection("chat"); setConversationView("new"); setSelectedConversationId(null); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
         onConversationOpen={(conversationId) => { setSection("chat"); setConversationView("existing"); setSelectedConversationId(conversationId); setProfileOpen(false); setMobileOpen(false); closeContext(); }}

@@ -1,12 +1,14 @@
 import { ArrowRight, LockKeyhole } from "lucide-react";
 import { useState } from "react";
 import { BrandMark } from "../components/Sidebar";
+import type { RuntimeEnvironment } from "../types";
 
 type LoginScreenProps = {
+  environment: RuntimeEnvironment | null;
   onLogin: (username: string, password: string) => Promise<boolean>;
 };
 
-export function LoginScreen({ onLogin }: LoginScreenProps) {
+export function LoginScreen({ environment, onLogin }: LoginScreenProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -25,7 +27,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
   return (
     <main className="login-screen">
       <section className="login-card" aria-labelledby="login-title">
-        <div className="login-brand"><BrandMark /><strong>宏昊化工</strong></div>
+        <div className="login-brand"><BrandMark /><strong>宏昊化工</strong>{environment === "test" && <span className="environment-badge">测试</span>}</div>
         <div className="login-heading">
           <span className="login-heading__icon"><LockKeyhole size={18} /></span>
           <div><h1 id="login-title">登录工作台</h1><p>使用企业内部账号继续。</p></div>

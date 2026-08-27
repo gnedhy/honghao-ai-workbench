@@ -3,11 +3,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
-
 from api.modules import (
     ModuleId,
     ModuleMode,
+    RuntimeEnvironment,
     default_module_modes,
     load_persisted_module_modes,
     module_modes_from_environment,
@@ -18,9 +17,6 @@ from api.workbenches import (
     default_workbench_modes,
     workbench_modes_from_environment,
 )
-
-
-RuntimeEnvironment = Literal["test", "production"]
 
 
 @dataclass(frozen=True)
@@ -53,7 +49,7 @@ class Settings:
         persisted_module_modes = load_persisted_module_modes(
             resolved_data_dir,
             environment,
-            module_modes or default_module_modes(),
+            module_modes or default_module_modes(environment),
         )
         return cls(
             data_dir=resolved_data_dir,
@@ -81,7 +77,7 @@ class Settings:
         return cls.from_data_dir(
             data_dir,
             workbench_modes_from_environment(os.environ),
-            module_modes_from_environment(os.environ),
+            module_modes_from_environment(os.environ, environment),
             int(os.environ.get("HONGHAO_SESSION_TTL_SECONDS", 12 * 60 * 60)),
             environment,
         )

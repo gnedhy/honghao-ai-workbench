@@ -16,11 +16,12 @@ from api.modules import (
     MODULE_IDS,
     ModuleId,
     ModuleMode,
+    RuntimeEnvironment,
     load_persisted_module_modes,
     module_for_api_path,
     save_persisted_module_modes,
 )
-from api.settings import RuntimeEnvironment, Settings
+from api.settings import Settings
 from api.workbenches import WORKBENCH_IDS, WorkbenchId, WorkbenchMode
 
 
@@ -524,6 +525,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             runtime_settings.data_dir,
             runtime_settings.environment,
             pending_modes,
+            approved_module=typed_module_id
+            if runtime_settings.environment == "production" and update.mode == "active"
+            else None,
         )
         authorization.audit(
             "module.mode.pending",

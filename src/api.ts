@@ -1,11 +1,11 @@
-import type { ActivationReview, AdminModuleSetting, AdminModuleSettings, AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleMode, ModuleStatus, PermissionDefinition, Project, RolePermissionPolicy, Section, SensitiveFieldPolicy, TaskItem, UserRole, WorkbenchStatus } from "./types";
+import type { ActivationReview, AdminModuleSetting, AdminModuleSettings, AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleMode, ModuleStatus, PermissionDefinition, Project, RolePermissionPolicy, RuntimeEnvironment, Section, SensitiveFieldPolicy, TaskItem, UserRole, WorkbenchStatus } from "./types";
 
 export type ServiceHealth = {
   status: "ok";
   service: string;
   api_version: string;
   schema_version: number;
-  environment: "test" | "production";
+  environment: RuntimeEnvironment;
 };
 
 export type ServiceConnection =

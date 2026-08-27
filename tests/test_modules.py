@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -77,7 +78,8 @@ def test_module_mode_change_is_pending_until_restart(tmp_path: Path) -> None:
 
 
 def test_production_activation_requires_all_three_reviews(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "production", environment="production")
+    data_dir = tmp_path / "production"
+    settings = Settings.from_data_dir(data_dir, environment="production")
 
     with authenticated_client(settings) as client:
         blocked = client.put(
@@ -95,6 +97,50 @@ def test_production_activation_requires_all_three_reviews(tmp_path: Path) -> Non
     }
     assert allowed.status_code == 200
     assert allowed.json()["pending_mode"] == "active"
+
+    restarted_settings = Settings.from_data_dir(data_dir, environment="production")
+    with authenticated_client(restarted_settings) as restarted_client:
+        restarted = restarted_client.get("/api/modules")
+
+    assert next(item for item in restarted.json() if item["id"] == "knowledge")["mode"] == "active"
+
+
+def test_fresh_production_starts_with_every_module_off(tmp_path: Path) -> None:
+    settings = Settings.from_data_dir(tmp_path / "production", environment="production")
+
+    with authenticated_client(settings) as client:
+        response = client.get("/api/modules")
+
+    assert response.status_code == 200
+    assert all(item["mode"] == "off" for item in response.json())
+
+
+def test_fresh_production_from_environment_starts_with_every_module_off(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("HONGHAO_DATA_DIR", str(tmp_path / "production"))
+    monkeypatch.setenv("HONGHAO_ENVIRONMENT", "production")
+
+    settings = Settings.from_environment()
+
+    assert all(mode == "off" for mode in settings.module_modes.values())
+
+
+def test_production_rejects_active_module_without_recorded_reviews(tmp_path: Path) -> None:
+    data_dir = tmp_path / "production"
+    data_dir.mkdir()
+    (data_dir / "runtime-config.json").write_text(
+        json.dumps({
+            "version": 1,
+            "environment": "production",
+            "module_modes": {**default_module_modes("production"), "knowledge": "active"},
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="require recorded reviews"):
+        Settings.from_data_dir(data_dir, environment="production")
 
 
 def test_non_admin_cannot_read_or_change_module_settings(tmp_path: Path) -> None:
