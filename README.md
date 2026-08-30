@@ -42,6 +42,19 @@ npm.cmd run dev
 - 前端：`http://127.0.0.1:4173/`
 - API 文档：`http://127.0.0.1:8000/docs`
 
+### 正式单入口运行
+
+正式运行不需要 Vite 开发服务器。先构建，再由 FastAPI 同源提供页面和 API：
+
+```powershell
+npm.cmd run build
+npm.cmd run serve
+```
+
+浏览器访问 `http://127.0.0.1:8000/`。`/api/health` 只表示服务进程存活，`/api/readiness` 同时检查数据目录、数据库、迁移版本和模块配置；readiness 返回 503 时不得将实例视为可用。
+
+默认只监听本机。只有明确配置 HTTPS 和 Windows 防火墙后，才可使用 `--host 0.0.0.0` 暴露到局域网。
+
 环境要求：Node.js 24、Python 3.12 和 [uv](https://docs.astral.sh/uv/)。Node 依赖由 `package-lock.json` 管理，Python 依赖由 `uv.lock` 管理。
 
 默认运行数据保存在仓库内的 `.data/`，其中 `.data/controlled-work/` 是后续任务使用的默认受控工作目录；整个数据目录都不会提交到 Git。可通过 `HONGHAO_DATA_DIR` 指定其他本地数据目录；测试始终使用独立临时目录，不会读写正式数据。
@@ -92,6 +105,16 @@ uv run python -m api.cli restore "D:\HonghaoAI\snapshots\snapshot-..." --verify-
 ```powershell
 uv run python -m api.cli restore "D:\HonghaoAI\snapshots\snapshot-..." --apply --confirm RESTORE
 ```
+
+Windows 更新与回退固定采用以下顺序：
+
+1. 停止当前 `serve` 窗口或结束其受控进程。
+2. 运行 `backup` 保存当前数据快照。
+3. 更新代码并执行 `npm.cmd install`、`uv sync --group dev`、`npm.cmd run verify`。
+4. 运行 `migrate` 和 `doctor`，再重新执行 `npm.cmd run build`、`npm.cmd run serve`。
+5. 代码异常时回到上一个审核标签重新构建；数据异常时停止服务后使用 `restore --apply --confirm RESTORE`。
+
+开机运行应由 IT 使用 Windows 任务计划程序调用仓库中的 `npm.cmd run serve`，工作目录必须固定为本仓库；不要配置多个实例共享同一 `HONGHAO_DATA_DIR`。
 
 ### 顶层功能模块状态
 

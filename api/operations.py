@@ -207,6 +207,41 @@ def doctor(settings: Settings) -> list[tuple[str, str, bool | None]]:
     return checks
 
 
+def readiness_checks(settings: Settings) -> dict[str, str]:
+    checks = {
+        "data_directory": "failed",
+        "database": "failed",
+        "module_configuration": "failed",
+        "schema_versions": "failed",
+    }
+    try:
+        settings.ensure_directories()
+        with tempfile.NamedTemporaryFile(dir=settings.data_dir):
+            pass
+        checks["data_directory"] = "ok"
+    except (OSError, ValueError):
+        pass
+    if settings.database_path.is_file():
+        checks["database"] = "ok"
+        try:
+            versions = _schema_versions(settings.database_path)
+            expected = {
+                "schema_version": SCHEMA_VERSION,
+                "identity_schema_version": IDENTITY_SCHEMA_VERSION,
+                "authorization_schema_version": AUTHORIZATION_SCHEMA_VERSION,
+                "knowledge_schema_version": KNOWLEDGE_SCHEMA_VERSION,
+            }
+            if versions == expected:
+                checks["schema_versions"] = "ok"
+        except (OSError, sqlite3.Error, RuntimeError):
+            pass
+    valid_modes = all(mode in {"off", "prototype", "active"} for mode in settings.module_modes.values())
+    valid_workbenches = all(mode in {"off", "prototype", "active"} for mode in settings.workbench_modes.values())
+    if valid_modes and valid_workbenches:
+        checks["module_configuration"] = "ok"
+    return checks
+
+
 @contextmanager
 def service_marker(settings: Settings) -> Iterator[None]:
     with _runtime_marker(settings, "service"):

@@ -25,7 +25,7 @@ from api.modules import (
 )
 from api.settings import Settings
 from api.workbenches import WORKBENCH_IDS, WorkbenchId, WorkbenchMode
-from api.operations import migrate_data, service_marker
+from api.operations import migrate_data, readiness_checks, service_marker
 
 
 API_VERSION = "0.1.0"
@@ -38,6 +38,11 @@ class HealthResponse(BaseModel):
     api_version: str
     schema_version: int
     environment: RuntimeEnvironment
+
+
+class ReadinessResponse(BaseModel):
+    status: Literal["ready", "not_ready"]
+    checks: dict[str, Literal["ok", "failed"]]
 
 
 class WorkbenchStatusResponse(BaseModel):
@@ -235,8 +240,9 @@ class KnowledgeVersionCreate(BaseModel):
     source_ids: Annotated[list[str], Field(min_length=2)]
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, static_dir: Path | None = None) -> FastAPI:
     runtime_settings = settings or Settings.from_environment()
+    static_root = static_dir.resolve() if static_dir is not None else None
     database = Database(runtime_settings.database_path)
     identities = IdentityStore(runtime_settings.database_path)
     authorization = AuthorizationStore(runtime_settings.database_path)
@@ -306,7 +312,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def require_authentication(request: Request, call_next):
-        if request.url.path.startswith("/api/") and request.url.path not in {"/api/health", "/api/login"}:
+        if request.url.path.startswith("/api/") and request.url.path not in {
+            "/api/health",
+            "/api/readiness",
+            "/api/login",
+        }:
             token = request.cookies.get(SESSION_COOKIE_NAME)
             user = identities.user_for_session(token) if token else None
             if user is None:
@@ -323,6 +333,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             schema_version=request.app.state.database.schema_version(),
             environment=runtime_settings.environment,
         )
+
+    @app.get("/api/readiness", response_model=ReadinessResponse)
+    def readiness() -> ReadinessResponse | JSONResponse:
+        checks = readiness_checks(runtime_settings)
+        response = ReadinessResponse(
+            status="ready" if all(value == "ok" for value in checks.values()) else "not_ready",
+            checks=cast(dict[str, Literal["ok", "failed"]], checks),
+        )
+        if response.status == "not_ready":
+            return JSONResponse(status_code=503, content=response.model_dump())
+        return response
 
     @app.post("/api/login", response_model=CurrentUserResponse)
     def login(credentials: LoginRequest, response: Response) -> CurrentUserResponse:
@@ -790,6 +811,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
         return TaskResponse(**task)
+
+    if static_root is not None:
+        index_path = static_root / "index.html"
+
+        @app.get("/{frontend_path:path}", include_in_schema=False)
+        def frontend(frontend_path: str) -> FileResponse:
+            if frontend_path == "api" or frontend_path.startswith("api/"):
+                raise HTTPException(status_code=404, detail="Not found")
+            candidate = (static_root / frontend_path).resolve()
+            if candidate.is_relative_to(static_root) and candidate.is_file():
+                return FileResponse(candidate)
+            if not index_path.is_file():
+                raise HTTPException(status_code=503, detail="Frontend build not available")
+            return FileResponse(index_path)
 
     return app
 
