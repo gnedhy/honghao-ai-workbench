@@ -61,6 +61,21 @@ def test_production_rejects_workbench_mode_environment_override(tmp_path: Path, 
         Settings.from_environment()
 
 
+def test_test_environment_workbench_activation_applies_after_restart(tmp_path: Path) -> None:
+    data_dir = tmp_path / "test"
+    settings = Settings.from_data_dir(data_dir, environment="test")
+
+    with authenticated_client(settings) as client:
+        changed = client.put(
+            "/api/admin/workbench-settings/procurement",
+            json={"mode": "active", "reviews": []},
+        )
+
+    assert changed.status_code == 200
+    restarted = Settings.from_data_dir(data_dir, environment="test")
+    assert restarted.workbench_modes["procurement"] == "active"
+
+
 def test_production_workbench_activation_requires_and_records_reviews(tmp_path: Path) -> None:
     data_dir = tmp_path / "production"
     settings = Settings.from_data_dir(data_dir, environment="production")

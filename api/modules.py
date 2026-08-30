@@ -118,8 +118,7 @@ def mode_change_record_is_valid(record: object, target_ids: Sequence[str], modes
         record.get("target_id") in target_ids
         and mode in modes
         and changed_at.tzinfo is not None
-        and (mode != "active" or activation_review_is_complete(review))
-        and (mode == "active" or review is None)
+        and (review is None or activation_review_is_complete(review))
     )
 
 

@@ -58,7 +58,7 @@ def test_module_mode_change_is_pending_until_restart(tmp_path: Path) -> None:
     with authenticated_client(settings) as client:
         changed = client.put(
             "/api/admin/module-settings/knowledge",
-            json={"mode": "prototype", "reviews": []},
+            json={"mode": "active", "reviews": []},
         )
         running = client.get("/api/modules")
 
@@ -66,7 +66,7 @@ def test_module_mode_change_is_pending_until_restart(tmp_path: Path) -> None:
     assert changed.json() == {
         "id": "knowledge",
         "current_mode": "off",
-        "pending_mode": "prototype",
+        "pending_mode": "active",
     }
     assert next(item for item in running.json() if item["id"] == "knowledge")["mode"] == "off"
 
@@ -75,11 +75,11 @@ def test_module_mode_change_is_pending_until_restart(tmp_path: Path) -> None:
         restarted = restarted_client.get("/api/modules")
         applied = restarted_client.get("/api/admin/module-settings")
 
-    assert next(item for item in restarted.json() if item["id"] == "knowledge")["mode"] == "prototype"
+    assert next(item for item in restarted.json() if item["id"] == "knowledge")["mode"] == "active"
     assert next(item for item in applied.json()["modules"] if item["id"] == "knowledge") == {
         "id": "knowledge",
-        "current_mode": "prototype",
-        "pending_mode": "prototype",
+        "current_mode": "active",
+        "pending_mode": "active",
     }
 
 
