@@ -3,7 +3,7 @@ from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
 
-from api.identity import DuplicateIdentityError, IdentityStore, SYSTEM_ADMIN_ROLE_ID
+from api.identity import DuplicateIdentityError, IdentityStore
 from api.main import create_app
 from api.settings import Settings
 
@@ -20,7 +20,7 @@ def authenticated_client(settings: Settings) -> Iterator[TestClient]:
                 display_name="测试管理员",
                 department=None,
                 password=TEST_ADMIN_PASSWORD,
-                role_ids=[SYSTEM_ADMIN_ROLE_ID],
+                is_system_admin=True,
             )
         except DuplicateIdentityError:
             pass

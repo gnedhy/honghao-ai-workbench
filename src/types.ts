@@ -11,18 +11,17 @@ export type ModuleStatus = {
   mode: ModuleMode;
 };
 
-export type UserRole = {
-  id: string;
-  name: string;
-  system: boolean;
-};
+export type AccessLevel = 2 | 3 | 4;
+
+export type AccessScope = "management" | "procurement" | "research" | "sales" | "knowledge";
 
 export type CurrentUser = {
   id: string;
   username: string;
   display_name: string;
   department: string | null;
-  roles: UserRole[];
+  is_system_admin: boolean;
+  scope_levels: Partial<Record<AccessScope, AccessLevel>>;
 };
 
 export type AdminModuleSetting = {
@@ -42,25 +41,15 @@ export type ManagedUser = CurrentUser & {
   is_active: boolean;
 };
 
-export type PermissionDefinition = {
-  id: string;
-  module_id: Section;
-  name: string;
-  description: string;
-};
-
-export type RolePermissionPolicy = {
-  role_id: string;
-  permission_ids: string[];
-};
-
 export type SensitiveFieldPolicy = {
   id: string;
   area: string;
   name: string;
   description: string;
-  read_role_ids: string[];
-  write_role_ids: string[];
+  read_min_level: AccessLevel;
+  write_min_level: AccessLevel;
+  read_scope_ids: AccessScope[];
+  write_scope_ids: AccessScope[];
 };
 
 export type AuditEvent = {

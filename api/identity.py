@@ -11,9 +11,12 @@ from typing import Any
 from uuid import uuid4
 
 
-IDENTITY_SCHEMA_VERSION = 1
+IDENTITY_SCHEMA_VERSION = 4
 SESSION_COOKIE_NAME = "honghao_session"
 SYSTEM_ADMIN_ROLE_ID = "system-admin"
+
+SCOPE_ACCESS_LEVELS = (2, 3, 4)
+SCOPE_IDS = ("management", "procurement", "research", "sales", "knowledge")
 
 SYSTEM_ROLES: tuple[tuple[str, str], ...] = (
     (SYSTEM_ADMIN_ROLE_ID, "系统管理员"),
@@ -55,6 +58,7 @@ class IdentityStore:
                     password_salt BLOB NOT NULL,
                     password_hash BLOB NOT NULL,
                     is_active INTEGER NOT NULL CHECK (is_active IN (0, 1)),
+                    access_level INTEGER NOT NULL DEFAULT 1 CHECK (access_level BETWEEN 1 AND 5),
                     created_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS identity_user_roles (
@@ -68,6 +72,12 @@ class IdentityStore:
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS identity_user_scopes (
+                    user_id TEXT NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
+                    scope_id TEXT NOT NULL,
+                    access_level INTEGER NOT NULL DEFAULT 1 CHECK (access_level BETWEEN 1 AND 4),
+                    PRIMARY KEY (user_id, scope_id)
+                );
                 """
             )
             connection.execute(
@@ -78,7 +88,79 @@ class IdentityStore:
                 "SELECT value FROM schema_metadata WHERE key = ?",
                 ("identity_schema_version",),
             ).fetchone()
-            if version is None or int(version[0]) != IDENTITY_SCHEMA_VERSION:
+            if version is None:
+                raise RuntimeError("Unsupported identity schema version")
+            version_number = int(version[0])
+            if version_number == 1:
+                columns = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(identity_users)")
+                }
+                if "access_level" not in columns:
+                    connection.execute(
+                        "ALTER TABLE identity_users ADD COLUMN access_level INTEGER NOT NULL DEFAULT 1 CHECK (access_level BETWEEN 1 AND 5)"
+                    )
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS identity_user_scopes (user_id TEXT NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE, scope_id TEXT NOT NULL, access_level INTEGER NOT NULL DEFAULT 1 CHECK (access_level BETWEEN 1 AND 4), PRIMARY KEY (user_id, scope_id))"
+                )
+                scope_columns = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(identity_user_scopes)")
+                }
+                if "access_level" not in scope_columns:
+                    connection.execute(
+                        "ALTER TABLE identity_user_scopes ADD COLUMN access_level INTEGER NOT NULL DEFAULT 1 CHECK (access_level BETWEEN 1 AND 4)"
+                    )
+                connection.execute(
+                    "UPDATE identity_users SET access_level = 5 WHERE id IN (SELECT user_id FROM identity_user_roles WHERE role_id = 'system-admin')"
+                )
+                connection.execute(
+                    "UPDATE identity_users SET access_level = MAX(access_level, 4) WHERE id IN (SELECT user_id FROM identity_user_roles WHERE role_id = 'knowledge-admin')"
+                )
+                connection.execute(
+                    "UPDATE identity_users SET access_level = MAX(access_level, 2) WHERE id IN (SELECT user_id FROM identity_user_roles WHERE role_id IN ('procurement', 'research', 'sales', 'management'))"
+                )
+                connection.execute(
+                    "INSERT OR IGNORE INTO identity_user_scopes (user_id, scope_id, access_level) SELECT user_id, role_id, 2 FROM identity_user_roles WHERE role_id IN ('procurement', 'research', 'sales', 'management')"
+                )
+                connection.execute(
+                    "INSERT OR IGNORE INTO identity_user_scopes (user_id, scope_id, access_level) SELECT user_id, 'knowledge', 4 FROM identity_user_roles WHERE role_id = 'knowledge-admin'"
+                )
+                connection.execute(
+                    "DELETE FROM identity_user_scopes WHERE user_id IN (SELECT id FROM identity_users WHERE access_level = 5)"
+                )
+                connection.execute(
+                    "UPDATE schema_metadata SET value = ? WHERE key = 'identity_schema_version'",
+                    (2,),
+                )
+                version_number = 2
+            if version_number == 2:
+                scope_columns = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(identity_user_scopes)")
+                }
+                if "access_level" not in scope_columns:
+                    connection.execute(
+                        "ALTER TABLE identity_user_scopes ADD COLUMN access_level INTEGER NOT NULL DEFAULT 1 CHECK (access_level BETWEEN 1 AND 4)"
+                    )
+                    connection.execute(
+                        "UPDATE identity_user_scopes SET access_level = MIN(4, MAX(1, (SELECT access_level FROM identity_users WHERE identity_users.id = identity_user_scopes.user_id)))"
+                    )
+                connection.execute(
+                    "UPDATE schema_metadata SET value = ? WHERE key = 'identity_schema_version'",
+                    (3,),
+                )
+                version_number = 3
+            if version_number == 3:
+                connection.execute(
+                    "UPDATE identity_user_scopes SET access_level = 2 WHERE access_level = 1"
+                )
+                connection.execute(
+                    "UPDATE schema_metadata SET value = ? WHERE key = 'identity_schema_version'",
+                    (IDENTITY_SCHEMA_VERSION,),
+                )
+                version_number = IDENTITY_SCHEMA_VERSION
+            if version_number != IDENTITY_SCHEMA_VERSION:
                 raise RuntimeError("Unsupported identity schema version")
             connection.executemany(
                 "INSERT OR IGNORE INTO identity_roles (id, name, system) VALUES (?, ?, 1)",
@@ -92,8 +174,10 @@ class IdentityStore:
         display_name: str,
         department: str | None,
         password: str,
-        role_ids: list[str],
+        is_system_admin: bool = False,
+        scope_levels: dict[str, int] | None = None,
     ) -> dict[str, Any]:
+        normalized_scopes = {} if is_system_admin else _validate_scope_levels(scope_levels or {})
         salt = os.urandom(16)
         password_hash = _hash_password(password, salt)
         user_id = str(uuid4())
@@ -101,14 +185,13 @@ class IdentityStore:
         try:
             with sqlite3.connect(self.path) as connection:
                 connection.execute("BEGIN IMMEDIATE")
-                self._ensure_roles_exist(connection, role_ids)
                 connection.execute(
-                    "INSERT INTO identity_users (id, username, display_name, department, password_salt, password_hash, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
-                    (user_id, username, display_name, department, salt, password_hash, created_at),
+                    "INSERT INTO identity_users (id, username, display_name, department, password_salt, password_hash, is_active, access_level, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                    (user_id, username, display_name, department, salt, password_hash, 5 if is_system_admin else 1, created_at),
                 )
                 connection.executemany(
-                    "INSERT INTO identity_user_roles (user_id, role_id) VALUES (?, ?)",
-                    [(user_id, role_id) for role_id in dict.fromkeys(role_ids)],
+                    "INSERT INTO identity_user_scopes (user_id, scope_id, access_level) VALUES (?, ?, ?)",
+                    [(user_id, scope_id, level) for scope_id, level in normalized_scopes.items()],
                 )
         except sqlite3.IntegrityError as error:
             raise DuplicateIdentityError from error
@@ -194,13 +277,13 @@ class IdentityStore:
     def get_user(self, user_id: str) -> dict[str, Any] | None:
         with sqlite3.connect(self.path) as connection:
             row = connection.execute(
-                "SELECT id, username, display_name, department, is_active FROM identity_users WHERE id = ?",
+                "SELECT id, username, display_name, department, is_active, access_level FROM identity_users WHERE id = ?",
                 (user_id,),
             ).fetchone()
             if row is None:
                 return None
-            role_rows = connection.execute(
-                "SELECT roles.id, roles.name, roles.system FROM identity_roles AS roles JOIN identity_user_roles AS user_roles ON user_roles.role_id = roles.id WHERE user_roles.user_id = ? ORDER BY roles.rowid",
+            scope_rows = connection.execute(
+                "SELECT scope_id, access_level FROM identity_user_scopes WHERE user_id = ?",
                 (user_id,),
             ).fetchall()
         return {
@@ -209,10 +292,12 @@ class IdentityStore:
             "display_name": str(row[2]),
             "department": str(row[3]) if row[3] is not None else None,
             "is_active": bool(row[4]),
-            "roles": [
-                {"id": str(role[0]), "name": str(role[1]), "system": bool(role[2])}
-                for role in role_rows
-            ],
+            "is_system_admin": int(row[5]) == 5,
+            "scope_levels": {
+                scope_id: next(int(level) for stored_scope, level in scope_rows if stored_scope == scope_id)
+                for scope_id in SCOPE_IDS
+                if any(stored_scope == scope_id for stored_scope, _ in scope_rows)
+            },
         }
 
     def list_users(self) -> list[dict[str, Any]]:
@@ -229,18 +314,31 @@ class IdentityStore:
         user_id: str,
         *,
         is_active: bool | None = None,
-        role_ids: list[str] | None = None,
+        is_system_admin: bool | None = None,
+        scope_levels: dict[str, int] | None = None,
     ) -> dict[str, Any] | None:
+        normalized_scopes = _validate_scope_levels(scope_levels) if scope_levels is not None else None
         with sqlite3.connect(self.path) as connection:
             connection.execute("BEGIN IMMEDIATE")
-            if connection.execute("SELECT 1 FROM identity_users WHERE id = ?", (user_id,)).fetchone() is None:
+            existing = connection.execute(
+                "SELECT access_level FROM identity_users WHERE id = ?", (user_id,)
+            ).fetchone()
+            if existing is None:
                 return None
-            if role_ids is not None:
-                self._ensure_roles_exist(connection, role_ids)
-                connection.execute("DELETE FROM identity_user_roles WHERE user_id = ?", (user_id,))
+            target_is_admin = is_system_admin if is_system_admin is not None else int(existing[0]) == 5
+            if is_system_admin is not None:
+                connection.execute(
+                    "UPDATE identity_users SET access_level = ? WHERE id = ?",
+                    (5 if is_system_admin else 1, user_id),
+                )
+            if normalized_scopes is not None or is_system_admin is True:
+                connection.execute("DELETE FROM identity_user_scopes WHERE user_id = ?", (user_id,))
                 connection.executemany(
-                    "INSERT INTO identity_user_roles (user_id, role_id) VALUES (?, ?)",
-                    [(user_id, role_id) for role_id in dict.fromkeys(role_ids)],
+                    "INSERT INTO identity_user_scopes (user_id, scope_id, access_level) VALUES (?, ?, ?)",
+                    [
+                        (user_id, scope_id, level)
+                        for scope_id, level in ({} if target_is_admin else normalized_scopes or {}).items()
+                    ],
                 )
             if is_active is not None:
                 connection.execute(
@@ -249,20 +347,6 @@ class IdentityStore:
                 )
             connection.execute("DELETE FROM identity_sessions WHERE user_id = ?", (user_id,))
         return self.get_user(user_id)
-
-    @staticmethod
-    def _ensure_roles_exist(connection: sqlite3.Connection, role_ids: list[str]) -> None:
-        if not role_ids:
-            raise ValueError("At least one role is required")
-        unique_role_ids = list(dict.fromkeys(role_ids))
-        placeholders = ",".join("?" for _ in unique_role_ids)
-        count = connection.execute(
-            f"SELECT COUNT(*) FROM identity_roles WHERE id IN ({placeholders})",
-            unique_role_ids,
-        ).fetchone()
-        if count is None or int(count[0]) != len(unique_role_ids):
-            raise ValueError("Unknown role")
-
 
 def _hash_password(password: str, salt: bytes) -> bytes:
     return hashlib.scrypt(
@@ -277,3 +361,11 @@ def _hash_password(password: str, salt: bytes) -> bytes:
 
 def _hash_session_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _validate_scope_levels(scope_levels: dict[str, int]) -> dict[str, int]:
+    if any(scope_id not in SCOPE_IDS for scope_id in scope_levels):
+        raise ValueError("Unknown access scope")
+    if any(level not in SCOPE_ACCESS_LEVELS for level in scope_levels.values()):
+        raise ValueError("Scope permission must be view, edit, or manage")
+    return {scope_id: scope_levels[scope_id] for scope_id in SCOPE_IDS if scope_id in scope_levels}
