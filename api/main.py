@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Literal, cast
 from uuid import UUID
@@ -25,7 +25,7 @@ from api.modules import (
 )
 from api.settings import Settings
 from api.workbenches import WORKBENCH_IDS, WorkbenchId, WorkbenchMode
-from api.operations import migrate_data, service_marker
+from api.operations import migrate_data, readiness_checks, service_marker
 
 
 API_VERSION = "0.1.0"
@@ -36,8 +36,12 @@ class HealthResponse(BaseModel):
     status: Literal["ok"]
     service: str
     api_version: str
-    schema_version: int
-    environment: RuntimeEnvironment
+    environment: RuntimeEnvironment | None
+
+
+class ReadinessResponse(BaseModel):
+    status: Literal["ready", "not_ready"]
+    checks: dict[str, Literal["ok", "failed"]]
 
 
 class WorkbenchStatusResponse(BaseModel):
@@ -235,8 +239,9 @@ class KnowledgeVersionCreate(BaseModel):
     source_ids: Annotated[list[str], Field(min_length=2)]
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, static_dir: Path | None = None) -> FastAPI:
     runtime_settings = settings or Settings.from_environment()
+    static_root = static_dir.resolve() if static_dir is not None else None
     database = Database(runtime_settings.database_path)
     identities = IdentityStore(runtime_settings.database_path)
     authorization = AuthorizationStore(runtime_settings.database_path)
@@ -244,13 +249,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        runtime_settings.ensure_directories()
-        with service_marker(runtime_settings):
-            migrate_data(runtime_settings)
-            app.state.database = database
-            app.state.identities = identities
-            app.state.authorization = authorization
-            app.state.knowledge = knowledge
+        app.state.startup_error = None
+        with ExitStack() as stack:
+            try:
+                runtime_settings.ensure_directories()
+                stack.enter_context(service_marker(runtime_settings))
+                migrate_data(runtime_settings)
+                app.state.database = database
+                app.state.identities = identities
+                app.state.authorization = authorization
+                app.state.knowledge = knowledge
+            except (OSError, RuntimeError, ValueError) as error:
+                app.state.startup_error = str(error)
             yield
 
     app = FastAPI(title="Honghao AI API", version=API_VERSION, lifespan=lifespan)
@@ -306,7 +316,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def require_authentication(request: Request, call_next):
-        if request.url.path.startswith("/api/") and request.url.path not in {"/api/health", "/api/login"}:
+        if request.url.path.startswith("/api/") and request.url.path not in {
+            "/api/health",
+            "/api/readiness",
+            "/api/login",
+        }:
             token = request.cookies.get(SESSION_COOKIE_NAME)
             user = identities.user_for_session(token) if token else None
             if user is None:
@@ -314,15 +328,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request.state.current_user = user
         return await call_next(request)
 
+    @app.middleware("http")
+    async def reject_requests_while_unready(request: Request, call_next):
+        if (
+            getattr(request.app.state, "startup_error", None) is not None
+            and request.url.path.startswith("/api/")
+            and request.url.path not in {"/api/health", "/api/readiness"}
+        ):
+            return JSONResponse(status_code=503, content={"detail": "Service not ready"})
+        return await call_next(request)
+
     @app.get("/api/health", response_model=HealthResponse)
-    def health(request: Request) -> HealthResponse:
+    def health() -> HealthResponse:
         return HealthResponse(
             status="ok",
             service=SERVICE_NAME,
             api_version=API_VERSION,
-            schema_version=request.app.state.database.schema_version(),
             environment=runtime_settings.environment,
         )
+
+    @app.get("/api/readiness", response_model=ReadinessResponse)
+    def readiness() -> ReadinessResponse | JSONResponse:
+        checks = readiness_checks(runtime_settings)
+        checks["runtime_startup"] = (
+            "failed" if app.state.startup_error is not None else "ok"
+        )
+        response = ReadinessResponse(
+            status="ready" if all(value == "ok" for value in checks.values()) else "not_ready",
+            checks=cast(dict[str, Literal["ok", "failed"]], checks),
+        )
+        if response.status == "not_ready":
+            return JSONResponse(status_code=503, content=response.model_dump())
+        return response
 
     @app.post("/api/login", response_model=CurrentUserResponse)
     def login(credentials: LoginRequest, response: Response) -> CurrentUserResponse:
@@ -791,7 +828,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Task not found")
         return TaskResponse(**task)
 
+    if static_root is not None:
+        _mount_static_frontend(app, static_root)
+
     return app
 
 
-app = create_app()
+def create_unready_app(static_dir: Path | None = None) -> FastAPI:
+    app = FastAPI(title="Honghao AI API", version=API_VERSION)
+
+    @app.get("/api/health", response_model=HealthResponse)
+    def health() -> HealthResponse:
+        return HealthResponse(
+            status="ok",
+            service=SERVICE_NAME,
+            api_version=API_VERSION,
+            environment=None,
+        )
+
+    @app.get("/api/readiness", response_model=ReadinessResponse)
+    def readiness() -> JSONResponse:
+        response = ReadinessResponse(
+            status="not_ready",
+            checks={
+                "data_directory": "failed",
+                "database": "failed",
+                "module_configuration": "failed",
+                "schema_versions": "failed",
+                "runtime_startup": "failed",
+            },
+        )
+        return JSONResponse(status_code=503, content=response.model_dump())
+
+    @app.api_route("/api/{api_path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    def unavailable_api(api_path: str) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": "Service not ready"})
+
+    if static_dir is not None:
+        _mount_static_frontend(app, static_dir.resolve())
+    return app
+
+
+def _mount_static_frontend(app: FastAPI, static_root: Path) -> None:
+    index_path = static_root / "index.html"
+
+    @app.get("/{frontend_path:path}", include_in_schema=False)
+    def frontend(frontend_path: str) -> FileResponse:
+        if frontend_path == "api" or frontend_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
+        candidate = (static_root / frontend_path).resolve()
+        if candidate.is_relative_to(static_root) and candidate.is_file():
+            return FileResponse(candidate)
+        if not index_path.is_file():
+            raise HTTPException(status_code=503, detail="Frontend build not available")
+        return FileResponse(index_path)
+
+
+def create_default_app() -> FastAPI:
+    try:
+        return create_app(Settings.from_environment())
+    except (OSError, RuntimeError, ValueError):
+        return create_unready_app()
+
+
+app = create_default_app()

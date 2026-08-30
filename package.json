@@ -7,6 +7,7 @@
     "dev": "concurrently --kill-others --names API,WEB --prefix-colors blue,magenta \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "uv --cache-dir .uv-cache run uvicorn api.main:app --reload --host 127.0.0.1 --port 8000",
     "dev:web": "vite",
+    "serve": "uv --cache-dir .uv-cache run python -m api.cli serve",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test:api": "uv --cache-dir .uv-cache run pytest",

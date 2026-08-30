@@ -19,6 +19,7 @@ from api.authorization import AUTHORIZATION_SCHEMA_VERSION, AuthorizationStore
 from api.database import SCHEMA_VERSION, Database
 from api.identity import IDENTITY_SCHEMA_VERSION, IdentityStore
 from api.knowledge import KNOWLEDGE_SCHEMA_VERSION, KnowledgeStore
+from api.modules import load_persisted_module_modes
 from api.settings import Settings
 from scripts.backup_database import backup_database
 
@@ -173,22 +174,11 @@ def restore_snapshot(settings: Settings, snapshot: Path) -> Path | None:
 
 def doctor(settings: Settings) -> list[tuple[str, str, bool | None]]:
     checks: list[tuple[str, str, bool | None]] = []
-    try:
-        settings.ensure_directories()
-        with tempfile.NamedTemporaryFile(dir=settings.data_dir):
-            pass
-        checks.append(("数据目录", "可读写", True))
-    except OSError as error:
-        checks.append(("数据目录", str(error), False))
+    directory_detail, directory_ready = _data_directory_status(settings)
+    checks.append(("数据目录", directory_detail, directory_ready))
     try:
         versions = _schema_versions(settings.database_path)
-        expected = {
-            "schema_version": SCHEMA_VERSION,
-            "identity_schema_version": IDENTITY_SCHEMA_VERSION,
-            "authorization_schema_version": AUTHORIZATION_SCHEMA_VERSION,
-            "knowledge_schema_version": KNOWLEDGE_SCHEMA_VERSION,
-        }
-        valid = versions == expected
+        valid = versions == _expected_schema_versions()
         checks.append(("数据库", json.dumps(versions, ensure_ascii=False), valid))
     except (OSError, sqlite3.Error, RuntimeError) as error:
         checks.append(("数据库", str(error), False))
@@ -205,6 +195,58 @@ def doctor(settings: Settings) -> list[tuple[str, str, bool | None]]:
     harness_detail = "依赖已安装" if harness_installed else "预留接口已记录，内核尚未安装"
     checks.append(("Harness", harness_detail, True if harness_installed else None))
     return checks
+
+
+def readiness_checks(settings: Settings) -> dict[str, str]:
+    checks = {
+        "data_directory": "failed",
+        "database": "failed",
+        "module_configuration": "failed",
+        "schema_versions": "failed",
+    }
+    _, directory_ready = _data_directory_status(settings)
+    if directory_ready:
+        checks["data_directory"] = "ok"
+    if settings.database_path.is_file():
+        checks["database"] = "ok"
+        try:
+            versions = _schema_versions(settings.database_path)
+            if versions == _expected_schema_versions():
+                checks["schema_versions"] = "ok"
+        except (OSError, sqlite3.Error, RuntimeError):
+            pass
+    try:
+        load_persisted_module_modes(
+            settings.data_dir,
+            settings.environment,
+            settings.module_modes,
+        )
+        valid_modes = all(mode in {"off", "prototype", "active"} for mode in settings.module_modes.values())
+        valid_workbenches = all(mode in {"off", "prototype", "active"} for mode in settings.workbench_modes.values())
+    except (OSError, RuntimeError, ValueError):
+        valid_modes = valid_workbenches = False
+    if valid_modes and valid_workbenches:
+        checks["module_configuration"] = "ok"
+    return checks
+
+
+def _data_directory_status(settings: Settings) -> tuple[str, bool]:
+    try:
+        settings.ensure_directories()
+        with tempfile.NamedTemporaryFile(dir=settings.data_dir):
+            pass
+        return "可读写", True
+    except (OSError, ValueError) as error:
+        return str(error), False
+
+
+def _expected_schema_versions() -> dict[str, int]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "identity_schema_version": IDENTITY_SCHEMA_VERSION,
+        "authorization_schema_version": AUTHORIZATION_SCHEMA_VERSION,
+        "knowledge_schema_version": KNOWLEDGE_SCHEMA_VERSION,
+    }
 
 
 @contextmanager

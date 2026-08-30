@@ -7,6 +7,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+import uvicorn
+
 from api.identity import DuplicateIdentityError, IdentityStore
 from api.operations import create_snapshot, doctor, migrate_data, restore_snapshot, verify_snapshot
 from api.settings import Settings
@@ -25,8 +27,50 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
     restore.add_argument("--apply", action="store_true")
     restore.add_argument("--confirm")
     subcommands.add_parser("doctor", help="检查本地运行环境")
+    serve = subcommands.add_parser("serve", help="启动正式单机服务")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", default=8000, type=int)
+    serve.add_argument("--dist", type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.command == "serve":
+            repository_root = Path(__file__).resolve().parent.parent
+            static_dir = (args.dist or repository_root / "dist").resolve()
+            if not (static_dir / "index.html").is_file():
+                raise FileNotFoundError("前端构建产物不存在，请先运行 npm run build")
+            if not 1 <= args.port <= 65535:
+                raise ValueError("端口必须在 1 到 65535 之间")
+            if args.host not in {"127.0.0.1", "localhost", "::1"}:
+                print("警告：服务将对外监听，请先配置 HTTPS 与 Windows 防火墙。")
+            from api.main import API_VERSION, create_app, create_unready_app
+
+            try:
+                runtime_settings = settings or Settings.from_environment()
+            except (OSError, RuntimeError, ValueError) as error:
+                print(f"运行配置无效，服务将以不可用状态启动：{error}", file=sys.stderr)
+                application = create_unready_app(static_dir)
+                environment_label = "配置异常"
+                data_label = "不可用"
+                enabled = "无"
+            else:
+                application = create_app(runtime_settings, static_dir=static_dir)
+                environment_label = "测试环境" if runtime_settings.environment == "test" else "正式环境"
+                data_label = runtime_settings.data_dir.name
+                enabled = ", ".join(
+                    module_id
+                    for module_id, mode in runtime_settings.module_modes.items()
+                    if mode != "off"
+                ) or "无"
+            print(f"宏昊 AI {API_VERSION} · {environment_label} · 数据目录 {data_label}")
+            print(f"监听 http://{args.host}:{args.port} · 运行模块 {enabled}")
+            uvicorn.run(
+                application,
+                host=args.host,
+                port=args.port,
+                log_level="info",
+            )
+            return 0
+
         runtime_settings = settings or Settings.from_environment()
         if args.command == "migrate":
             versions = migrate_data(runtime_settings)
