@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -96,7 +97,12 @@ def verify_snapshot(snapshot: Path, *, expected_environment: str | None = None) 
         if not isinstance(record, dict):
             raise ValueError("快照清单记录无效")
         relative = Path(str(record.get("path", "")))
-        if relative.is_absolute() or ".." in relative.parts or relative.as_posix() in seen:
+        if (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or relative.as_posix() in seen
+            or not _allowed_snapshot_path(relative)
+        ):
             raise ValueError("快照清单路径无效")
         seen.add(relative.as_posix())
         source = snapshot / relative
@@ -173,13 +179,17 @@ def doctor(settings: Settings) -> list[tuple[str, str, bool]]:
     except ImportError:
         checks.append(("PDF 解析器", "未安装 pypdf", False))
     checks.append(("防病毒", _antivirus_status(), True))
-    checks.append(("Harness", "运行接口保留，内核尚未接入", True))
+    harness_installed = importlib.util.find_spec("deepseek_harness") is not None
+    harness_detail = "依赖已安装" if harness_installed else "预留接口已记录，内核尚未安装"
+    checks.append(("Harness", harness_detail, True))
     return checks
 
 
 @contextmanager
 def service_marker(settings: Settings) -> Iterator[None]:
     marker = settings.data_dir / SERVICE_PID_NAME
+    if service_is_running(settings):
+        raise RuntimeError("当前数据目录已有服务运行")
     marker.write_text(str(os.getpid()), encoding="ascii")
     try:
         yield
@@ -253,11 +263,11 @@ def _snapshot_sources(settings: Settings) -> list[Path]:
     ]
     knowledge = settings.data_dir / "knowledge"
     if knowledge.is_dir():
-        files.extend(
-            path
-            for path in knowledge.rglob("*")
-            if path.is_file() and path.suffix.lower() in {".pdf", ".md"}
-        )
+        for path in knowledge.rglob("*"):
+            if path.is_symlink():
+                raise ValueError(f"知识文件不能是符号链接：{path}")
+            if path.is_file() and path.suffix.lower() in {".pdf", ".md"}:
+                files.append(path)
     return sorted(files)
 
 
@@ -271,6 +281,18 @@ def _file_record(path: Path, root: Path) -> dict[str, str | int]:
         "size": path.stat().st_size,
         "sha256": _sha256(path),
     }
+
+
+def _allowed_snapshot_path(path: Path) -> bool:
+    if path.as_posix() in {"honghao.db", "environment", "runtime-config.json"}:
+        return True
+    if len(path.parts) < 3:
+        return False
+    return (
+        path.parts[:2] == ("knowledge", "sources") and path.suffix.lower() == ".pdf"
+    ) or (
+        path.parts[:2] == ("knowledge", "items") and path.suffix.lower() == ".md"
+    )
 
 
 def _sha256(path: Path) -> str:
