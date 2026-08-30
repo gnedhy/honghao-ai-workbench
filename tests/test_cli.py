@@ -1,3 +1,7 @@
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -58,3 +62,55 @@ def test_serve_cli_starts_one_local_service(tmp_path: Path, monkeypatch, capsys)
     assert started["host"] == "127.0.0.1"
     assert started["port"] == 8000
     assert "测试环境" in capsys.readouterr().out
+
+
+def test_invalid_runtime_config_does_not_break_doctor_command(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "runtime-config.json").write_text("not json", encoding="utf-8")
+    environment = os.environ.copy()
+    environment["HONGHAO_DATA_DIR"] = str(data_dir)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "api.cli", "doctor"],
+        cwd=Path(__file__).resolve().parent.parent,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "操作失败" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_serve_exposes_health_and_failed_readiness_for_invalid_config(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "environment").write_text("test", encoding="utf-8")
+    (data_dir / "runtime-config.json").write_text(
+        json.dumps({"environment": "test", "module_modes": {"workbench": "invalid"}}),
+        encoding="utf-8",
+    )
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("ready", encoding="utf-8")
+    monkeypatch.setenv("HONGHAO_DATA_DIR", str(data_dir))
+    started: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "uvicorn.run",
+        lambda app, **_: started.update(app=app),
+    )
+
+    assert main(["serve", "--dist", str(dist)]) == 0
+    with TestClient(started["app"]) as client:
+        health = client.get("/api/health")
+        readiness = client.get("/api/readiness")
+
+    assert health.status_code == 200
+    assert readiness.status_code == 503

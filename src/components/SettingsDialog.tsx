@@ -143,12 +143,12 @@ export function SettingsDialog({ currentUser, serviceConnection, moduleStatuses,
   }, [selectedUser]);
 
   const serviceCopy = serviceConnection.state === "online"
-    ? { label: "已连接", detail: `API ${serviceConnection.health.api_version} · 数据版本 ${serviceConnection.health.schema_version}` }
+    ? { label: "已连接", detail: `API ${serviceConnection.health.api_version} · 运行状态正常` }
     : serviceConnection.state === "checking"
       ? { label: "连接中", detail: "正在检查本地 API 与数据库。" }
       : { label: "未连接", detail: "请启动本地 API 后刷新页面。" };
   const enabledCount = moduleStatuses.filter((module) => module.mode !== "off").length;
-  const runtimeEnvironment = serviceConnection.state === "online" ? serviceConnection.health.environment : null;
+  const runtimeEnvironment = adminModuleSettings?.environment ?? null;
 
   const showNotice = (message: string) => {
     setNotice(message);

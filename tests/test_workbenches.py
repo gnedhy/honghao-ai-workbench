@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from api.database import Database
 from api.modules import default_module_modes
 from api.settings import Settings
 from tests.helpers import authenticated_client
@@ -71,5 +72,5 @@ def test_core_schema_ignores_additive_workbench_tables(tmp_path: Path) -> None:
         project = client.post("/api/projects", json={"title": "采购成本验证"})
 
     assert health.status_code == 200
-    assert health.json()["schema_version"] == 5
+    assert Database(settings.database_path).schema_version() == 5
     assert project.status_code == 201

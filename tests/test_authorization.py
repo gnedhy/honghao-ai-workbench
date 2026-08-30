@@ -1,10 +1,10 @@
 import sqlite3
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from api.authorization import AuthorizationStore
+from api.database import Database
 from api.identity import IdentityStore
 from api.main import create_app
 from api.settings import Settings
@@ -193,8 +193,9 @@ def test_authorization_schema_is_additive_and_not_downgraded(tmp_path: Path) -> 
             "UPDATE schema_metadata SET value = 6 WHERE key = 'authorization_schema_version'"
         )
 
-    assert health.json()["schema_version"] == 5
+    assert health.status_code == 200
+    assert Database(settings.database_path).schema_version() == 5
     assert version == (5,)
-    with pytest.raises(RuntimeError, match="Unsupported authorization schema version"):
-        with TestClient(create_app(settings)):
-            pass
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/api/readiness").status_code == 503
+        assert client.get("/api/admin/fields").status_code == 503

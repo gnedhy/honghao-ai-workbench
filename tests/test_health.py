@@ -21,7 +21,6 @@ def test_health_reports_database_schema_after_repeated_startup(tmp_path: Path) -
         "status": "ok",
         "service": "honghao-ai-api",
         "api_version": "0.1.0",
-        "schema_version": 5,
         "environment": "test",
     }
     assert first_response.status_code == 200
@@ -43,6 +42,7 @@ def test_readiness_reports_runtime_dependencies_and_detects_missing_database(
             )
             connection.commit()
         unavailable = client.get("/api/readiness")
+        alive = client.get("/api/health")
 
     assert ready.status_code == 200
     assert ready.json() == {
@@ -58,6 +58,34 @@ def test_readiness_reports_runtime_dependencies_and_detects_missing_database(
     assert unavailable.json()["status"] == "not_ready"
     assert unavailable.json()["checks"]["database"] == "ok"
     assert unavailable.json()["checks"]["schema_versions"] == "failed"
+    assert alive.status_code == 200
+    assert alive.json() == {
+        "status": "ok",
+        "service": "honghao-ai-api",
+        "api_version": "0.1.0",
+        "environment": "test",
+    }
+
+
+def test_migration_mismatch_starts_degraded_and_reports_not_ready(tmp_path: Path) -> None:
+    settings = Settings.from_data_dir(tmp_path / "data")
+    with TestClient(create_app(settings)):
+        pass
+    with closing(sqlite3.connect(settings.database_path)) as connection:
+        connection.execute(
+            "UPDATE schema_metadata SET value = 999 WHERE key = 'schema_version'"
+        )
+        connection.commit()
+
+    with TestClient(create_app(settings)) as client:
+        health = client.get("/api/health")
+        readiness = client.get("/api/readiness")
+        protected = client.get("/api/modules")
+
+    assert health.status_code == 200
+    assert readiness.status_code == 503
+    assert readiness.json()["checks"]["schema_versions"] == "failed"
+    assert protected.status_code == 503
 
 
 def test_production_app_serves_static_assets_and_spa_routes(tmp_path: Path) -> None:

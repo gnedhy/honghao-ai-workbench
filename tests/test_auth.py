@@ -2,7 +2,6 @@ import sqlite3
 import time
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from api.database import Database
@@ -206,7 +205,8 @@ def test_identity_schema_is_additive_to_core_schema_v5(tmp_path: Path) -> None:
             "SELECT value FROM schema_metadata WHERE key = 'identity_schema_version'"
         ).fetchone()
 
-    assert health.json()["schema_version"] == 5
+    assert health.status_code == 200
+    assert Database(settings.database_path).schema_version() == 5
     assert identity_version == (4,)
 
 
@@ -238,9 +238,9 @@ def test_newer_identity_schema_is_not_silently_downgraded(tmp_path: Path) -> Non
             "INSERT INTO schema_metadata (key, value) VALUES ('identity_schema_version', 5)"
         )
 
-    with pytest.raises(RuntimeError, match="Unsupported identity schema version"):
-        with TestClient(create_app(settings)):
-            pass
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/api/readiness").status_code == 503
+        assert client.get("/api/users").status_code == 503
 
     with sqlite3.connect(settings.database_path) as connection:
         version = connection.execute(
