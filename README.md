@@ -65,6 +65,34 @@ uv run python -m api.cli create-admin
 
 权限采用“每个授权范围独立设置”：普通账号可在采购、研发、销售、总经办工作台和知识库分别获得查看、编辑或管理权限。查看只能读取授权数据；编辑可以新建、修改、导入和提交；管理可以审核、退回、确认、发布及管理范围内业务。系统管理独立设置并自动拥有全部范围。部门仅为人员资料。敏感字段同时校验最低权限与允许范围，未配置开放范围时仅系统管理员可访问。
 
+### 运维、备份与恢复
+
+统一使用 `python -m api.cli` 管理当前 `HONGHAO_DATA_DIR`：
+
+```powershell
+uv run python -m api.cli migrate
+uv run python -m api.cli doctor
+uv run python -m api.cli backup
+```
+
+`backup` 默认在当前数据目录的 `backups/` 下创建唯一快照，包含 SQLite、运行配置、PDF 原件、Markdown 和 SHA-256 清单。也可指定其他位置：
+
+```powershell
+uv run python -m api.cli backup --destination "D:\HonghaoAI\snapshots"
+```
+
+恢复命令默认只做完整性校验，不写入数据：
+
+```powershell
+uv run python -m api.cli restore "D:\HonghaoAI\snapshots\snapshot-..." --verify-only
+```
+
+真正恢复前必须先停止 API 和前端服务，然后显式二次确认；系统会先自动保留一份写入前快照：
+
+```powershell
+uv run python -m api.cli restore "D:\HonghaoAI\snapshots\snapshot-..." --apply --confirm RESTORE
+```
+
 ### 顶层功能模块状态
 
 测试环境默认只启用工作台，知识库、AI 会话、自动化和任务看板保持关闭；全新的正式环境默认关闭全部模块。系统管理员可在“系统设置 → 常规”中选择“关闭 / 原型 / 启用”；保存后显示为待生效状态，重启当前服务后应用。配置保存在当前 `HONGHAO_DATA_DIR`，不会影响另一套实例。
