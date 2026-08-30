@@ -1,4 +1,6 @@
+import hashlib
 import json
+import sqlite3
 from pathlib import Path
 
 from api.cli import main
@@ -34,13 +36,17 @@ def _ready_data(settings: Settings) -> None:
     (items / "产品说明书.md").write_text("# 产品说明书", encoding="utf-8")
 
 
+def _create_snapshot(settings: Settings, destination: Path, capsys) -> Path:
+    assert main(["backup", "--destination", str(destination)], settings=settings) == 0
+    return Path(capsys.readouterr().out.strip().splitlines()[-1])
+
+
 def test_backup_and_verify_restore_support_chinese_paths(tmp_path: Path, capsys) -> None:
     settings = Settings.from_data_dir(tmp_path / "中台数据")
     _ready_data(settings)
     destination = tmp_path / "中文快照"
 
-    assert main(["backup", "--destination", str(destination)], settings=settings) == 0
-    snapshot = Path(capsys.readouterr().out.strip().splitlines()[-1])
+    snapshot = _create_snapshot(settings, destination, capsys)
     assert snapshot.parent == destination
     assert (snapshot / "honghao.db").is_file()
     assert (snapshot / "knowledge" / "sources" / "产品说明书.pdf").is_file()
@@ -52,9 +58,68 @@ def test_restore_rejects_a_changed_snapshot(tmp_path: Path, capsys) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
     _ready_data(settings)
     destination = tmp_path / "snapshots"
-    assert main(["backup", "--destination", str(destination)], settings=settings) == 0
-    snapshot = Path(capsys.readouterr().out.strip().splitlines()[-1])
+    snapshot = _create_snapshot(settings, destination, capsys)
     (snapshot / "knowledge" / "items" / "产品说明书.md").write_text("tampered", encoding="utf-8")
+
+    assert main(["restore", str(snapshot), "--verify-only"], settings=settings) == 1
+
+
+def test_restore_rejects_a_manifest_missing_a_referenced_source(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    settings = Settings.from_data_dir(tmp_path / "data")
+    _ready_data(settings)
+    with sqlite3.connect(settings.database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO knowledge_sources (
+                id, filename, mime_type, size_bytes, sha256, stored_name,
+                created_by_user_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "source-1",
+                "产品说明书.pdf",
+                "application/pdf",
+                15,
+                "unused-in-this-test",
+                "产品说明书.pdf",
+                "user-1",
+                "2026-08-30T00:00:00+00:00",
+            ),
+        )
+    destination = tmp_path / "snapshots"
+    snapshot = _create_snapshot(settings, destination, capsys)
+    manifest_path = snapshot / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"] = [
+        record
+        for record in manifest["files"]
+        if record["path"] != "knowledge/sources/产品说明书.pdf"
+    ]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    (snapshot / "knowledge" / "sources" / "产品说明书.pdf").unlink()
+
+    assert main(["restore", str(snapshot), "--verify-only"], settings=settings) == 1
+
+
+def test_restore_rejects_a_corrupt_database_even_with_updated_hash(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    settings = Settings.from_data_dir(tmp_path / "data")
+    _ready_data(settings)
+    destination = tmp_path / "snapshots"
+    snapshot = _create_snapshot(settings, destination, capsys)
+    database = snapshot / "honghao.db"
+    database.write_bytes(b"not a sqlite database")
+    manifest_path = snapshot / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    database_record = next(record for record in manifest["files"] if record["path"] == "honghao.db")
+    database_record["size"] = database.stat().st_size
+    database_record["sha256"] = hashlib.sha256(database.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     assert main(["restore", str(snapshot), "--verify-only"], settings=settings) == 1
 
@@ -63,8 +128,7 @@ def test_restore_requires_confirmation_and_replaces_data(tmp_path: Path, capsys)
     settings = Settings.from_data_dir(tmp_path / "data")
     _ready_data(settings)
     destination = tmp_path / "snapshots"
-    assert main(["backup", "--destination", str(destination)], settings=settings) == 0
-    snapshot = Path(capsys.readouterr().out.strip().splitlines()[-1])
+    snapshot = _create_snapshot(settings, destination, capsys)
     source = settings.data_dir / "knowledge" / "items" / "产品说明书.md"
     source.write_text("changed", encoding="utf-8")
 
@@ -102,8 +166,7 @@ def test_running_service_blocks_an_applied_restore(tmp_path: Path, capsys) -> No
     settings = Settings.from_data_dir(tmp_path / "data")
     _ready_data(settings)
     destination = tmp_path / "snapshots"
-    assert main(["backup", "--destination", str(destination)], settings=settings) == 0
-    snapshot = Path(capsys.readouterr().out.strip().splitlines()[-1])
+    snapshot = _create_snapshot(settings, destination, capsys)
 
     with TestClient(create_app(settings)):
         result = main(

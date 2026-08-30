@@ -54,8 +54,9 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
         if args.command == "doctor":
             checks = doctor(runtime_settings)
             for name, detail, passed in checks:
-                print(f"[{'OK' if passed else 'FAIL'}] {name}：{detail}")
-            return 0 if all(passed for _, _, passed in checks) else 1
+                status = "OK" if passed is True else "WARN" if passed is None else "FAIL"
+                print(f"[{status}] {name}：{detail}")
+            return 0 if all(passed is not False for _, _, passed in checks) else 1
     except (FileNotFoundError, OSError, RuntimeError, ValueError) as error:
         print(f"操作失败：{error}", file=sys.stderr)
         return 1

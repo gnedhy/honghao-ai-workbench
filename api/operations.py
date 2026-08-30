@@ -9,6 +9,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +25,8 @@ from scripts.backup_database import backup_database
 
 MANIFEST_NAME = "manifest.json"
 SERVICE_PID_NAME = ".service.pid"
+_ACTIVE_MARKERS: dict[Path, tuple[str, int]] = {}
+_ACTIVE_MARKERS_LOCK = threading.Lock()
 
 
 def migrate_data(settings: Settings) -> dict[str, int]:
@@ -112,46 +115,64 @@ def verify_snapshot(snapshot: Path, *, expected_environment: str | None = None) 
             raise ValueError(f"快照文件校验失败：{relative.as_posix()}")
     if "honghao.db" not in seen:
         raise ValueError("快照缺少数据库")
-    with closing(sqlite3.connect(snapshot / "honghao.db")) as connection:
-        if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
-            raise ValueError("快照数据库完整性校验失败")
+    try:
+        with closing(sqlite3.connect(snapshot / "honghao.db")) as connection:
+            if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+                raise ValueError("快照数据库完整性校验失败")
+            referenced = {
+                f"knowledge/sources/{stored_name}"
+                for stored_name, in connection.execute("SELECT stored_name FROM knowledge_sources")
+            } | {
+                f"knowledge/items/{stored_name}"
+                for stored_name, in connection.execute("SELECT stored_name FROM knowledge_versions")
+            }
+    except sqlite3.DatabaseError as error:
+        raise ValueError("快照数据库无法读取") from error
+    missing = sorted(referenced - seen)
+    if missing:
+        raise ValueError(f"快照清单缺少数据库引用文件：{missing[0]}")
     return manifest
 
 
 def restore_snapshot(settings: Settings, snapshot: Path) -> Path | None:
-    manifest = verify_snapshot(snapshot, expected_environment=settings.environment)
-    if service_is_running(settings):
-        raise RuntimeError("服务正在运行，请先停止服务")
     settings.ensure_directories()
-    rollback = (
-        create_snapshot(settings, settings.data_dir / "backups")
-        if settings.database_path.is_file()
-        else None
-    )
-    staging = Path(tempfile.mkdtemp(prefix=".restore-", dir=settings.data_dir))
-    try:
-        records = sorted(manifest["files"], key=lambda record: record["path"] == "honghao.db")
-        for record in records:
-            relative = Path(record["path"])
-            source = snapshot / relative
-            target = staging / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
-        verify_snapshot(_write_staging_manifest(staging, manifest), expected_environment=settings.environment)
-        for record in manifest["files"]:
-            relative = Path(record["path"])
-            target = settings.data_dir / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            temporary_target = target.with_name(f".{target.name}.restore")
-            shutil.copy2(staging / relative, temporary_target)
-            os.replace(temporary_target, target)
-        return rollback
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
+    with _runtime_marker(settings, "restore"):
+        manifest = verify_snapshot(snapshot, expected_environment=settings.environment)
+        rollback = (
+            create_snapshot(settings, settings.data_dir / "backups")
+            if settings.database_path.is_file()
+            else None
+        )
+        staging = Path(tempfile.mkdtemp(prefix=".restore-", dir=settings.data_dir))
+        try:
+            records = sorted(
+                manifest["files"],
+                key=lambda record: record["path"] == "honghao.db",
+            )
+            for record in records:
+                relative = Path(record["path"])
+                source = snapshot / relative
+                target = staging / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+            verify_snapshot(
+                _write_staging_manifest(staging, manifest),
+                expected_environment=settings.environment,
+            )
+            for record in records:
+                relative = Path(record["path"])
+                target = settings.data_dir / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                temporary_target = target.with_name(f".{target.name}.restore")
+                shutil.copy2(staging / relative, temporary_target)
+                os.replace(temporary_target, target)
+            return rollback
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
 
 
-def doctor(settings: Settings) -> list[tuple[str, str, bool]]:
-    checks: list[tuple[str, str, bool]] = []
+def doctor(settings: Settings) -> list[tuple[str, str, bool | None]]:
+    checks: list[tuple[str, str, bool | None]] = []
     try:
         settings.ensure_directories()
         with tempfile.NamedTemporaryFile(dir=settings.data_dir):
@@ -178,24 +199,18 @@ def doctor(settings: Settings) -> list[tuple[str, str, bool]]:
         checks.append(("PDF 解析器", "已安装", True))
     except ImportError:
         checks.append(("PDF 解析器", "未安装 pypdf", False))
-    checks.append(("防病毒", _antivirus_status(), True))
+    antivirus_detail, antivirus_result = _antivirus_status()
+    checks.append(("防病毒", antivirus_detail, antivirus_result))
     harness_installed = importlib.util.find_spec("deepseek_harness") is not None
     harness_detail = "依赖已安装" if harness_installed else "预留接口已记录，内核尚未安装"
-    checks.append(("Harness", harness_detail, True))
+    checks.append(("Harness", harness_detail, True if harness_installed else None))
     return checks
 
 
 @contextmanager
 def service_marker(settings: Settings) -> Iterator[None]:
-    marker = settings.data_dir / SERVICE_PID_NAME
-    if service_is_running(settings):
-        raise RuntimeError("当前数据目录已有服务运行")
-    marker.write_text(str(os.getpid()), encoding="ascii")
-    try:
+    with _runtime_marker(settings, "service"):
         yield
-    finally:
-        if marker.exists() and marker.read_text(encoding="ascii").strip() == str(os.getpid()):
-            marker.unlink()
 
 
 def service_is_running(settings: Settings) -> bool:
@@ -203,7 +218,7 @@ def service_is_running(settings: Settings) -> bool:
     if not marker.is_file():
         return False
     try:
-        pid = int(marker.read_text(encoding="ascii").strip())
+        pid = int(marker.read_text(encoding="ascii").strip().split(":", 1)[-1])
         if pid == os.getpid():
             return True
         os.kill(pid, 0)
@@ -216,6 +231,40 @@ def service_is_running(settings: Settings) -> bool:
     except OSError:
         marker.unlink(missing_ok=True)
         return False
+
+
+@contextmanager
+def _runtime_marker(settings: Settings, owner: str) -> Iterator[None]:
+    marker = settings.data_dir / SERVICE_PID_NAME
+    key = marker.resolve()
+    with _ACTIVE_MARKERS_LOCK:
+        active = _ACTIVE_MARKERS.get(key)
+        if active is not None:
+            active_owner, count = active
+            if owner != "service" or active_owner != "service":
+                raise RuntimeError("当前数据目录已有服务或恢复操作运行")
+            _ACTIVE_MARKERS[key] = (owner, count + 1)
+        else:
+            if service_is_running(settings):
+                raise RuntimeError("当前数据目录已有服务或恢复操作运行")
+            try:
+                with marker.open("x", encoding="ascii") as output:
+                    output.write(f"{owner}:{os.getpid()}")
+            except FileExistsError as error:
+                raise RuntimeError("当前数据目录已被占用") from error
+            _ACTIVE_MARKERS[key] = (owner, 1)
+    try:
+        yield
+    finally:
+        with _ACTIVE_MARKERS_LOCK:
+            _, count = _ACTIVE_MARKERS[key]
+            if count > 1:
+                _ACTIVE_MARKERS[key] = (owner, count - 1)
+            else:
+                del _ACTIVE_MARKERS[key]
+                expected = f"{owner}:{os.getpid()}"
+                if marker.exists() and marker.read_text(encoding="ascii").strip() == expected:
+                    marker.unlink()
 
 
 def _backup_before_access_migration(settings: Settings) -> Path | None:
@@ -311,9 +360,9 @@ def _write_staging_manifest(staging: Path, manifest: dict) -> Path:
     return staging
 
 
-def _antivirus_status() -> str:
+def _antivirus_status() -> tuple[str, bool | None]:
     if sys.platform != "win32":
-        return "非 Windows 环境，请人工确认"
+        return "非 Windows 环境，请人工确认", None
     try:
         result = subprocess.run(
             [
@@ -329,5 +378,7 @@ def _antivirus_status() -> str:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return "无法自动读取，请人工确认"
-    return "已启用" if result.returncode == 0 and result.stdout.strip() == "True,True" else "未确认，请人工检查"
+        return "无法自动读取，请人工确认", None
+    if result.returncode == 0 and result.stdout.strip() == "True,True":
+        return "已启用", True
+    return "未确认，请人工检查", None
