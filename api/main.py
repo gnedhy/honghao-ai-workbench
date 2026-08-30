@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from pathlib import Path
-import sqlite3
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
@@ -12,10 +10,10 @@ from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from api.authorization import AUTHORIZATION_SCHEMA_VERSION, AuthorizationStore
+from api.authorization import AuthorizationStore
 from api.database import Database, SubmissionConflictError
-from api.identity import IDENTITY_SCHEMA_VERSION, DuplicateIdentityError, IdentityStore, SESSION_COOKIE_NAME
-from api.knowledge import KNOWLEDGE_SCHEMA_VERSION, InvalidKnowledgeSourceError, KnowledgeStore
+from api.identity import DuplicateIdentityError, IdentityStore, SESSION_COOKIE_NAME
+from api.knowledge import InvalidKnowledgeSourceError, KnowledgeStore
 from api.modules import (
     MODULE_IDS,
     ModuleId,
@@ -27,33 +25,11 @@ from api.modules import (
 )
 from api.settings import Settings
 from api.workbenches import WORKBENCH_IDS, WorkbenchId, WorkbenchMode
-from scripts.backup_database import backup_database
+from api.operations import migrate_data, service_marker
 
 
 API_VERSION = "0.1.0"
 SERVICE_NAME = "honghao-ai-api"
-
-
-def backup_before_access_migration(settings: Settings) -> Path | None:
-    targets = {
-        "identity_schema_version": IDENTITY_SCHEMA_VERSION,
-        "authorization_schema_version": AUTHORIZATION_SCHEMA_VERSION,
-        "knowledge_schema_version": KNOWLEDGE_SCHEMA_VERSION,
-    }
-    with sqlite3.connect(settings.database_path) as connection:
-        versions = {
-            str(key): int(value)
-            for key, value in connection.execute(
-                "SELECT key, value FROM schema_metadata WHERE key IN (?, ?, ?)",
-                tuple(targets),
-            )
-        }
-    if not any(key in versions and versions[key] < target for key, target in targets.items()):
-        return None
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    destination = settings.data_dir / "backups" / f"pre-access-level-migration-{timestamp}.db"
-    backup_database(settings.database_path, destination)
-    return destination
 
 
 class HealthResponse(BaseModel):
@@ -269,16 +245,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         runtime_settings.ensure_directories()
-        database.initialize()
-        backup_before_access_migration(runtime_settings)
-        identities.initialize()
-        authorization.initialize()
-        knowledge.initialize()
-        app.state.database = database
-        app.state.identities = identities
-        app.state.authorization = authorization
-        app.state.knowledge = knowledge
-        yield
+        with service_marker(runtime_settings):
+            migrate_data(runtime_settings)
+            app.state.database = database
+            app.state.identities = identities
+            app.state.authorization = authorization
+            app.state.knowledge = knowledge
+            yield
 
     app = FastAPI(title="Honghao AI API", version=API_VERSION, lifespan=lifespan)
 
