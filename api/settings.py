@@ -15,6 +15,7 @@ from api.workbenches import (
     WorkbenchId,
     WorkbenchMode,
     default_workbench_modes,
+    load_persisted_workbench_modes,
     workbench_modes_from_environment,
 )
 
@@ -51,12 +52,17 @@ class Settings:
             environment,
             module_modes or default_module_modes(environment),
         )
+        persisted_workbench_modes = load_persisted_workbench_modes(
+            resolved_data_dir,
+            environment,
+            workbench_modes or default_workbench_modes(),
+        )
         return cls(
             data_dir=resolved_data_dir,
             database_path=resolved_data_dir / "honghao.db",
             controlled_work_dir=resolved_data_dir / "controlled-work",
             module_modes=persisted_module_modes,
-            workbench_modes=workbench_modes or default_workbench_modes(),
+            workbench_modes=persisted_workbench_modes,
             session_ttl_seconds=session_ttl_seconds,
             environment=environment,
         )
@@ -74,6 +80,11 @@ class Settings:
             for module_id in ("chat", "knowledge", "automation", "workbench", "tasks")
         ):
             raise ValueError("Production module modes must be changed through admin settings")
+        if environment == "production" and any(
+            f"HONGHAO_WORKBENCH_{workbench_id.upper()}_MODE" in os.environ
+            for workbench_id in ("management", "procurement", "research", "sales")
+        ):
+            raise ValueError("Production workbench modes must be changed through admin settings")
         return cls.from_data_dir(
             data_dir,
             workbench_modes_from_environment(os.environ),

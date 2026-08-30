@@ -28,6 +28,22 @@ def _ready_data(settings: Settings) -> None:
         ),
         encoding="utf-8",
     )
+    (settings.data_dir / "workbench-runtime-config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "environment": "test",
+                "workbench_modes": {
+                    "management": "prototype",
+                    "procurement": "prototype",
+                    "research": "prototype",
+                    "sales": "prototype",
+                },
+                "activation_reviews": {},
+            }
+        ),
+        encoding="utf-8",
+    )
     sources = settings.data_dir / "knowledge" / "sources"
     items = settings.data_dir / "knowledge" / "items"
     sources.mkdir(parents=True, exist_ok=True)
@@ -49,6 +65,7 @@ def test_backup_and_verify_restore_support_chinese_paths(tmp_path: Path, capsys)
     snapshot = _create_snapshot(settings, destination, capsys)
     assert snapshot.parent == destination
     assert (snapshot / "honghao.db").is_file()
+    assert (snapshot / "workbench-runtime-config.json").is_file()
     assert (snapshot / "knowledge" / "sources" / "产品说明书.pdf").is_file()
     assert (snapshot / "knowledge" / "items" / "产品说明书.md").is_file()
     assert main(["restore", str(snapshot), "--verify-only"], settings=settings) == 0
@@ -139,6 +156,21 @@ def test_restore_requires_confirmation_and_replaces_data(tmp_path: Path, capsys)
         settings=settings,
     ) == 0
     assert source.read_text(encoding="utf-8") == "# 产品说明书"
+
+
+def test_restore_removes_runtime_configuration_missing_from_snapshot(tmp_path: Path, capsys) -> None:
+    settings = Settings.from_data_dir(tmp_path / "data")
+    _ready_data(settings)
+    (settings.data_dir / "workbench-runtime-config.json").unlink()
+    snapshot = _create_snapshot(settings, tmp_path / "snapshots", capsys)
+    later_config = settings.data_dir / "workbench-runtime-config.json"
+    later_config.write_text('{"environment":"test"}', encoding="utf-8")
+
+    assert main(
+        ["restore", str(snapshot), "--apply", "--confirm", "RESTORE"],
+        settings=settings,
+    ) == 0
+    assert not later_config.exists()
 
 
 def test_doctor_reports_a_ready_local_environment(tmp_path: Path) -> None:

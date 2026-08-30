@@ -42,6 +42,12 @@ def test_admin_can_read_environment_and_pending_module_settings(tmp_path: Path) 
             {"id": "workbench", "current_mode": "active", "pending_mode": "active"},
             {"id": "tasks", "current_mode": "off", "pending_mode": "off"},
         ],
+        "workbenches": [
+            {"id": "management", "current_mode": "prototype", "pending_mode": "prototype"},
+            {"id": "procurement", "current_mode": "prototype", "pending_mode": "prototype"},
+            {"id": "research", "current_mode": "prototype", "pending_mode": "prototype"},
+            {"id": "sales", "current_mode": "prototype", "pending_mode": "prototype"},
+        ],
     }
 
 
@@ -52,7 +58,7 @@ def test_module_mode_change_is_pending_until_restart(tmp_path: Path) -> None:
     with authenticated_client(settings) as client:
         changed = client.put(
             "/api/admin/module-settings/knowledge",
-            json={"mode": "prototype", "reviews": []},
+            json={"mode": "active", "reviews": []},
         )
         running = client.get("/api/modules")
 
@@ -60,7 +66,7 @@ def test_module_mode_change_is_pending_until_restart(tmp_path: Path) -> None:
     assert changed.json() == {
         "id": "knowledge",
         "current_mode": "off",
-        "pending_mode": "prototype",
+        "pending_mode": "active",
     }
     assert next(item for item in running.json() if item["id"] == "knowledge")["mode"] == "off"
 
@@ -69,40 +75,75 @@ def test_module_mode_change_is_pending_until_restart(tmp_path: Path) -> None:
         restarted = restarted_client.get("/api/modules")
         applied = restarted_client.get("/api/admin/module-settings")
 
-    assert next(item for item in restarted.json() if item["id"] == "knowledge")["mode"] == "prototype"
+    assert next(item for item in restarted.json() if item["id"] == "knowledge")["mode"] == "active"
     assert next(item for item in applied.json()["modules"] if item["id"] == "knowledge") == {
         "id": "knowledge",
-        "current_mode": "prototype",
-        "pending_mode": "prototype",
+        "current_mode": "active",
+        "pending_mode": "active",
     }
 
 
-def test_production_activation_requires_all_three_reviews(tmp_path: Path) -> None:
+def test_production_activation_requires_and_records_all_four_reviews(tmp_path: Path) -> None:
     data_dir = tmp_path / "production"
     settings = Settings.from_data_dir(data_dir, environment="production")
 
     with authenticated_client(settings) as client:
         blocked = client.put(
             "/api/admin/module-settings/knowledge",
-            json={"mode": "active", "reviews": ["business", "security"]},
+            json={
+                "mode": "active",
+                "reviews": ["business", "security", "code"],
+                "issue_url": "https://github.com/gnedhy/honghao-ai-workbench/issues/43",
+                "pull_request_url": "https://github.com/gnedhy/honghao-ai-workbench/pull/56",
+            },
         )
         allowed = client.put(
             "/api/admin/module-settings/knowledge",
-            json={"mode": "active", "reviews": ["business", "security", "code"]},
+            json={
+                "mode": "active",
+                "reviews": ["business", "security", "code", "rollback"],
+                "issue_url": "https://github.com/gnedhy/honghao-ai-workbench/issues/43",
+                "pull_request_url": "https://github.com/gnedhy/honghao-ai-workbench/pull/56",
+            },
         )
 
     assert blocked.status_code == 422
     assert blocked.json() == {
-        "detail": "Production activation requires business, security, and code reviews"
+        "detail": "Production activation requires business, security, code, and rollback reviews"
     }
     assert allowed.status_code == 200
     assert allowed.json()["pending_mode"] == "active"
+    config = json.loads((data_dir / "runtime-config.json").read_text(encoding="utf-8"))
+    record = config["activation_reviews"]["knowledge"]
+    assert record["checks"] == [
+        "business",
+        "code",
+        "rollback",
+        "security",
+    ]
+    assert record["issue_url"].endswith("/issues/43")
+    assert record["pull_request_url"].endswith("/pull/56")
+    assert record["reviewed_by"]
+    assert record["reviewed_at"]
 
     restarted_settings = Settings.from_data_dir(data_dir, environment="production")
     with authenticated_client(restarted_settings) as restarted_client:
         restarted = restarted_client.get("/api/modules")
 
     assert next(item for item in restarted.json() if item["id"] == "knowledge")["mode"] == "active"
+
+    with authenticated_client(restarted_settings) as restarted_client:
+        downgraded = restarted_client.put(
+            "/api/admin/module-settings/knowledge",
+            json={"mode": "prototype", "reviews": []},
+        )
+        audit = restarted_client.get("/api/admin/audit-events")
+
+    assert downgraded.status_code == 200
+    config = json.loads((data_dir / "runtime-config.json").read_text(encoding="utf-8"))
+    assert config["activation_reviews"]["knowledge"] == record
+    assert [entry["mode"] for entry in config["activation_history"]] == ["active", "prototype"]
+    assert audit.json()[0]["action"] == "module.mode.prototype"
 
 
 def test_fresh_production_starts_with_every_module_off(tmp_path: Path) -> None:
@@ -140,6 +181,58 @@ def test_production_rejects_active_module_without_recorded_reviews(tmp_path: Pat
     )
 
     with pytest.raises(ValueError, match="require recorded reviews"):
+        Settings.from_data_dir(data_dir, environment="production")
+
+
+def test_production_rejects_malformed_activation_reviews_as_configuration_error(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "production"
+    data_dir.mkdir()
+    (data_dir / "runtime-config.json").write_text(
+        json.dumps({
+            "version": 1,
+            "environment": "production",
+            "module_modes": {**default_module_modes("production"), "knowledge": "active"},
+            "reviewed_active_modules": ["knowledge"],
+            "activation_reviews": {
+                "knowledge": {
+                    "checks": ["business", "code", "rollback", "security"],
+                    "reviewed_by": "not-a-user-id",
+                    "reviewed_at": "not-a-date",
+                    "issue_url": "x",
+                    "pull_request_url": "y",
+                }
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="activation_reviews"):
+        Settings.from_data_dir(data_dir, environment="production")
+
+
+def test_production_rejects_unreviewed_active_module_history(tmp_path: Path) -> None:
+    data_dir = tmp_path / "production"
+    data_dir.mkdir()
+    (data_dir / "runtime-config.json").write_text(
+        json.dumps({
+            "version": 1,
+            "environment": "production",
+            "module_modes": default_module_modes("production"),
+            "activation_reviews": {},
+            "activation_history": [{
+                "target_id": "knowledge",
+                "mode": "active",
+                "changed_by": "00000000-0000-4000-8000-000000000001",
+                "changed_at": "2026-08-30T10:00:00+00:00",
+                "activation_review": None,
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="activation_history"):
         Settings.from_data_dir(data_dir, environment="production")
 
 
@@ -215,7 +308,7 @@ def test_unregistered_module_cannot_be_enabled(tmp_path: Path) -> None:
     assert response.json() == {"detail": "Module not found"}
 
 
-def test_module_mode_change_is_audited_without_configuration_values(tmp_path: Path) -> None:
+def test_module_mode_change_audit_distinguishes_target_mode(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
 
     with authenticated_client(settings) as client:
@@ -226,10 +319,9 @@ def test_module_mode_change_is_audited_without_configuration_values(tmp_path: Pa
         events = client.get("/api/admin/audit-events")
 
     assert changed.status_code == 200
-    event = next(item for item in events.json() if item["action"] == "module.mode.pending")
+    event = next(item for item in events.json() if item["action"] == "module.mode.prototype")
     assert event["target_type"] == "module"
     assert event["target_id"] == "knowledge"
-    assert "prototype" not in str(event)
 
 
 def test_module_registry_reads_environment_modes(tmp_path: Path, monkeypatch) -> None:

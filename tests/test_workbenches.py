@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 
@@ -49,6 +50,109 @@ def test_invalid_workbench_mode_stops_startup(monkeypatch) -> None:
         match="HONGHAO_WORKBENCH_RESEARCH_MODE must be prototype, active, or off",
     ):
         Settings.from_environment()
+
+
+def test_production_rejects_workbench_mode_environment_override(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HONGHAO_ENVIRONMENT", "production")
+    monkeypatch.setenv("HONGHAO_DATA_DIR", str(tmp_path / "production"))
+    monkeypatch.setenv("HONGHAO_WORKBENCH_PROCUREMENT_MODE", "active")
+
+    with pytest.raises(ValueError, match="Production workbench modes must be changed through admin settings"):
+        Settings.from_environment()
+
+
+def test_test_environment_workbench_activation_applies_after_restart(tmp_path: Path) -> None:
+    data_dir = tmp_path / "test"
+    settings = Settings.from_data_dir(data_dir, environment="test")
+
+    with authenticated_client(settings) as client:
+        changed = client.put(
+            "/api/admin/workbench-settings/procurement",
+            json={"mode": "active", "reviews": []},
+        )
+
+    assert changed.status_code == 200
+    restarted = Settings.from_data_dir(data_dir, environment="test")
+    assert restarted.workbench_modes["procurement"] == "active"
+
+
+def test_production_workbench_activation_requires_and_records_reviews(tmp_path: Path) -> None:
+    data_dir = tmp_path / "production"
+    settings = Settings.from_data_dir(data_dir, environment="production")
+    evidence = {
+        "issue_url": "https://github.com/gnedhy/honghao-ai-workbench/issues/23",
+        "pull_request_url": "https://github.com/gnedhy/honghao-ai-workbench/pull/57",
+    }
+
+    with authenticated_client(settings) as client:
+        blocked = client.put(
+            "/api/admin/workbench-settings/procurement",
+            json={"mode": "active", "reviews": ["business", "security", "code"], **evidence},
+        )
+        allowed = client.put(
+            "/api/admin/workbench-settings/procurement",
+            json={
+                "mode": "active",
+                "reviews": ["business", "security", "code", "rollback"],
+                **evidence,
+            },
+        )
+
+    assert blocked.status_code == 422
+    assert allowed.status_code == 200
+    assert allowed.json()["pending_mode"] == "active"
+    config = json.loads((data_dir / "workbench-runtime-config.json").read_text(encoding="utf-8"))
+    record = config["activation_reviews"]["procurement"]
+    assert record["checks"] == ["business", "code", "rollback", "security"]
+    assert record["reviewed_by"]
+    assert record["reviewed_at"]
+    assert record["issue_url"].endswith("/issues/23")
+    assert record["pull_request_url"].endswith("/pull/57")
+
+    restarted_settings = Settings.from_data_dir(data_dir, environment="production")
+    assert restarted_settings.workbench_modes["procurement"] == "active"
+
+    with authenticated_client(restarted_settings) as restarted_client:
+        downgraded = restarted_client.put(
+            "/api/admin/workbench-settings/procurement",
+            json={"mode": "prototype", "reviews": []},
+        )
+        audit = restarted_client.get("/api/admin/audit-events")
+
+    assert downgraded.status_code == 200
+    config = json.loads((data_dir / "workbench-runtime-config.json").read_text(encoding="utf-8"))
+    assert config["activation_reviews"]["procurement"] == record
+    assert [entry["mode"] for entry in config["activation_history"]] == ["active", "prototype"]
+    assert audit.json()[0]["action"] == "workbench.mode.prototype"
+
+
+def test_production_rejects_unreviewed_active_workbench_history(tmp_path: Path) -> None:
+    data_dir = tmp_path / "production"
+    data_dir.mkdir()
+    (data_dir / "workbench-runtime-config.json").write_text(
+        json.dumps({
+            "version": 1,
+            "environment": "production",
+            "workbench_modes": {
+                "management": "prototype",
+                "procurement": "prototype",
+                "research": "prototype",
+                "sales": "prototype",
+            },
+            "activation_reviews": {},
+            "activation_history": [{
+                "target_id": "procurement",
+                "mode": "active",
+                "changed_by": "00000000-0000-4000-8000-000000000001",
+                "changed_at": "2026-08-30T10:00:00+00:00",
+                "activation_review": None,
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="activation_history"):
+        Settings.from_data_dir(data_dir, environment="production")
 
 
 def test_core_schema_ignores_additive_workbench_tables(tmp_path: Path) -> None:

@@ -1,4 +1,4 @@
-import type { AccessLevel, AccessScope, ActivationReview, AdminModuleSetting, AdminModuleSettings, AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleMode, ModuleStatus, Project, RuntimeEnvironment, Section, SensitiveFieldPolicy, TaskItem, WorkbenchStatus } from "./types";
+import type { AccessLevel, AccessScope, ActivationReview, AdminModuleSetting, AdminModuleSettings, AdminWorkbenchSetting, AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleMode, ModuleStatus, Project, RuntimeEnvironment, Section, SensitiveFieldPolicy, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
 
 export type ServiceHealth = {
   status: "ok";
@@ -76,11 +76,27 @@ export function updateAdminModuleSetting(
   moduleId: Section,
   mode: ModuleMode,
   reviews: ActivationReview[] = [],
+  issueUrl?: string,
+  pullRequestUrl?: string,
 ): Promise<AdminModuleSetting> {
   return fetchJson<AdminModuleSetting>(`/api/admin/module-settings/${moduleId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode, reviews }),
+    body: JSON.stringify({ mode, reviews, issue_url: issueUrl, pull_request_url: pullRequestUrl }),
+  });
+}
+
+export function updateAdminWorkbenchSetting(
+  workbenchId: WorkbenchId,
+  mode: ModuleMode,
+  reviews: ActivationReview[] = [],
+  issueUrl?: string,
+  pullRequestUrl?: string,
+): Promise<AdminWorkbenchSetting> {
+  return fetchJson<AdminWorkbenchSetting>(`/api/admin/workbench-settings/${workbenchId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, reviews, issue_url: issueUrl, pull_request_url: pullRequestUrl }),
   });
 }
 

@@ -19,17 +19,26 @@ from api.modules import (
     ModuleId,
     ModuleMode,
     RuntimeEnvironment,
+    REQUIRED_ACTIVATION_REVIEWS,
+    create_activation_review_record,
     load_persisted_module_modes,
     module_for_api_path,
     save_persisted_module_modes,
 )
 from api.settings import Settings
-from api.workbenches import WORKBENCH_IDS, WorkbenchId, WorkbenchMode
+from api.workbenches import (
+    WORKBENCH_IDS,
+    WorkbenchId,
+    WorkbenchMode,
+    load_persisted_workbench_modes,
+    save_persisted_workbench_modes,
+)
 from api.operations import migrate_data, readiness_checks, service_marker
 
 
 API_VERSION = "0.1.0"
 SERVICE_NAME = "honghao-ai-api"
+PUBLIC_API_PATHS = ("/api/health", "/api/readiness", "/api/login")
 
 
 class HealthResponse(BaseModel):
@@ -60,14 +69,25 @@ class AdminModuleStatusResponse(BaseModel):
     pending_mode: ModuleMode
 
 
+class AdminWorkbenchStatusResponse(BaseModel):
+    id: WorkbenchId
+    current_mode: WorkbenchMode
+    pending_mode: WorkbenchMode
+
+
 class AdminModuleSettingsResponse(BaseModel):
     environment: RuntimeEnvironment
     modules: list[AdminModuleStatusResponse]
+    workbenches: list[AdminWorkbenchStatusResponse]
 
 
 class ModuleSettingUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mode: ModuleMode
-    reviews: list[Literal["business", "security", "code"]] = Field(default_factory=list)
+    reviews: list[Literal["business", "security", "code", "rollback"]] = Field(default_factory=list)
+    issue_url: Annotated[str, StringConstraints(pattern=r"^https://github\.com/[^/]+/[^/]+/issues/\d+$", max_length=500)] | None = None
+    pull_request_url: Annotated[str, StringConstraints(pattern=r"^https://github\.com/[^/]+/[^/]+/pull/\d+$", max_length=500)] | None = None
 
 
 class LoginRequest(BaseModel):
@@ -316,11 +336,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
 
     @app.middleware("http")
     async def require_authentication(request: Request, call_next):
-        if request.url.path.startswith("/api/") and request.url.path not in {
-            "/api/health",
-            "/api/readiness",
-            "/api/login",
-        }:
+        if request.url.path.startswith("/api/") and request.url.path not in PUBLIC_API_PATHS:
             token = request.cookies.get(SESSION_COOKIE_NAME)
             user = identities.user_for_session(token) if token else None
             if user is None:
@@ -529,6 +545,11 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             runtime_settings.environment,
             runtime_settings.module_modes,
         )
+        pending_workbench_modes = load_persisted_workbench_modes(
+            runtime_settings.data_dir,
+            runtime_settings.environment,
+            runtime_settings.workbench_modes,
+        )
         return AdminModuleSettingsResponse(
             environment=runtime_settings.environment,
             modules=[
@@ -538,6 +559,14 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                     pending_mode=pending_modes[module_id],
                 )
                 for module_id in MODULE_IDS
+            ],
+            workbenches=[
+                AdminWorkbenchStatusResponse(
+                    id=workbench_id,
+                    current_mode=runtime_settings.workbench_modes[workbench_id],
+                    pending_mode=pending_workbench_modes[workbench_id],
+                )
+                for workbench_id in WORKBENCH_IDS
             ],
         )
 
@@ -556,11 +585,15 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         if (
             runtime_settings.environment == "production"
             and update.mode == "active"
-            and set(update.reviews) != {"business", "security", "code"}
+            and (
+                set(update.reviews) != REQUIRED_ACTIVATION_REVIEWS
+                or update.issue_url is None
+                or update.pull_request_url is None
+            )
         ):
             raise HTTPException(
                 status_code=422,
-                detail="Production activation requires business, security, and code reviews",
+                detail="Production activation requires business, security, code, and rollback reviews",
             )
         typed_module_id = cast(ModuleId, module_id)
         pending_modes = load_persisted_module_modes(
@@ -576,9 +609,20 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             approved_module=typed_module_id
             if runtime_settings.environment == "production" and update.mode == "active"
             else None,
+            approved_review_record=create_activation_review_record(
+                update.reviews,
+                reviewed_by=actor["id"],
+                issue_url=update.issue_url or "",
+                pull_request_url=update.pull_request_url or "",
+            )
+            if runtime_settings.environment == "production" and update.mode == "active"
+            else None,
+            changed_module=typed_module_id,
+            changed_mode=update.mode,
+            changed_by=actor["id"],
         )
         authorization.audit(
-            "module.mode.pending",
+            f"module.mode.{update.mode}",
             actor_user_id=actor["id"],
             target_type="module",
             target_id=typed_module_id,
@@ -586,6 +630,66 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         return AdminModuleStatusResponse(
             id=typed_module_id,
             current_mode=runtime_settings.module_modes[typed_module_id],
+            pending_mode=update.mode,
+        )
+
+    @app.put(
+        "/api/admin/workbench-settings/{workbench_id}",
+        response_model=AdminWorkbenchStatusResponse,
+    )
+    def update_admin_workbench_setting(
+        workbench_id: str,
+        update: ModuleSettingUpdate,
+        request: Request,
+    ) -> AdminWorkbenchStatusResponse:
+        actor = require_system_admin(request)
+        if workbench_id not in WORKBENCH_IDS:
+            raise HTTPException(status_code=404, detail="Workbench not found")
+        if (
+            runtime_settings.environment == "production"
+            and update.mode == "active"
+            and (
+                set(update.reviews) != REQUIRED_ACTIVATION_REVIEWS
+                or update.issue_url is None
+                or update.pull_request_url is None
+            )
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Production activation requires business, security, code, and rollback reviews",
+            )
+        typed_workbench_id = cast(WorkbenchId, workbench_id)
+        pending_modes = load_persisted_workbench_modes(
+            runtime_settings.data_dir,
+            runtime_settings.environment,
+            runtime_settings.workbench_modes,
+        )
+        pending_modes[typed_workbench_id] = update.mode
+        is_production_activation = runtime_settings.environment == "production" and update.mode == "active"
+        save_persisted_workbench_modes(
+            runtime_settings.data_dir,
+            runtime_settings.environment,
+            pending_modes,
+            approved_workbench=typed_workbench_id if is_production_activation else None,
+            approved_review_record=create_activation_review_record(
+                update.reviews,
+                reviewed_by=actor["id"],
+                issue_url=update.issue_url or "",
+                pull_request_url=update.pull_request_url or "",
+            ) if is_production_activation else None,
+            changed_workbench=typed_workbench_id,
+            changed_mode=update.mode,
+            changed_by=actor["id"],
+        )
+        authorization.audit(
+            f"workbench.mode.{update.mode}",
+            actor_user_id=actor["id"],
+            target_type="workbench",
+            target_id=typed_workbench_id,
+        )
+        return AdminWorkbenchStatusResponse(
+            id=typed_workbench_id,
+            current_mode=runtime_settings.workbench_modes[typed_workbench_id],
             pending_mode=update.mode,
         )
 

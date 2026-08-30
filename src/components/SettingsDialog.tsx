@@ -23,6 +23,7 @@ import {
   fetchSensitiveFields,
   fetchUsers,
   updateAdminModuleSetting,
+  updateAdminWorkbenchSetting,
   updateSensitiveField,
   updateUser,
   type ServiceConnection,
@@ -40,6 +41,7 @@ import type {
   RuntimeEnvironment,
   Section,
   SensitiveFieldPolicy,
+  WorkbenchId,
 } from "../types";
 
 type SettingsTab = "general" | "accounts" | "permissions" | "audit";
@@ -52,6 +54,13 @@ const MODULE_OPTIONS = [
   { id: "workbench", label: "工作台", description: "企业职能业务工具", icon: PanelsTopLeft },
   { id: "tasks", label: "任务看板", description: "任务管理与运行记录", icon: FolderKanban },
 ] as const;
+
+const WORKBENCH_OPTIONS: { id: WorkbenchId; label: string; description: string }[] = [
+  { id: "management", label: "总经办工作台", description: "成本经营分析" },
+  { id: "procurement", label: "采购工作台", description: "原料成本管理" },
+  { id: "research", label: "研发工作台", description: "产品成本计算" },
+  { id: "sales", label: "销售工作台", description: "产品报价管理" },
+];
 
 const ACCESS_LEVELS: { id: AccessLevel; label: string; summary: string }[] = [
   { id: 2, label: "查看", summary: "可查看授权数据，但不能修改或提交。" },
@@ -74,7 +83,12 @@ const AUDIT_LABELS: Record<string, string> = {
   "field.created": "新增敏感字段",
   "user.created": "创建账号",
   "user.updated": "修改账号",
-  "module.mode.pending": "修改待生效模块状态",
+  "module.mode.off": "关闭功能模块",
+  "module.mode.prototype": "切换功能模块为原型",
+  "module.mode.active": "启用功能模块",
+  "workbench.mode.off": "关闭职能工作台",
+  "workbench.mode.prototype": "切换职能工作台为原型",
+  "workbench.mode.active": "启用职能工作台",
 };
 
 const EMPTY_FIELD = {
@@ -227,14 +241,25 @@ export function SettingsDialog({ currentUser, serviceConnection, moduleStatuses,
     }
   };
 
-  const saveModuleMode = async (moduleId: Section, mode: ModuleMode, reviews: ActivationReview[] = []) => {
+  const saveModuleMode = async (moduleId: Section, mode: ModuleMode, reviews: ActivationReview[] = [], issueUrl?: string, pullRequestUrl?: string) => {
     try {
-      const updated = await updateAdminModuleSetting(moduleId, mode, reviews);
+      const updated = await updateAdminModuleSetting(moduleId, mode, reviews, issueUrl, pullRequestUrl);
       setAdminModuleSettings((current) => current ? { ...current, modules: current.modules.map((module) => module.id === updated.id ? updated : module) } : current);
       showNotice(updated.current_mode === updated.pending_mode ? "模块状态未变化" : "已保存，重启服务后生效");
     } catch {
       showNotice("模块状态保存失败");
       throw new Error("Module mode update failed");
+    }
+  };
+
+  const saveWorkbenchMode = async (workbenchId: WorkbenchId, mode: ModuleMode, reviews: ActivationReview[] = [], issueUrl?: string, pullRequestUrl?: string) => {
+    try {
+      const updated = await updateAdminWorkbenchSetting(workbenchId, mode, reviews, issueUrl, pullRequestUrl);
+      setAdminModuleSettings((current) => current ? { ...current, workbenches: current.workbenches.map((workbench) => workbench.id === updated.id ? updated : workbench) } : current);
+      showNotice(updated.current_mode === updated.pending_mode ? "工作台状态未变化" : "已保存，重启服务后生效");
+    } catch {
+      showNotice("工作台状态保存失败");
+      throw new Error("Workbench mode update failed");
     }
   };
 
@@ -255,7 +280,7 @@ export function SettingsDialog({ currentUser, serviceConnection, moduleStatuses,
           <nav aria-label="设置分类">{navItems.map(({ id, label, icon: Icon }) => <button className={tab === id ? "is-active" : ""} key={id} type="button" onClick={() => setTab(id)}><span><Icon size={15} />{label}</span><ChevronRight size={15} /></button>)}</nav>
           <article>
             {notice && <div className="settings-notice" role="status"><Check size={14} />{notice}</div>}
-            {tab === "general" && <GeneralSettings serviceCopy={serviceCopy} environment={runtimeEnvironment} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} enabledCount={enabledCount} isAdmin={isAdmin} adminModuleSettings={adminModuleSettings} onModeChange={saveModuleMode} />}
+            {tab === "general" && <GeneralSettings serviceCopy={serviceCopy} environment={runtimeEnvironment} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} enabledCount={enabledCount} isAdmin={isAdmin} adminModuleSettings={adminModuleSettings} onModeChange={saveModuleMode} onWorkbenchModeChange={saveWorkbenchMode} />}
             {tab !== "general" && loadState === "loading" && <SettingsState copy="正在读取管理数据…" />}
             {tab !== "general" && loadState === "error" && <SettingsState copy="管理数据暂时无法读取，请稍后重试。" error />}
             {tab === "accounts" && loadState === "ready" && <section className="admin-settings-section">
@@ -301,21 +326,28 @@ function LevelButtons({ label, value, levels, onChange }: { label: string; value
   return <fieldset className="field-policy-levels"><legend>{label}</legend><div className="policy-switch">{levels.map((level) => <button className={value === level.id ? "is-active" : ""} type="button" key={level.id} aria-pressed={value === level.id} onClick={() => onChange(level.id)}>{level.label}</button>)}</div></fieldset>;
 }
 
-function GeneralSettings({ serviceCopy, environment: serviceEnvironment, moduleStatuses, moduleRegistryState, enabledCount, isAdmin, adminModuleSettings, onModeChange }: { serviceCopy: { label: string; detail: string }; environment: RuntimeEnvironment | null; moduleStatuses: ModuleStatus[]; moduleRegistryState: "loading" | "ready" | "error"; enabledCount: number; isAdmin: boolean; adminModuleSettings: AdminModuleSettings | null; onModeChange: (moduleId: Section, mode: ModuleMode, reviews?: ActivationReview[]) => Promise<void>; }) {
-  const [activationModule, setActivationModule] = useState<Section | null>(null);
+function GeneralSettings({ serviceCopy, environment: serviceEnvironment, moduleStatuses, moduleRegistryState, enabledCount, isAdmin, adminModuleSettings, onModeChange, onWorkbenchModeChange }: { serviceCopy: { label: string; detail: string }; environment: RuntimeEnvironment | null; moduleStatuses: ModuleStatus[]; moduleRegistryState: "loading" | "ready" | "error"; enabledCount: number; isAdmin: boolean; adminModuleSettings: AdminModuleSettings | null; onModeChange: (moduleId: Section, mode: ModuleMode, reviews?: ActivationReview[], issueUrl?: string, pullRequestUrl?: string) => Promise<void>; onWorkbenchModeChange: (workbenchId: WorkbenchId, mode: ModuleMode, reviews?: ActivationReview[], issueUrl?: string, pullRequestUrl?: string) => Promise<void>; }) {
+  const [activationTarget, setActivationTarget] = useState<{ kind: "module"; id: Section } | { kind: "workbench"; id: WorkbenchId } | null>(null);
   const [reviews, setReviews] = useState<ActivationReview[]>([]);
+  const [issueUrl, setIssueUrl] = useState("");
+  const [pullRequestUrl, setPullRequestUrl] = useState("");
   const environment = serviceEnvironment ?? adminModuleSettings?.environment ?? null;
-  const pendingCount = adminModuleSettings?.modules.filter((module) => module.current_mode !== module.pending_mode).length ?? 0;
+  const pendingCount = adminModuleSettings ? [...adminModuleSettings.modules, ...adminModuleSettings.workbenches].filter((item) => item.current_mode !== item.pending_mode).length : 0;
   const modeLabel = (mode: ModuleMode) => mode === "active" ? "启用" : mode === "prototype" ? "原型" : "关闭";
-  const chooseMode = (moduleId: Section, mode: ModuleMode) => {
-    if (environment === "production" && mode === "active") { setActivationModule(moduleId); setReviews([]); return; }
-    void onModeChange(moduleId, mode).catch(() => undefined);
+  const clearGate = () => { setActivationTarget(null); setReviews([]); setIssueUrl(""); setPullRequestUrl(""); };
+  const chooseMode = (kind: "module" | "workbench", id: Section | WorkbenchId, mode: ModuleMode) => {
+    if (environment === "production" && mode === "active") { setActivationTarget(kind === "module" ? { kind, id: id as Section } : { kind, id: id as WorkbenchId }); setReviews([]); return; }
+    const update = kind === "module" ? onModeChange(id as Section, mode) : onWorkbenchModeChange(id as WorkbenchId, mode);
+    void update.catch(() => undefined);
   };
   const confirmActivation = () => {
-    if (!activationModule || reviews.length !== 3) return;
-    void onModeChange(activationModule, "active", reviews).then(() => { setActivationModule(null); setReviews([]); }).catch(() => undefined);
+    if (!activationTarget || reviews.length !== 4 || !issueUrl.trim() || !pullRequestUrl.trim()) return;
+    const update = activationTarget.kind === "module"
+      ? onModeChange(activationTarget.id, "active", reviews, issueUrl.trim(), pullRequestUrl.trim())
+      : onWorkbenchModeChange(activationTarget.id, "active", reviews, issueUrl.trim(), pullRequestUrl.trim());
+    void update.then(clearGate).catch(() => undefined);
   };
-  return <section className="admin-settings-section"><h2>常规</h2><div className="environment-summary" data-environment={environment ?? "unknown"}><div><strong>{environment === "test" ? "测试环境" : environment === "production" ? "正式环境" : "环境状态未知"}</strong><p>{environment === "test" ? "使用独立账号与样例数据，不影响正式服务。" : environment === "production" ? "仅部署已审核的发布版本。" : "本地服务连接后显示当前环境。"}</p></div>{pendingCount > 0 && <span>{pendingCount} 项待重启</span>}</div><section className="module-settings" aria-labelledby="module-settings-title"><div className="module-settings__heading"><div><strong id="module-settings-title">功能模块</strong><p>状态只影响当前服务器；关闭时入口和业务接口同时停用。</p></div><span>{moduleRegistryState === "ready" ? `${enabledCount} 个运行中` : moduleRegistryState === "loading" ? "读取中" : "状态不可用"}</span></div><div className="module-settings__list">{MODULE_OPTIONS.map((item) => { const Icon = item.icon; const publicMode = moduleStatuses.find((module) => module.id === item.id)?.mode ?? "off"; const managed = adminModuleSettings?.modules.find((module) => module.id === item.id); const currentMode = managed?.current_mode ?? publicMode; const pendingMode = managed?.pending_mode ?? currentMode; const hasPending = currentMode !== pendingMode; return <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><Icon size={16} /></span><div><strong>{item.label}</strong><p>{item.description}{hasPending ? ` · 当前${modeLabel(currentMode)}` : ""}</p></div>{isAdmin && adminModuleSettings ? <select aria-label={`${item.label}状态`} value={pendingMode} data-pending={hasPending} onChange={(event) => chooseMode(item.id, event.target.value as ModuleMode)}><option value="off">关闭</option><option value="prototype">原型</option><option value="active">启用</option></select> : <span className="module-mode-label" data-mode={currentMode}>{modeLabel(currentMode)}</span>}</div>; })}</div>{activationModule && <div className="production-review-gate"><strong>确认正式启用</strong><p>三项审查必须已经实际完成。</p><div>{([ ["business", "业务负责人"], ["security", "数据安全审查"], ["code", "代码审查"] ] as const).map(([id, label]) => <label key={id}><input type="checkbox" checked={reviews.includes(id)} onChange={() => setReviews(toggleId(reviews, id) as ActivationReview[])} />{label}</label>)}</div><div className="admin-form-actions"><button className="secondary-button" type="button" onClick={() => setActivationModule(null)}>取消</button><button className="primary-button" type="button" disabled={reviews.length !== 3} onClick={confirmActivation}>保存为待启用</button></div></div>}</section><h3 className="settings-subheading">运行与安全</h3><div className="setting-row"><div><strong>本地服务</strong><p>{serviceCopy.detail}</p></div><span className={`setting-connection setting-connection--${serviceCopy.label === "已连接" ? "online" : serviceCopy.label === "连接中" ? "checking" : "offline"}`}><i />{serviceCopy.label}</span></div><div className="setting-row"><div><strong>权限默认拒绝</strong><p>未配置开放范围时，仅系统管理员可以访问。</p></div><span className="setting-enabled"><ShieldCheck size={15} />已保护</span></div></section>;
+  return <section className="admin-settings-section"><h2>常规</h2><div className="environment-summary" data-environment={environment ?? "unknown"}><div><strong>{environment === "test" ? "测试环境" : environment === "production" ? "正式环境" : "环境状态未知"}</strong><p>{environment === "test" ? "使用独立账号与样例数据，不影响正式服务。" : environment === "production" ? "仅部署已审核的发布版本。" : "本地服务连接后显示当前环境。"}</p></div>{pendingCount > 0 && <span>{pendingCount} 项待重启</span>}</div><section className="module-settings" aria-labelledby="module-settings-title"><div className="module-settings__heading"><div><strong id="module-settings-title">功能模块</strong><p>状态只影响当前服务器；关闭时入口和业务接口同时停用。</p></div><span>{moduleRegistryState === "ready" ? `${enabledCount} 个运行中` : moduleRegistryState === "loading" ? "读取中" : "状态不可用"}</span></div><div className="module-settings__list">{MODULE_OPTIONS.map((item) => { const Icon = item.icon; const publicMode = moduleStatuses.find((module) => module.id === item.id)?.mode ?? "off"; const managed = adminModuleSettings?.modules.find((module) => module.id === item.id); const currentMode = managed?.current_mode ?? publicMode; const pendingMode = managed?.pending_mode ?? currentMode; const hasPending = currentMode !== pendingMode; return <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><Icon size={16} /></span><div><strong>{item.label}</strong><p>{item.description}{hasPending ? ` · 当前${modeLabel(currentMode)}` : ""}</p></div>{isAdmin && adminModuleSettings ? <select aria-label={`${item.label}状态`} value={pendingMode} data-pending={hasPending} onChange={(event) => chooseMode("module", item.id, event.target.value as ModuleMode)}><option value="off">关闭</option><option value="prototype">原型</option><option value="active">启用</option></select> : <span className="module-mode-label" data-mode={currentMode}>{modeLabel(currentMode)}</span>}</div>; })}</div></section><section className="module-settings" aria-labelledby="workbench-settings-title"><div className="module-settings__heading"><div><strong id="workbench-settings-title">职能工作台</strong><p>每个工作台独立启用、停用和回退。</p></div><span>4 个工作台</span></div><div className="module-settings__list">{WORKBENCH_OPTIONS.map((item) => { const managed = adminModuleSettings?.workbenches.find((workbench) => workbench.id === item.id); const currentMode = managed?.current_mode ?? "prototype"; const pendingMode = managed?.pending_mode ?? currentMode; const hasPending = currentMode !== pendingMode; return <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><PanelsTopLeft size={16} /></span><div><strong>{item.label}</strong><p>{item.description}{hasPending ? ` · 当前${modeLabel(currentMode)}` : ""}</p></div>{isAdmin && adminModuleSettings ? <select aria-label={`${item.label}状态`} value={pendingMode} data-pending={hasPending} onChange={(event) => chooseMode("workbench", item.id, event.target.value as ModuleMode)}><option value="off">关闭</option><option value="prototype">原型</option><option value="active">启用</option></select> : <span className="module-mode-label" data-mode={currentMode}>{modeLabel(currentMode)}</span>}</div>; })}</div></section>{activationTarget && <div className="production-review-gate"><strong>确认正式启用</strong><p>四项检查与对应开发记录必须已经实际完成。</p><div>{([ ["business", "业务负责人确认"], ["security", "数据安全审查"], ["code", "代码审查"], ["rollback", "回退演练"] ] as const).map(([id, label]) => <label key={id}><input type="checkbox" checked={reviews.includes(id)} onChange={() => setReviews(toggleId(reviews, id) as ActivationReview[])} />{label}</label>)}</div><div className="production-review-evidence"><label>Issue 地址<input type="url" value={issueUrl} placeholder="https://github.com/…/issues/…" onChange={(event) => setIssueUrl(event.target.value)} /></label><label>PR 地址<input type="url" value={pullRequestUrl} placeholder="https://github.com/…/pull/…" onChange={(event) => setPullRequestUrl(event.target.value)} /></label></div><div className="admin-form-actions"><button className="secondary-button" type="button" onClick={clearGate}>取消</button><button className="primary-button" type="button" disabled={reviews.length !== 4 || !issueUrl.trim() || !pullRequestUrl.trim()} onClick={confirmActivation}>保存为待启用</button></div></div>}<h3 className="settings-subheading">运行与安全</h3><div className="setting-row"><div><strong>本地服务</strong><p>{serviceCopy.detail}</p></div><span className={`setting-connection setting-connection--${serviceCopy.label === "已连接" ? "online" : serviceCopy.label === "连接中" ? "checking" : "offline"}`}><i />{serviceCopy.label}</span></div><div className="setting-row"><div><strong>权限默认拒绝</strong><p>未配置开放范围时，仅系统管理员可以访问。</p></div><span className="setting-enabled"><ShieldCheck size={15} />已保护</span></div></section>;
 }
 
 function SettingsState({ copy, error = false }: { copy: string; error?: boolean }) { return <div className={error ? "settings-state is-error" : "settings-state"}>{copy}</div>; }
