@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.database import Database
-from api.identity import IdentityStore, SYSTEM_ADMIN_ROLE_ID
+from api.identity import IdentityStore
 from api.main import create_app
 from api.settings import Settings
 
@@ -17,7 +17,7 @@ def create_admin(settings: Settings, password: str = "Correct-Horse-2026") -> No
         display_name="系统管理员",
         department="总经办",
         password=password,
-        role_ids=[SYSTEM_ADMIN_ROLE_ID],
+        is_system_admin=True,
     )
 
 
@@ -39,7 +39,8 @@ def test_admin_can_log_in_and_read_current_session(tmp_path: Path) -> None:
         "username": "admin",
         "display_name": "系统管理员",
         "department": "总经办",
-        "roles": [{"id": "system-admin", "name": "系统管理员", "system": True}],
+        "is_system_admin": True,
+        "scope_levels": {},
     }
     assert current.status_code == 200
     assert current.json() == login.json()
@@ -76,13 +77,12 @@ def test_business_apis_require_authentication(tmp_path: Path) -> None:
     assert modules_after_login.status_code == 200
 
 
-def test_admin_can_create_a_custom_role_and_multi_role_user(tmp_path: Path) -> None:
+def test_admin_can_create_a_scoped_level_user(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
         create_admin(settings)
         client.post("/api/login", json={"username": "admin", "password": "Correct-Horse-2026"})
-        role = client.post("/api/roles", json={"name": "成本审阅人"})
         user = client.post(
             "/api/users",
             json={
@@ -90,7 +90,7 @@ def test_admin_can_create_a_custom_role_and_multi_role_user(tmp_path: Path) -> N
                 "display_name": "采购专员",
                 "department": "采购部",
                 "password": "Buyer-Password-2026",
-                "role_ids": ["employee", role.json()["id"]],
+                "scope_levels": {"procurement": 3, "research": 2},
             },
         )
         client.post("/api/logout")
@@ -99,15 +99,13 @@ def test_admin_can_create_a_custom_role_and_multi_role_user(tmp_path: Path) -> N
             json={"username": "buyer", "password": "Buyer-Password-2026"},
         )
 
-    assert role.status_code == 201
-    assert role.json()["name"] == "成本审阅人"
-    assert role.json()["system"] is False
     assert user.status_code == 201
     assert login.status_code == 200
-    assert {item["name"] for item in login.json()["roles"]} == {"普通员工", "成本审阅人"}
+    assert login.json()["is_system_admin"] is False
+    assert login.json()["scope_levels"] == {"procurement": 3, "research": 2}
 
 
-def test_role_change_invalidates_existing_sessions(tmp_path: Path) -> None:
+def test_access_change_invalidates_existing_sessions(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
     app = create_app(settings)
 
@@ -121,7 +119,6 @@ def test_role_change_invalidates_existing_sessions(tmp_path: Path) -> None:
                 "display_name": "普通员工",
                 "department": "采购部",
                 "password": "Employee-Password-2026",
-                "role_ids": ["employee"],
             },
         ).json()
         employee_client.post(
@@ -130,12 +127,12 @@ def test_role_change_invalidates_existing_sessions(tmp_path: Path) -> None:
         )
         changed = admin_client.patch(
             f"/api/users/{employee['id']}",
-            json={"role_ids": ["procurement"]},
+            json={"scope_levels": {"procurement": 2}},
         )
         current = employee_client.get("/api/me")
 
     assert changed.status_code == 200
-    assert [role["id"] for role in changed.json()["roles"]] == ["procurement"]
+    assert changed.json()["scope_levels"] == {"procurement": 2}
     assert current.status_code == 401
 
 
@@ -153,7 +150,6 @@ def test_deactivated_account_cannot_keep_or_create_a_session(tmp_path: Path) -> 
                 "display_name": "普通员工",
                 "department": "采购部",
                 "password": "Employee-Password-2026",
-                "role_ids": ["employee"],
             },
         ).json()
         employee_client.post(
@@ -211,10 +207,10 @@ def test_identity_schema_is_additive_to_core_schema_v5(tmp_path: Path) -> None:
         ).fetchone()
 
     assert health.json()["schema_version"] == 5
-    assert identity_version == (1,)
+    assert identity_version == (4,)
 
 
-def test_non_admin_cannot_manage_users_or_roles(tmp_path: Path) -> None:
+def test_non_admin_cannot_manage_users(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
@@ -223,16 +219,13 @@ def test_non_admin_cannot_manage_users_or_roles(tmp_path: Path) -> None:
             display_name="普通员工",
             department=None,
             password="Employee-Password-2026",
-            role_ids=["employee"],
         )
         client.post(
             "/api/login",
             json={"username": "employee", "password": "Employee-Password-2026"},
         )
-        roles = client.get("/api/roles")
         users = client.get("/api/users")
 
-    assert roles.status_code == 403
     assert users.status_code == 403
 
 
@@ -242,7 +235,7 @@ def test_newer_identity_schema_is_not_silently_downgraded(tmp_path: Path) -> Non
     Database(settings.database_path).initialize()
     with sqlite3.connect(settings.database_path) as connection:
         connection.execute(
-            "INSERT INTO schema_metadata (key, value) VALUES ('identity_schema_version', 2)"
+            "INSERT INTO schema_metadata (key, value) VALUES ('identity_schema_version', 5)"
         )
 
     with pytest.raises(RuntimeError, match="Unsupported identity schema version"):
@@ -253,4 +246,4 @@ def test_newer_identity_schema_is_not_silently_downgraded(tmp_path: Path) -> Non
         version = connection.execute(
             "SELECT value FROM schema_metadata WHERE key = 'identity_schema_version'"
         ).fetchone()
-    assert version == (2,)
+    assert version == (5,)

@@ -155,7 +155,6 @@ def test_non_admin_cannot_read_or_change_module_settings(tmp_path: Path) -> None
                 "display_name": "普通员工",
                 "department": None,
                 "password": "Employee-Password-2026",
-                "role_ids": ["employee"],
             },
         )
         assert created.status_code == 201

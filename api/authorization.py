@@ -10,20 +10,9 @@ from uuid import uuid4
 from api.modules import ModuleId
 
 
-AUTHORIZATION_SCHEMA_VERSION = 2
-SYSTEM_ADMIN_ROLE_ID = "system-admin"
-
-PERMISSIONS: tuple[tuple[str, ModuleId, str, str], ...] = (
-    ("chat.use", "chat", "使用", "发起聊天和工作提交"),
-    ("knowledge.view", "knowledge", "查看", "查看知识条目和原文件"),
-    ("knowledge.manage", "knowledge", "管理", "发布和维护知识内容"),
-    ("automation.view", "automation", "查看", "查看技能与工作流"),
-    ("automation.manage", "automation", "管理", "维护技能与工作流"),
-    ("workbench.view", "workbench", "查看", "进入职能工作台"),
-    ("workbench.manage", "workbench", "管理", "执行工作台正式写入"),
-    ("tasks.view", "tasks", "查看", "查看任务及运行记录"),
-    ("tasks.manage", "tasks", "管理", "创建、恢复和取消任务"),
-)
+AUTHORIZATION_SCHEMA_VERSION = 5
+SCOPE_IDS = ("management", "procurement", "research", "sales", "knowledge")
+WORKBENCH_SCOPE_IDS = SCOPE_IDS[:4]
 
 FIELD_CATALOG: tuple[tuple[str, str, str, str], ...] = (
     ("procurement.material_unit_price", "采购", "原料采购单价", "供应商确认后的含税采购单价"),
@@ -33,16 +22,6 @@ FIELD_CATALOG: tuple[tuple[str, str, str, str], ...] = (
     ("sales.gross_margin", "销售", "销售毛利率", "报价对应的内部毛利率"),
     ("management.operating_summary", "总经办", "经营汇总", "跨部门确认数据形成的经营汇总"),
 )
-
-_DEFAULT_ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
-    "employee": ("workbench.view",),
-    "procurement": ("workbench.view",),
-    "research": ("workbench.view",),
-    "sales": ("workbench.view",),
-    "management": ("workbench.view",),
-    "knowledge-admin": ("workbench.view", "knowledge.view", "knowledge.manage"),
-}
-
 
 class AuthorizationStore:
     def __init__(self, path: Path) -> None:
@@ -54,7 +33,7 @@ class AuthorizationStore:
                 "CREATE TABLE IF NOT EXISTS authorization_role_permissions (role_id TEXT NOT NULL, permission_id TEXT NOT NULL, PRIMARY KEY (role_id, permission_id))"
             )
             connection.execute(
-                "CREATE TABLE IF NOT EXISTS authorization_field_policies (field_id TEXT PRIMARY KEY, read_role_ids TEXT NOT NULL, write_role_ids TEXT NOT NULL)"
+                "CREATE TABLE IF NOT EXISTS authorization_field_policies (field_id TEXT PRIMARY KEY, read_role_ids TEXT NOT NULL DEFAULT '[]', write_role_ids TEXT NOT NULL DEFAULT '[]', read_min_level INTEGER NOT NULL DEFAULT 4, write_min_level INTEGER NOT NULL DEFAULT 4, read_scope_ids TEXT NOT NULL DEFAULT '[]', write_scope_ids TEXT NOT NULL DEFAULT '[]')"
             )
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS authorization_custom_fields (id TEXT PRIMARY KEY, area TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL, UNIQUE (area, name))"
@@ -70,65 +49,87 @@ class AuthorizationStore:
                     "INSERT INTO schema_metadata (key, value) VALUES ('authorization_schema_version', ?)",
                     (AUTHORIZATION_SCHEMA_VERSION,),
                 )
-                connection.executemany(
-                    "INSERT INTO authorization_role_permissions (role_id, permission_id) VALUES (?, ?)",
-                    [
-                        (role_id, permission_id)
-                        for role_id, permission_ids in _DEFAULT_ROLE_PERMISSIONS.items()
-                        for permission_id in permission_ids
-                    ],
-                )
+                version = (AUTHORIZATION_SCHEMA_VERSION,)
             elif int(version[0]) == 1:
+                connection.execute(
+                    "UPDATE schema_metadata SET value = ? WHERE key = 'authorization_schema_version'",
+                    (2,),
+                )
+                version = (2,)
+            if int(version[0]) == 2:
+                columns = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(authorization_field_policies)")
+                }
+                if "read_min_level" not in columns:
+                    connection.execute("ALTER TABLE authorization_field_policies ADD COLUMN read_min_level INTEGER NOT NULL DEFAULT 4")
+                    connection.execute("ALTER TABLE authorization_field_policies ADD COLUMN write_min_level INTEGER NOT NULL DEFAULT 4")
+                    connection.execute("ALTER TABLE authorization_field_policies ADD COLUMN read_scope_ids TEXT NOT NULL DEFAULT '[]'")
+                    connection.execute("ALTER TABLE authorization_field_policies ADD COLUMN write_scope_ids TEXT NOT NULL DEFAULT '[]'")
+                for field_id, read_roles, write_roles in connection.execute(
+                    "SELECT field_id, read_role_ids, write_role_ids FROM authorization_field_policies"
+                ).fetchall():
+                    read_level, read_scopes = _legacy_policy(json.loads(str(read_roles)))
+                    write_level, write_scopes = _legacy_policy(json.loads(str(write_roles)))
+                    connection.execute(
+                        "UPDATE authorization_field_policies SET read_min_level = ?, write_min_level = ?, read_scope_ids = ?, write_scope_ids = ? WHERE field_id = ?",
+                        (read_level, write_level, json.dumps(read_scopes), json.dumps(write_scopes), field_id),
+                    )
+                connection.execute(
+                    "UPDATE schema_metadata SET value = ? WHERE key = 'authorization_schema_version'",
+                    (3,),
+                )
+                version = (3,)
+            if int(version[0]) == 3:
+                connection.execute(
+                    "UPDATE authorization_field_policies SET read_min_level = 2 WHERE read_min_level = 1"
+                )
+                connection.execute(
+                    "UPDATE authorization_field_policies SET write_min_level = 2 WHERE write_min_level = 1"
+                )
+                connection.execute(
+                    "UPDATE schema_metadata SET value = ? WHERE key = 'authorization_schema_version'",
+                    (4,),
+                )
+                version = (4,)
+            if int(version[0]) == 4:
+                connection.execute(
+                    "UPDATE authorization_field_policies SET write_min_level = 3 WHERE write_min_level < 3"
+                )
                 connection.execute(
                     "UPDATE schema_metadata SET value = ? WHERE key = 'authorization_schema_version'",
                     (AUTHORIZATION_SCHEMA_VERSION,),
                 )
-            elif int(version[0]) != AUTHORIZATION_SCHEMA_VERSION:
+                version = (AUTHORIZATION_SCHEMA_VERSION,)
+            if int(version[0]) != AUTHORIZATION_SCHEMA_VERSION:
                 raise RuntimeError("Unsupported authorization schema version")
 
-    def has_permission(self, role_ids: list[str], permission_id: str) -> bool:
-        if SYSTEM_ADMIN_ROLE_ID in role_ids:
+    def has_module_access(
+        self,
+        is_system_admin: bool,
+        scope_levels: dict[str, int],
+        module_id: ModuleId,
+        method: str,
+    ) -> bool:
+        if is_system_admin:
             return True
-        if not role_ids:
-            return False
-        placeholders = ",".join("?" for _ in role_ids)
-        with sqlite3.connect(self.path) as connection:
-            row = connection.execute(
-                f"SELECT 1 FROM authorization_role_permissions WHERE permission_id = ? AND role_id IN ({placeholders}) LIMIT 1",
-                [permission_id, *role_ids],
-            ).fetchone()
-        return row is not None
+        if module_id == "knowledge":
+            return scope_levels.get("knowledge", 0) >= (2 if method == "GET" else 3)
+        if module_id == "workbench":
+            minimum_level = 2 if method == "GET" else 3
+            return any(scope_levels.get(scope_id, 0) >= minimum_level for scope_id in WORKBENCH_SCOPE_IDS)
+        return False
 
-    def permissions_for_role(self, role_id: str) -> list[str]:
-        with sqlite3.connect(self.path) as connection:
-            rows = connection.execute(
-                "SELECT permission_id FROM authorization_role_permissions WHERE role_id = ? ORDER BY permission_id",
-                (role_id,),
-            ).fetchall()
-        return [str(row[0]) for row in rows]
-
-    def set_role_permissions(self, role_id: str, permission_ids: list[str]) -> list[str]:
-        unique_ids = list(dict.fromkeys(permission_ids))
-        known_ids = {permission[0] for permission in PERMISSIONS}
-        if any(permission_id not in known_ids for permission_id in unique_ids):
-            raise ValueError("Unknown permission")
-        with sqlite3.connect(self.path) as connection:
-            if connection.execute("SELECT 1 FROM identity_roles WHERE id = ?", (role_id,)).fetchone() is None:
-                raise ValueError("Unknown role")
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute("DELETE FROM authorization_role_permissions WHERE role_id = ?", (role_id,))
-            connection.executemany(
-                "INSERT INTO authorization_role_permissions (role_id, permission_id) VALUES (?, ?)",
-                [(role_id, permission_id) for permission_id in unique_ids],
-            )
-        return self.permissions_for_role(role_id)
+    @staticmethod
+    def can_access_workbench(is_system_admin: bool, scope_levels: dict[str, int], workbench_id: str) -> bool:
+        return is_system_admin or scope_levels.get(workbench_id, 0) >= 2
 
     def list_field_policies(self) -> list[dict[str, Any]]:
         with sqlite3.connect(self.path) as connection:
             rows = {
-                str(row[0]): (json.loads(str(row[1])), json.loads(str(row[2])))
+                str(row[0]): (int(row[1]), int(row[2]), json.loads(str(row[3])), json.loads(str(row[4])))
                 for row in connection.execute(
-                    "SELECT field_id, read_role_ids, write_role_ids FROM authorization_field_policies"
+                    "SELECT field_id, read_min_level, write_min_level, read_scope_ids, write_scope_ids FROM authorization_field_policies"
                 )
             }
         return [
@@ -137,8 +138,10 @@ class AuthorizationStore:
                 "area": area,
                 "name": name,
                 "description": description,
-                "read_role_ids": rows.get(field_id, ([], []))[0],
-                "write_role_ids": rows.get(field_id, ([], []))[1],
+                "read_min_level": min(rows.get(field_id, (4, 4, [], []))[0], 4),
+                "write_min_level": min(rows.get(field_id, (4, 4, [], []))[1], 4),
+                "read_scope_ids": rows.get(field_id, (4, 4, [], []))[2],
+                "write_scope_ids": rows.get(field_id, (4, 4, [], []))[3],
             }
             for field_id, area, name, description in self._field_catalog()
         ]
@@ -148,22 +151,23 @@ class AuthorizationStore:
         area: str,
         name: str,
         description: str,
-        read_role_ids: list[str],
-        write_role_ids: list[str],
+        read_min_level: int,
+        write_min_level: int,
+        read_scope_ids: list[str],
+        write_scope_ids: list[str],
     ) -> dict[str, Any]:
         field_id = f"custom.{uuid4()}"
-        read_ids = list(dict.fromkeys(read_role_ids))
-        write_ids = list(dict.fromkeys(write_role_ids))
+        read_scopes = _validate_policy(read_min_level, read_scope_ids)
+        write_scopes = _validate_policy(write_min_level, write_scope_ids, write=True)
         with sqlite3.connect(self.path) as connection:
-            self._ensure_roles_exist(connection, [*read_ids, *write_ids])
             try:
                 connection.execute(
                     "INSERT INTO authorization_custom_fields (id, area, name, description) VALUES (?, ?, ?, ?)",
                     (field_id, area, name, description),
                 )
                 connection.execute(
-                    "INSERT INTO authorization_field_policies (field_id, read_role_ids, write_role_ids) VALUES (?, ?, ?)",
-                    (field_id, json.dumps(read_ids), json.dumps(write_ids)),
+                    "INSERT INTO authorization_field_policies (field_id, read_role_ids, write_role_ids, read_min_level, write_min_level, read_scope_ids, write_scope_ids) VALUES (?, '[]', '[]', ?, ?, ?, ?)",
+                    (field_id, read_min_level, write_min_level, json.dumps(read_scopes), json.dumps(write_scopes)),
                 )
             except sqlite3.IntegrityError as error:
                 raise ValueError("Field already exists") from error
@@ -172,18 +176,19 @@ class AuthorizationStore:
     def set_field_policy(
         self,
         field_id: str,
-        read_role_ids: list[str],
-        write_role_ids: list[str],
+        read_min_level: int,
+        write_min_level: int,
+        read_scope_ids: list[str],
+        write_scope_ids: list[str],
     ) -> dict[str, Any]:
         if field_id not in {field[0] for field in self._field_catalog()}:
             raise ValueError("Unknown field")
-        read_ids = list(dict.fromkeys(read_role_ids))
-        write_ids = list(dict.fromkeys(write_role_ids))
+        read_scopes = _validate_policy(read_min_level, read_scope_ids)
+        write_scopes = _validate_policy(write_min_level, write_scope_ids, write=True)
         with sqlite3.connect(self.path) as connection:
-            self._ensure_roles_exist(connection, [*read_ids, *write_ids])
             connection.execute(
-                "INSERT INTO authorization_field_policies (field_id, read_role_ids, write_role_ids) VALUES (?, ?, ?) ON CONFLICT(field_id) DO UPDATE SET read_role_ids = excluded.read_role_ids, write_role_ids = excluded.write_role_ids",
-                (field_id, json.dumps(read_ids), json.dumps(write_ids)),
+                "INSERT INTO authorization_field_policies (field_id, read_role_ids, write_role_ids, read_min_level, write_min_level, read_scope_ids, write_scope_ids) VALUES (?, '[]', '[]', ?, ?, ?, ?) ON CONFLICT(field_id) DO UPDATE SET read_min_level = excluded.read_min_level, write_min_level = excluded.write_min_level, read_scope_ids = excluded.read_scope_ids, write_scope_ids = excluded.write_scope_ids",
+                (field_id, read_min_level, write_min_level, json.dumps(read_scopes), json.dumps(write_scopes)),
             )
         return next(field for field in self.list_field_policies() if field["id"] == field_id)
 
@@ -191,16 +196,17 @@ class AuthorizationStore:
         self,
         payload: dict[str, Any],
         field_ids_by_key: dict[str, str],
-        role_ids: list[str],
+        is_system_admin: bool,
+        scope_levels: dict[str, int],
     ) -> dict[str, Any]:
         return {
             key: value
             for key, value in payload.items()
-            if key not in field_ids_by_key or self._field_allowed(field_ids_by_key[key], role_ids, "read_role_ids")
+            if key not in field_ids_by_key or self._field_allowed(field_ids_by_key[key], is_system_admin, scope_levels, "read")
         }
 
-    def can_write_field(self, field_id: str, role_ids: list[str]) -> bool:
-        return self._field_allowed(field_id, role_ids, "write_role_ids")
+    def can_write_field(self, field_id: str, is_system_admin: bool, scope_levels: dict[str, int]) -> bool:
+        return self._field_allowed(field_id, is_system_admin, scope_levels, "write")
 
     def audit(
         self,
@@ -233,17 +239,25 @@ class AuthorizationStore:
             for row in rows
         ]
 
-    def _field_allowed(self, field_id: str, role_ids: list[str], column: str) -> bool:
-        if SYSTEM_ADMIN_ROLE_ID in role_ids:
+    def _field_allowed(self, field_id: str, is_system_admin: bool, scope_levels: dict[str, int], operation: str) -> bool:
+        if is_system_admin:
             return True
-        if not role_ids:
+        if not scope_levels:
             return False
+        level_column = f"{operation}_min_level"
+        scopes_column = f"{operation}_scope_ids"
         with sqlite3.connect(self.path) as connection:
             row = connection.execute(
-                f"SELECT {column} FROM authorization_field_policies WHERE field_id = ?",
+                f"SELECT {level_column}, {scopes_column} FROM authorization_field_policies WHERE field_id = ?",
                 (field_id,),
             ).fetchone()
-        return row is not None and bool(set(json.loads(str(row[0]))) & set(role_ids))
+        if row is None:
+            return False
+        minimum_level = int(row[0])
+        return any(
+            scope_levels.get(scope_id, 0) >= minimum_level
+            for scope_id in json.loads(str(row[1]))
+        )
 
     def _field_catalog(self) -> list[tuple[str, str, str, str]]:
         with sqlite3.connect(self.path) as connection:
@@ -252,22 +266,19 @@ class AuthorizationStore:
             ).fetchall()
         return [*FIELD_CATALOG, *(tuple(str(value) for value in row) for row in custom_fields)]
 
-    @staticmethod
-    def _ensure_roles_exist(connection: sqlite3.Connection, role_ids: list[str]) -> None:
-        unique_ids = list(dict.fromkeys(role_ids))
-        if not unique_ids:
-            return
-        placeholders = ",".join("?" for _ in unique_ids)
-        row = connection.execute(
-            f"SELECT COUNT(*) FROM identity_roles WHERE id IN ({placeholders})",
-            unique_ids,
-        ).fetchone()
-        if row is None or int(row[0]) != len(unique_ids):
-            raise ValueError("Unknown role")
+def _validate_policy(min_level: int, scope_ids: list[str], *, write: bool = False) -> list[str]:
+    if min_level not in ((3, 4) if write else (2, 3, 4)):
+        raise ValueError("Field write permission must be edit or manage" if write else "Field read permission must be view, edit, or manage")
+    normalized = list(dict.fromkeys(scope_ids))
+    if any(scope_id not in SCOPE_IDS for scope_id in normalized):
+        raise ValueError("Unknown access scope")
+    return [scope_id for scope_id in SCOPE_IDS if scope_id in normalized]
 
 
-def permission_for_request(module_id: ModuleId, method: str) -> str:
-    if module_id == "chat":
-        return "chat.use"
-    operation = "view" if method == "GET" else "manage"
-    return f"{module_id}.{operation}"
+def _legacy_policy(role_ids: list[str]) -> tuple[int, list[str]]:
+    scopes = [scope_id for scope_id in WORKBENCH_SCOPE_IDS if scope_id in role_ids]
+    if "knowledge-admin" in role_ids:
+        scopes.append("knowledge")
+    if "employee" in role_ids:
+        scopes = list(SCOPE_IDS)
+    return (2 if scopes else 4, scopes)

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from io import BytesIO
 from pathlib import Path
@@ -241,7 +242,7 @@ def test_upload_rejects_pdf_over_50_mb(tmp_path: Path) -> None:
     assert response.json()["detail"] == "PDF source exceeds 50 MB"
 
 
-def test_resource_acl_hides_admin_source_from_other_knowledge_roles(tmp_path: Path) -> None:
+def test_resource_acl_hides_admin_source_from_other_knowledge_users(tmp_path: Path) -> None:
     settings = knowledge_settings(tmp_path / "data")
 
     with authenticated_client(settings) as admin:
@@ -256,7 +257,7 @@ def test_resource_acl_hides_admin_source_from_other_knowledge_roles(tmp_path: Pa
                 "display_name": "知识专员",
                 "department": "知识管理",
                 "password": "Knowledge-Password-2026",
-                "role_ids": ["knowledge-admin"],
+                "scope_levels": {"knowledge": 4},
             },
         )
         assert created.status_code == 201
@@ -282,6 +283,57 @@ def test_resource_acl_hides_admin_source_from_other_knowledge_roles(tmp_path: Pa
     assert hidden.status_code == 404
     assert cannot_confirm.status_code == 403
     assert quarantined_file.status_code == 423
+
+
+def test_source_access_requires_knowledge_scope_before_resource_scope(tmp_path: Path) -> None:
+    settings = knowledge_settings(tmp_path / "data")
+
+    with authenticated_client(settings) as admin:
+        source = admin.post(
+            "/api/knowledge/sources",
+            files={"file": ("采购说明书.pdf", pdf_with_text("shared"), "application/pdf")},
+        ).json()
+        admin.post(f"/api/knowledge/sources/{source['id']}/confirm-safe")
+        with sqlite3.connect(settings.database_path) as connection:
+            connection.execute(
+                "UPDATE knowledge_sources SET read_min_level = 2, read_scope_ids = ? WHERE id = ?",
+                (json.dumps(["procurement"]), source["id"]),
+            )
+        admin.post(
+            "/api/users",
+            json={
+                "username": "procurement-reader",
+                "display_name": "采购查看人",
+                "password": "Procurement-Reader-2026",
+                "scope_levels": {"procurement": 2, "knowledge": 2},
+            },
+        )
+        admin.post(
+            "/api/users",
+            json={
+                "username": "procurement-only",
+                "display_name": "仅采购查看人",
+                "password": "Procurement-Only-2026",
+                "scope_levels": {"procurement": 2},
+            },
+        )
+
+        with TestClient(create_app(settings)) as reader:
+            reader.post(
+                "/api/login",
+                json={"username": "procurement-reader", "password": "Procurement-Reader-2026"},
+            )
+            downloaded = reader.get(f"/api/knowledge/sources/{source['id']}/file")
+        with TestClient(create_app(settings)) as procurement_only:
+            procurement_only.post(
+                "/api/login",
+                json={"username": "procurement-only", "password": "Procurement-Only-2026"},
+            )
+            denied = procurement_only.get(f"/api/knowledge/sources/{source['id']}/file")
+
+    assert downloaded.status_code == 200
+    assert downloaded.content.startswith(b"%PDF")
+    assert denied.status_code == 403
 
 
 def test_source_storage_has_no_static_or_traversal_url(tmp_path: Path) -> None:
@@ -319,6 +371,49 @@ def test_derived_index_is_rebuilt_on_restart(tmp_path: Path) -> None:
     assert len(versions.json()) == 1
 
 
+def test_schema_v5_permissions_migrate_to_current_terms(tmp_path: Path) -> None:
+    settings = knowledge_settings(tmp_path / "data")
+
+    with authenticated_client(settings) as client:
+        source = client.post(
+            "/api/knowledge/sources",
+            files={"file": ("旧权限.pdf", pdf_with_text("legacy"), "application/pdf")},
+        ).json()
+        system_only_source = client.post(
+            "/api/knowledge/sources",
+            files={"file": ("旧系统专用.pdf", pdf_with_text("system-only"), "application/pdf")},
+        ).json()
+
+    with sqlite3.connect(settings.database_path) as connection:
+        connection.execute(
+            "UPDATE knowledge_sources SET read_min_level = 1 WHERE id = ?",
+            (source["id"],),
+        )
+        connection.execute(
+            "UPDATE knowledge_sources SET read_min_level = 5, read_scope_ids = ? WHERE id = ?",
+            (json.dumps(["procurement"]), system_only_source["id"]),
+        )
+        connection.execute(
+            "UPDATE schema_metadata SET value = 5 WHERE key = 'knowledge_schema_version'"
+        )
+
+    with authenticated_client(settings):
+        pass
+
+    with sqlite3.connect(settings.database_path) as connection:
+        assert connection.execute(
+            "SELECT read_min_level FROM knowledge_sources WHERE id = ?",
+            (source["id"],),
+        ).fetchone() == (2,)
+        assert connection.execute(
+            "SELECT read_min_level, read_scope_ids FROM knowledge_sources WHERE id = ?",
+            (system_only_source["id"],),
+        ).fetchone() == (4, "[]")
+        assert connection.execute(
+            "SELECT value FROM schema_metadata WHERE key = 'knowledge_schema_version'"
+        ).fetchone() == (6,)
+
+
 def test_multi_source_markdown_requires_access_to_every_source(tmp_path: Path) -> None:
     settings = knowledge_settings(tmp_path / "data")
 
@@ -335,7 +430,7 @@ def test_multi_source_markdown_requires_access_to_every_source(tmp_path: Path) -
                 "display_name": "知识读取人",
                 "department": "知识管理",
                 "password": "Knowledge-Reader-2026",
-                "role_ids": ["knowledge-admin"],
+                "scope_levels": {"knowledge": 4},
             },
         )
 

@@ -27,4 +27,5 @@ def test_create_admin_cli_creates_a_login_without_default_password(
 
     assert result == 0
     assert login.status_code == 200
-    assert [role["id"] for role in login.json()["roles"]] == ["system-admin"]
+    assert login.json()["is_system_admin"] is True
+    assert login.json()["scope_levels"] == {}

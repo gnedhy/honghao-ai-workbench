@@ -188,7 +188,7 @@ export function Sidebar({
           )}
           <button className="profile-trigger" type="button" onClick={onProfileToggle} aria-expanded={profileOpen}>
             <span className="avatar"><img src={userAvatar} alt={`${currentUser.display_name}的虚拟头像`} /></span>
-            <span className="profile-trigger__copy"><strong>{currentUser.display_name}</strong><small>{currentUser.department ?? currentUser.roles[0]?.name ?? "企业员工"}</small></span>
+            <span className="profile-trigger__copy"><strong>{currentUser.display_name}</strong><small>{currentUser.department ?? (currentUser.is_system_admin ? "系统管理员" : "企业用户")}</small></span>
             <ChevronDown size={15} />
           </button>
         </div>

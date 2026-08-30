@@ -13,7 +13,7 @@ from typing import Any, BinaryIO
 from uuid import uuid4
 
 
-KNOWLEDGE_SCHEMA_VERSION = 4
+KNOWLEDGE_SCHEMA_VERSION = 6
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
 
 
@@ -46,6 +46,8 @@ class KnowledgeStore:
                     processing_error TEXT,
                     duplicate_of TEXT REFERENCES knowledge_sources(id),
                     created_by_user_id TEXT NOT NULL REFERENCES identity_users(id),
+                    read_min_level INTEGER NOT NULL DEFAULT 4,
+                    read_scope_ids TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS knowledge_source_read_roles (
@@ -136,6 +138,48 @@ class KnowledgeStore:
                     "UPDATE schema_metadata SET value = ? WHERE key = ?",
                     (4, "knowledge_schema_version"),
                 )
+                version_number = 4
+            if version_number == 4:
+                columns = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(knowledge_sources)")
+                }
+                if "read_min_level" not in columns:
+                    connection.execute(
+                        "ALTER TABLE knowledge_sources ADD COLUMN read_min_level INTEGER NOT NULL DEFAULT 4"
+                    )
+                    connection.execute(
+                        "ALTER TABLE knowledge_sources ADD COLUMN read_scope_ids TEXT NOT NULL DEFAULT '[]'"
+                    )
+                for source_id, in connection.execute("SELECT id FROM knowledge_sources").fetchall():
+                    roles = [
+                        str(row[0])
+                        for row in connection.execute(
+                            "SELECT role_id FROM knowledge_source_read_roles WHERE source_id = ?",
+                            (source_id,),
+                        )
+                    ]
+                    minimum_level, scopes = _legacy_source_policy(roles)
+                    connection.execute(
+                        "UPDATE knowledge_sources SET read_min_level = ?, read_scope_ids = ? WHERE id = ?",
+                        (minimum_level, json.dumps(scopes), source_id),
+                    )
+                connection.execute(
+                    "UPDATE schema_metadata SET value = ? WHERE key = ?",
+                    (5, "knowledge_schema_version"),
+                )
+                version_number = 5
+            if version_number == 5:
+                connection.execute(
+                    "UPDATE knowledge_sources SET read_min_level = 2 WHERE read_min_level = 1"
+                )
+                connection.execute(
+                    "UPDATE knowledge_sources SET read_min_level = 4, read_scope_ids = '[]' WHERE read_min_level = 5"
+                )
+                connection.execute(
+                    "UPDATE schema_metadata SET value = ? WHERE key = ?",
+                    (KNOWLEDGE_SCHEMA_VERSION, "knowledge_schema_version"),
+                )
             connection.execute(
                 "CREATE VIEW IF NOT EXISTS knowledge_derived_index AS SELECT versions.id AS version_id, links.source_id, sources.filename, sources.sha256 FROM knowledge_versions AS versions JOIN knowledge_version_sources AS links ON links.version_id = versions.id JOIN knowledge_sources AS sources ON sources.id = links.source_id"
             )
@@ -162,7 +206,8 @@ class KnowledgeStore:
         filename: str,
         mime_type: str,
         created_by_user_id: str,
-        read_role_ids: list[str],
+        read_min_level: int,
+        read_scope_ids: list[str],
     ) -> dict[str, Any]:
         if mime_type != "application/pdf" or not filename.lower().endswith(".pdf"):
             raise InvalidKnowledgeSourceError("Only PDF sources are accepted")
@@ -199,7 +244,7 @@ class KnowledgeStore:
                 ).fetchone()
                 connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
-                    "INSERT INTO knowledge_sources (id, filename, mime_type, size_bytes, sha256, stored_name, legacy_storage_status, duplicate_of, created_by_user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, 'quarantined', ?, ?, ?)",
+                    "INSERT INTO knowledge_sources (id, filename, mime_type, size_bytes, sha256, stored_name, legacy_storage_status, duplicate_of, created_by_user_id, read_min_level, read_scope_ids, created_at) VALUES (?, ?, ?, ?, ?, ?, 'quarantined', ?, ?, ?, ?, ?)",
                     (
                         source_id,
                         Path(filename).name,
@@ -209,12 +254,10 @@ class KnowledgeStore:
                         stored_name,
                         str(duplicate[0]) if duplicate else None,
                         created_by_user_id,
+                        read_min_level,
+                        json.dumps(list(dict.fromkeys(read_scope_ids))),
                         created_at,
                     ),
-                )
-                connection.executemany(
-                    "INSERT INTO knowledge_source_read_roles (source_id, role_id) VALUES (?, ?)",
-                    [(source_id, role_id) for role_id in dict.fromkeys(read_role_ids)],
                 )
         except Exception:
             target.unlink(missing_ok=True)
@@ -231,15 +274,11 @@ class KnowledgeStore:
     def get_source(self, source_id: str) -> dict[str, Any] | None:
         with sqlite3.connect(self.database_path) as connection:
             row = connection.execute(
-                "SELECT id, filename, mime_type, size_bytes, sha256, stored_name, safety_status, processing_status, duplicate_of, created_at, processing_error FROM knowledge_sources WHERE id = ?",
+                "SELECT id, filename, mime_type, size_bytes, sha256, stored_name, safety_status, processing_status, duplicate_of, created_at, processing_error, read_min_level, read_scope_ids FROM knowledge_sources WHERE id = ?",
                 (source_id,),
             ).fetchone()
             if row is None:
                 return None
-            role_rows = connection.execute(
-                "SELECT role_id FROM knowledge_source_read_roles WHERE source_id = ? ORDER BY rowid",
-                (source_id,),
-            ).fetchall()
         return {
             "id": str(row[0]),
             "filename": str(row[1]),
@@ -252,7 +291,8 @@ class KnowledgeStore:
             "duplicate_of": str(row[8]) if row[8] is not None else None,
             "created_at": str(row[9]),
             "failure_reason": str(row[10]) if row[10] is not None else None,
-            "read_role_ids": [str(role[0]) for role in role_rows],
+            "read_min_level": int(row[11]),
+            "read_scope_ids": json.loads(str(row[12])),
         }
 
     def source_path(self, source: dict[str, Any]) -> Path:
@@ -412,3 +452,16 @@ class KnowledgeStore:
             target.unlink(missing_ok=True)
             raise
         return next(version for version in self.list_versions(source["id"]) if version["id"] == version_id)
+
+
+def _legacy_source_policy(role_ids: list[str]) -> tuple[int, list[str]]:
+    if "employee" in role_ids:
+        return 2, ["knowledge"]
+    if "knowledge-admin" in role_ids:
+        return 4, ["knowledge"]
+    scopes = [
+        scope_id
+        for scope_id in ("management", "procurement", "research", "sales")
+        if scope_id in role_ids
+    ]
+    return (2 if scopes else 4, scopes)

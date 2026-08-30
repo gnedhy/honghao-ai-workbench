@@ -61,7 +61,9 @@ $env:HONGHAO_DATA_DIR = "D:\HonghaoAI\production-data"
 uv run python -m api.cli create-admin
 ```
 
-密码使用随机盐和 `hashlib.scrypt` 保存；浏览器只接收 HttpOnly、SameSite=Strict 的本地登录会话 Cookie。账号停用或角色变化后，既有登录会话会立即失效。
+密码使用随机盐和 `hashlib.scrypt` 保存；浏览器只接收 HttpOnly、SameSite=Strict 的本地登录会话 Cookie。账号停用、系统管理权限或范围等级变化后，既有登录会话会立即失效。
+
+权限采用“每个授权范围独立设置”：普通账号可在采购、研发、销售、总经办工作台和知识库分别获得查看、编辑或管理权限。查看只能读取授权数据；编辑可以新建、修改、导入和提交；管理可以审核、退回、确认、发布及管理范围内业务。系统管理独立设置并自动拥有全部范围。部门仅为人员资料。敏感字段同时校验最低权限与允许范围，未配置开放范围时仅系统管理员可访问。
 
 ### 顶层功能模块状态
 

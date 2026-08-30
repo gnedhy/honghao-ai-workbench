@@ -7,7 +7,7 @@ import sys
 from collections.abc import Sequence
 
 from api.database import Database
-from api.identity import DuplicateIdentityError, IdentityStore, SYSTEM_ADMIN_ROLE_ID
+from api.identity import DuplicateIdentityError, IdentityStore
 from api.settings import Settings
 
 
@@ -47,7 +47,7 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
             display_name=display_name,
             department=department,
             password=password,
-            role_ids=[SYSTEM_ADMIN_ROLE_ID],
+            is_system_admin=True,
         )
     except DuplicateIdentityError:
         print("该用户名已存在。", file=sys.stderr)

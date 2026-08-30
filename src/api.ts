@@ -1,4 +1,4 @@
-import type { ActivationReview, AdminModuleSetting, AdminModuleSettings, AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleMode, ModuleStatus, PermissionDefinition, Project, RolePermissionPolicy, RuntimeEnvironment, Section, SensitiveFieldPolicy, TaskItem, UserRole, WorkbenchStatus } from "./types";
+import type { AccessLevel, AccessScope, ActivationReview, AdminModuleSetting, AdminModuleSettings, AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleMode, ModuleStatus, Project, RuntimeEnvironment, Section, SensitiveFieldPolicy, TaskItem, WorkbenchStatus } from "./types";
 
 export type ServiceHealth = {
   status: "ok";
@@ -83,18 +83,6 @@ export function updateAdminModuleSetting(
   });
 }
 
-export function fetchRoles(): Promise<UserRole[]> {
-  return fetchJson<UserRole[]>("/api/roles");
-}
-
-export function createRole(name: string): Promise<UserRole> {
-  return fetchJson<UserRole>("/api/roles", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-}
-
 export function fetchUsers(): Promise<ManagedUser[]> {
   return fetchJson<ManagedUser[]>("/api/users");
 }
@@ -104,7 +92,8 @@ export function createUser(input: {
   display_name: string;
   department: string | null;
   password: string;
-  role_ids: string[];
+  is_system_admin: boolean;
+  scope_levels: Partial<Record<AccessScope, AccessLevel>>;
 }): Promise<ManagedUser> {
   return fetchJson<ManagedUser>("/api/users", {
     method: "POST",
@@ -113,27 +102,11 @@ export function createUser(input: {
   });
 }
 
-export function updateUser(userId: string, input: { is_active?: boolean; role_ids?: string[] }): Promise<ManagedUser> {
+export function updateUser(userId: string, input: { is_active?: boolean; is_system_admin?: boolean; scope_levels?: Partial<Record<AccessScope, AccessLevel>> }): Promise<ManagedUser> {
   return fetchJson<ManagedUser>(`/api/users/${userId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
-  });
-}
-
-export function fetchPermissionCatalog(): Promise<PermissionDefinition[]> {
-  return fetchJson<PermissionDefinition[]>("/api/admin/permissions");
-}
-
-export function fetchRolePermissions(): Promise<RolePermissionPolicy[]> {
-  return fetchJson<RolePermissionPolicy[]>("/api/admin/role-permissions");
-}
-
-export function updateRolePermissions(roleId: string, permissionIds: string[]): Promise<RolePermissionPolicy> {
-  return fetchJson<RolePermissionPolicy>(`/api/admin/roles/${roleId}/permissions`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ permission_ids: permissionIds }),
   });
 }
 
@@ -153,7 +126,7 @@ export function createSensitiveField(
 
 export function updateSensitiveField(
   fieldId: string,
-  input: { read_role_ids: string[]; write_role_ids: string[] },
+  input: Pick<SensitiveFieldPolicy, "read_min_level" | "write_min_level" | "read_scope_ids" | "write_scope_ids">,
 ): Promise<SensitiveFieldPolicy> {
   return fetchJson<SensitiveFieldPolicy>(`/api/admin/fields/${fieldId}`, {
     method: "PUT",

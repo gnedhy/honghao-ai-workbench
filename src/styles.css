@@ -597,7 +597,7 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .admin-form-grid textarea { resize: vertical; padding-top: 9px; padding-bottom: 9px; line-height: 1.5; }
 .admin-form-grid input:focus, .admin-form-grid select:focus, .admin-form-grid textarea:focus, .role-create input:focus { border-color: #9ba4ac; box-shadow: 0 0 0 3px rgba(88,99,108,.09); }
 .admin-form-grid__wide { grid-column: 1 / -1; }
-.admin-field-form .field-role-grid { margin-top: 20px; }
+.admin-field-form .field-policy-list { margin-top: 20px; }
 .admin-form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .admin-form-actions .primary-button, .admin-form-actions .secondary-button, .admin-section-heading .secondary-button { min-height: 34px; padding: 7px 11px; font-size: 12px; }
 .admin-split { display: grid; min-height: 430px; grid-template-columns: 220px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--border); border-radius: 11px; }
@@ -629,8 +629,38 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .role-checks > div { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 .role-checks label { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid #e1e5e7; border-radius: 8px; background: #fff; color: #596168; font-size: 11px; cursor: pointer; }
 .role-checks input, .permission-groups input { width: 14px; height: 14px; margin: 0; accent-color: #34383b; }
+.scope-access-editor { min-width: 0; margin: 18px 0 0; padding: 0; border: 0; }
+.scope-access-editor > legend { color: #555d63; font-size: 11.5px; font-weight: 600; }
+.scope-access-editor > legend > span { display: inline-flex; align-items: center; gap: 4px; }
+.scope-access-editor > p { margin: 4px 0 10px; color: #899198; font-size: 10px; }
+.access-policy-help { position: relative; display: grid; width: 20px; height: 20px; place-items: center; border-radius: 6px; color: #899198; background: transparent; cursor: help; }
+.access-policy-help:hover, .access-policy-help:focus-visible { color: #34383b; background: #e6e9eb; outline: none; }
+.access-policy-help [role="tooltip"] { position: absolute; z-index: 4; top: calc(100% + 6px); left: 0; display: grid; width: 300px; max-width: calc(100vw - 56px); grid-template-columns: 34px minmax(0, 1fr); gap: 6px 9px; padding: 10px 11px; border: 1px solid #dde1e4; border-radius: 9px; color: #454c51; background: #fff; box-shadow: 0 10px 28px rgba(32,39,44,.14); font-size: 10px; font-weight: 400; line-height: 1.45; opacity: 0; pointer-events: none; transform: translateY(-3px); transition: opacity 120ms ease, transform 120ms ease; }
+.access-policy-help [role="tooltip"] strong { color: #34383b; font-size: 10px; }
+.access-policy-help [role="tooltip"] small { color: #687178; font-size: 10px; }
+.access-policy-help:hover [role="tooltip"], .access-policy-help:focus [role="tooltip"] { opacity: 1; transform: translateY(0); }
+.system-admin-option { display: flex; align-items: flex-start; gap: 8px; padding: 10px; border: 1px solid #e1e5e7; border-radius: 9px; cursor: pointer; }
+.system-admin-option[data-selected="true"] { border-color: #aeb6bc; background: #f1f3f4; }
+.system-admin-option input { width: 14px; height: 14px; margin: 1px 0 0; accent-color: #34383b; }
+.system-admin-option span { display: grid; gap: 3px; }
+.system-admin-option strong { font-size: 10.5px; }
+.system-admin-option small { color: #858d94; font-size: 9.5px; line-height: 1.4; }
+.scope-access-list { margin-top: 10px; border: 1px solid #e3e6e8; border-radius: 9px; }
+.scope-access-row { display: grid; grid-template-columns: minmax(120px, 1fr) auto; align-items: center; gap: 12px; padding: 8px 10px; }
+.scope-access-row + .scope-access-row { border-top: 1px solid #eceeef; }
+.scope-access-row > strong { font-size: 11px; font-weight: 600; }
+.scope-access-row > div { display: flex; gap: 3px; }
+.scope-access-row button { min-width: 42px; min-height: 28px; padding: 4px 7px; border-radius: 7px; color: #757d83; background: transparent; font-size: 10px; cursor: pointer; }
+.scope-access-row button:hover:not(:disabled) { background: #f0f2f3; }
+.scope-access-row button[data-selected="true"] { color: #24292d; background: #e5e9eb; box-shadow: inset 0 0 0 1px #d9dee1; }
+.scope-access-list[aria-disabled="true"] { opacity: .45; }
+.access-preview { margin-top: 16px; padding: 10px 12px; border-radius: 9px; background: #f4f6f7; }
+.access-preview strong { font-size: 11.5px; }
+.access-preview p { margin: 4px 0 0; color: #747d84; font-size: 10.5px; line-height: 1.55; }
 .policy-switch { display: inline-flex; gap: 2px; padding: 3px; border-radius: 9px; background: #f0f2f3; }
 .policy-switch button { min-height: 28px; padding: 5px 9px; border-radius: 7px; color: #777f86; background: transparent; font-size: 11px; cursor: pointer; }
+.policy-switch button:hover { color: #40474c; }
+.policy-switch button:focus-visible { outline: 2px solid #858f96; outline-offset: 2px; }
 .policy-switch button.is-active { color: var(--text); background: #fff; box-shadow: 0 1px 3px rgba(24,31,37,.08); }
 .permission-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .permission-groups fieldset { min-width: 0; margin: 0; padding: 11px; border: 1px solid #e5e8ea; border-radius: 9px; }
@@ -640,8 +670,20 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .permission-groups label > span { display: grid; gap: 3px; }
 .permission-groups strong { font-size: 11.5px; font-weight: 600; }
 .permission-groups small { color: #899198; font-size: 9.5px; line-height: 1.4; }
-.field-role-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-.field-role-grid > .role-checks + .role-checks { padding-left: 18px; border-left: 1px solid var(--border); }
+.field-policy-list { border-top: 1px solid var(--border); }
+.field-policy-rule { display: grid; min-width: 0; grid-template-columns: 132px minmax(0, 1fr); gap: 14px 18px; padding: 18px 0; }
+.field-policy-rule + .field-policy-rule { border-top: 1px solid var(--border); }
+.field-policy-rule > header { grid-column: 1 / -1; }
+.field-policy-rule > header strong { font-size: 12.5px; }
+.field-policy-rule > header p { max-width: 66ch; margin: 4px 0 0; color: #858d94; font-size: 10.5px; line-height: 1.5; }
+.field-policy-levels, .field-policy-scopes { min-width: 0; margin: 0; padding: 0; border: 0; }
+.field-policy-levels legend, .field-policy-scopes legend { margin-bottom: 8px; padding: 0; color: #555d63; font-size: 10.5px; font-weight: 600; }
+.field-policy-scopes > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.field-policy-scopes label { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid #e1e5e7; border-radius: 8px; color: #596168; background: #fff; font-size: 10.5px; cursor: pointer; }
+.field-policy-scopes label:hover { background: #f7f8f9; }
+.field-policy-scopes input { width: 14px; height: 14px; margin: 0; accent-color: #34383b; }
+.field-policy-scopes > p { margin: 8px 0 0; color: #858d94; font-size: 10px; }
+.field-policy-scopes > p[data-empty="true"] { color: #8b6663; }
 .audit-list { border-top: 1px solid var(--border); }
 .audit-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 11px 0; border-bottom: 1px solid #eceeef; }
 .audit-row__icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; color: #687179; background: #f0f2f3; }
@@ -891,8 +933,12 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   .admin-split { display: block; min-height: 0; overflow: visible; border: 0; border-radius: 0; }
   .admin-list-panel { max-height: 250px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
   .admin-detail-panel { margin-top: 12px; padding: 16px 0 4px; overflow: visible; }
-  .admin-form-grid, .permission-groups, .field-role-grid { grid-template-columns: 1fr; }
-  .field-role-grid > .role-checks + .role-checks { padding-top: 17px; padding-left: 0; border-top: 1px solid var(--border); border-left: 0; }
+  .admin-form-grid, .permission-groups { grid-template-columns: 1fr; }
+  .scope-access-row { grid-template-columns: 1fr; gap: 7px; }
+  .scope-access-row > div { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .scope-access-row button { min-width: 0; }
+  .access-policy-help [role="tooltip"] { left: -100px; }
+  .field-policy-rule { grid-template-columns: 1fr; gap: 14px; }
   .global-search-dialog { width: calc(100% - 20px); max-height: calc(100dvh - 78px); margin-top: 68px; border-radius: 14px; }
   .global-search { max-height: calc(100dvh - 78px); }
   .global-search__scope-row { align-items: stretch; flex-direction: column; gap: 4px; padding: 6px 10px 8px; }

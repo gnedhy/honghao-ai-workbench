@@ -2,18 +2,20 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
+import sqlite3
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from api.authorization import AuthorizationStore, PERMISSIONS, permission_for_request
+from api.authorization import AUTHORIZATION_SCHEMA_VERSION, AuthorizationStore
 from api.database import Database, SubmissionConflictError
-from api.identity import DuplicateIdentityError, IdentityStore, SESSION_COOKIE_NAME
-from api.knowledge import InvalidKnowledgeSourceError, KnowledgeStore
+from api.identity import IDENTITY_SCHEMA_VERSION, DuplicateIdentityError, IdentityStore, SESSION_COOKIE_NAME
+from api.knowledge import KNOWLEDGE_SCHEMA_VERSION, InvalidKnowledgeSourceError, KnowledgeStore
 from api.modules import (
     MODULE_IDS,
     ModuleId,
@@ -25,10 +27,33 @@ from api.modules import (
 )
 from api.settings import Settings
 from api.workbenches import WORKBENCH_IDS, WorkbenchId, WorkbenchMode
+from scripts.backup_database import backup_database
 
 
 API_VERSION = "0.1.0"
 SERVICE_NAME = "honghao-ai-api"
+
+
+def backup_before_access_migration(settings: Settings) -> Path | None:
+    targets = {
+        "identity_schema_version": IDENTITY_SCHEMA_VERSION,
+        "authorization_schema_version": AUTHORIZATION_SCHEMA_VERSION,
+        "knowledge_schema_version": KNOWLEDGE_SCHEMA_VERSION,
+    }
+    with sqlite3.connect(settings.database_path) as connection:
+        versions = {
+            str(key): int(value)
+            for key, value in connection.execute(
+                "SELECT key, value FROM schema_metadata WHERE key IN (?, ?, ?)",
+                tuple(targets),
+            )
+        }
+    if not any(key in versions and versions[key] < target for key, target in targets.items()):
+        return None
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    destination = settings.data_dir / "backups" / f"pre-access-level-migration-{timestamp}.db"
+    backup_database(settings.database_path, destination)
+    return destination
 
 
 class HealthResponse(BaseModel):
@@ -70,10 +95,9 @@ class LoginRequest(BaseModel):
     password: Annotated[str, StringConstraints(min_length=1, max_length=1_000)]
 
 
-class RoleResponse(BaseModel):
-    id: str
-    name: str
-    system: bool
+AccessLevel = Literal[2, 3, 4]
+FieldWriteAccessLevel = Literal[3, 4]
+AccessScope = Literal["management", "procurement", "research", "sales", "knowledge"]
 
 
 class CurrentUserResponse(BaseModel):
@@ -81,42 +105,38 @@ class CurrentUserResponse(BaseModel):
     username: str
     display_name: str
     department: str | None
-    roles: list[RoleResponse]
+    is_system_admin: bool
+    scope_levels: dict[AccessScope, AccessLevel]
 
 
 class UserResponse(CurrentUserResponse):
     is_active: bool
 
 
-class RoleCreate(BaseModel):
-    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
-
-
 class UserCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     username: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9._-]+$")]
     display_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
     department: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)] | None = None
     password: Annotated[str, StringConstraints(min_length=12, max_length=1_000)]
-    role_ids: Annotated[list[str], Field(min_length=1)]
+    is_system_admin: bool = False
+    scope_levels: dict[AccessScope, AccessLevel] = Field(default_factory=dict)
 
 
 class UserUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     is_active: bool | None = None
-    role_ids: Annotated[list[str], Field(min_length=1)] | None = None
-
-
-class RolePermissionsUpdate(BaseModel):
-    permission_ids: list[str]
-
-
-class RolePermissionsResponse(BaseModel):
-    role_id: str
-    permission_ids: list[str]
+    is_system_admin: bool | None = None
+    scope_levels: dict[AccessScope, AccessLevel] | None = None
 
 
 class FieldPolicyUpdate(BaseModel):
-    read_role_ids: list[str]
-    write_role_ids: list[str]
+    read_min_level: AccessLevel
+    write_min_level: FieldWriteAccessLevel
+    read_scope_ids: list[AccessScope]
+    write_scope_ids: list[AccessScope]
 
 
 class SensitiveFieldCreate(FieldPolicyUpdate):
@@ -130,8 +150,10 @@ class FieldPolicyResponse(BaseModel):
     area: str
     name: str
     description: str
-    read_role_ids: list[str]
-    write_role_ids: list[str]
+    read_min_level: int
+    write_min_level: int
+    read_scope_ids: list[AccessScope]
+    write_scope_ids: list[AccessScope]
 
 
 class AuditEventResponse(BaseModel):
@@ -222,7 +244,8 @@ class KnowledgeSourceResponse(BaseModel):
     failure_reason: str | None
     duplicate_of: str | None
     created_at: str
-    read_role_ids: list[str]
+    read_min_level: int
+    read_scope_ids: list[AccessScope]
 
 
 class KnowledgeVersionResponse(BaseModel):
@@ -247,6 +270,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         runtime_settings.ensure_directories()
         database.initialize()
+        backup_before_access_migration(runtime_settings)
         identities.initialize()
         authorization.initialize()
         knowledge.initialize()
@@ -266,7 +290,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def require_system_admin(request: Request) -> dict:
         user = current_user(request)
-        if not any(role["id"] == "system-admin" for role in user["roles"]):
+        if not user["is_system_admin"]:
             raise HTTPException(status_code=403, detail="System administrator required")
         return user
 
@@ -275,15 +299,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return
         if runtime_settings.module_modes["tasks"] == "off":
             raise HTTPException(status_code=404, detail="Module not available")
-        if not authorization.has_permission(
-            [role["id"] for role in user["roles"]],
-            "tasks.manage",
+        if not authorization.has_module_access(
+            user["is_system_admin"], user["scope_levels"], "tasks", "POST"
         ):
             raise HTTPException(status_code=403, detail="Permission denied")
 
     def can_read_source(source: dict, user: dict) -> bool:
-        role_ids = [role["id"] for role in user["roles"]]
-        return "system-admin" in role_ids or bool(set(role_ids) & set(source["read_role_ids"]))
+        return user["is_system_admin"] or any(
+            user["scope_levels"].get(scope_id, 0) >= source["read_min_level"]
+            for scope_id in source["read_scope_ids"]
+        )
 
     def readable_source(source_id: str, request: Request) -> dict:
         source = knowledge.get_source(source_id)
@@ -300,8 +325,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse(status_code=404, content={"detail": "Module not available"})
         if module_id is not None:
             user = getattr(request.state, "current_user", None)
-            role_ids = [role["id"] for role in user["roles"]] if user else []
-            if not authorization.has_permission(role_ids, permission_for_request(module_id, request.method)):
+            if user is None or not authorization.has_module_access(
+                user["is_system_admin"], user["scope_levels"], module_id, request.method
+            ):
                 return JSONResponse(status_code=403, content={"detail": "Permission denied"})
         return await call_next(request)
 
@@ -369,26 +395,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         identities.logout(token)
         response.delete_cookie(SESSION_COOKIE_NAME, path="/api", httponly=True, samesite="strict")
 
-    @app.get("/api/roles", response_model=list[RoleResponse])
-    def list_roles(request: Request) -> list[RoleResponse]:
-        require_system_admin(request)
-        return [RoleResponse(**role) for role in identities.list_roles()]
-
-    @app.post("/api/roles", response_model=RoleResponse, status_code=201)
-    def create_role(role: RoleCreate, request: Request) -> RoleResponse:
-        actor = require_system_admin(request)
-        try:
-            created = identities.create_role(role.name)
-        except DuplicateIdentityError as error:
-            raise HTTPException(status_code=409, detail="Role already exists") from error
-        authorization.audit(
-            "role.created",
-            actor_user_id=actor["id"],
-            target_type="role",
-            target_id=created["id"],
-        )
-        return RoleResponse(**created)
-
     @app.post("/api/users", response_model=UserResponse, status_code=201)
     def create_user(user: UserCreate, request: Request) -> UserResponse:
         actor = require_system_admin(request)
@@ -398,7 +404,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 display_name=user.display_name,
                 department=user.department,
                 password=user.password,
-                role_ids=user.role_ids,
+                is_system_admin=user.is_system_admin,
+                scope_levels=user.scope_levels,
             )
         except DuplicateIdentityError as error:
             raise HTTPException(status_code=409, detail="User already exists") from error
@@ -420,18 +427,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.patch("/api/users/{user_id}", response_model=UserResponse)
     def update_user(user_id: str, update: UserUpdate, request: Request) -> UserResponse:
         actor = require_system_admin(request)
-        if update.is_active is None and update.role_ids is None:
+        if update.is_active is None and update.is_system_admin is None and update.scope_levels is None:
             raise HTTPException(status_code=422, detail="No account changes supplied")
-        if user_id == actor["id"] and (
-            update.is_active is False
-            or (update.role_ids is not None and "system-admin" not in update.role_ids)
-        ):
-            raise HTTPException(status_code=422, detail="Cannot remove access from the current administrator")
+        if user_id == actor["id"]:
+            raise HTTPException(status_code=422, detail="Cannot modify the current administrator")
         try:
             user = identities.update_user(
                 user_id,
                 is_active=update.is_active,
-                role_ids=update.role_ids,
+                is_system_admin=update.is_system_admin,
+                scope_levels=update.scope_levels,
             )
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
@@ -444,49 +449,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             target_id=user_id,
         )
         return UserResponse(**user)
-
-    @app.get("/api/admin/permissions")
-    def list_permissions(request: Request) -> list[dict[str, str]]:
-        require_system_admin(request)
-        return [
-            {"id": permission_id, "module_id": module_id, "name": name, "description": description}
-            for permission_id, module_id, name, description in PERMISSIONS
-        ]
-
-    @app.get("/api/admin/role-permissions", response_model=list[RolePermissionsResponse])
-    def list_role_permissions(request: Request) -> list[RolePermissionsResponse]:
-        require_system_admin(request)
-        all_permission_ids = [permission[0] for permission in PERMISSIONS]
-        return [
-            RolePermissionsResponse(
-                role_id=role["id"],
-                permission_ids=(
-                    all_permission_ids
-                    if role["id"] == "system-admin"
-                    else authorization.permissions_for_role(role["id"])
-                ),
-            )
-            for role in identities.list_roles()
-        ]
-
-    @app.put("/api/admin/roles/{role_id}/permissions", response_model=RolePermissionsResponse)
-    def update_role_permissions(
-        role_id: str,
-        update: RolePermissionsUpdate,
-        request: Request,
-    ) -> RolePermissionsResponse:
-        actor = require_system_admin(request)
-        try:
-            permission_ids = authorization.set_role_permissions(role_id, update.permission_ids)
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        authorization.audit(
-            "role.permissions.updated",
-            actor_user_id=actor["id"],
-            target_type="role",
-            target_id=role_id,
-        )
-        return RolePermissionsResponse(role_id=role_id, permission_ids=permission_ids)
 
     @app.get("/api/admin/fields", response_model=list[FieldPolicyResponse])
     def list_field_policies(request: Request) -> list[FieldPolicyResponse]:
@@ -504,8 +466,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 create.area,
                 create.name,
                 create.description,
-                create.read_role_ids,
-                create.write_role_ids,
+                create.read_min_level,
+                create.write_min_level,
+                create.read_scope_ids,
+                create.write_scope_ids,
             )
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
@@ -527,8 +491,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             field = authorization.set_field_policy(
                 field_id,
-                update.read_role_ids,
-                update.write_role_ids,
+                update.read_min_level,
+                update.write_min_level,
+                update.read_scope_ids,
+                update.write_scope_ids,
             )
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
@@ -614,20 +580,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/api/workbenches", response_model=list[WorkbenchStatusResponse])
-    def list_workbenches() -> list[WorkbenchStatusResponse]:
+    def list_workbenches(request: Request) -> list[WorkbenchStatusResponse]:
+        user = current_user(request)
         return [
             WorkbenchStatusResponse(id=workbench_id, mode=runtime_settings.workbench_modes[workbench_id])
             for workbench_id in WORKBENCH_IDS
+            if authorization.can_access_workbench(
+                user["is_system_admin"], user["scope_levels"], workbench_id
+            )
         ]
 
     @app.get("/api/modules", response_model=list[ModuleStatusResponse])
     def list_modules(request: Request) -> list[ModuleStatusResponse]:
         user = current_user(request)
-        role_ids = [role["id"] for role in user["roles"]]
         return [
             ModuleStatusResponse(id=module_id, mode=runtime_settings.module_modes[module_id])
             for module_id in MODULE_IDS
-            if authorization.has_permission(role_ids, permission_for_request(module_id, "GET"))
+            if authorization.has_module_access(
+                user["is_system_admin"], user["scope_levels"], module_id, "GET"
+            )
         ]
 
     @app.post("/api/knowledge/sources", response_model=KnowledgeSourceResponse, status_code=201)
@@ -639,7 +610,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 filename=file.filename or "source.pdf",
                 mime_type=file.content_type or "",
                 created_by_user_id=actor["id"],
-                read_role_ids=[role["id"] for role in actor["roles"]],
+                read_min_level=actor["scope_levels"].get("knowledge", 4),
+                read_scope_ids=[] if actor["is_system_admin"] else ["knowledge"],
             )
         except InvalidKnowledgeSourceError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
@@ -658,8 +630,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/knowledge/sources/{source_id}/file")
     def download_knowledge_source(source_id: str, request: Request) -> FileResponse:
         source = readable_source(source_id, request)
-        role_ids = [role["id"] for role in current_user(request)["roles"]]
-        if source["safety_status"] == "quarantined" and "system-admin" not in role_ids:
+        if source["safety_status"] == "quarantined" and not current_user(request)["is_system_admin"]:
             raise HTTPException(status_code=423, detail="Knowledge source is quarantined")
         return FileResponse(
             knowledge.source_path(source),
