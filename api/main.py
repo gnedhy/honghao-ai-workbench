@@ -350,6 +350,9 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     @app.get("/api/readiness", response_model=ReadinessResponse)
     def readiness() -> ReadinessResponse | JSONResponse:
         checks = readiness_checks(runtime_settings)
+        checks["runtime_startup"] = (
+            "failed" if app.state.startup_error is not None else "ok"
+        )
         response = ReadinessResponse(
             status="ready" if all(value == "ok" for value in checks.values()) else "not_ready",
             checks=cast(dict[str, Literal["ok", "failed"]], checks),
@@ -852,6 +855,7 @@ def create_unready_app(static_dir: Path | None = None) -> FastAPI:
                 "database": "failed",
                 "module_configuration": "failed",
                 "schema_versions": "failed",
+                "runtime_startup": "failed",
             },
         )
         return JSONResponse(status_code=503, content=response.model_dump())

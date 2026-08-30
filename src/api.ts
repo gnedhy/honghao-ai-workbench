@@ -20,6 +20,8 @@ export async function fetchServiceHealth(signal?: AbortSignal): Promise<ServiceH
   if (health.status !== "ok" || typeof health.api_version !== "string") {
     throw new Error("Health response is invalid");
   }
+  const readiness = await fetch("/api/readiness", { signal });
+  if (!readiness.ok) throw new Error(`Readiness request failed with ${readiness.status}`);
   return health;
 }
 

@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -51,6 +52,7 @@ def test_readiness_reports_runtime_dependencies_and_detects_missing_database(
             "data_directory": "ok",
             "database": "ok",
             "module_configuration": "ok",
+            "runtime_startup": "ok",
             "schema_versions": "ok",
         },
     }
@@ -85,6 +87,27 @@ def test_migration_mismatch_starts_degraded_and_reports_not_ready(tmp_path: Path
     assert health.status_code == 200
     assert readiness.status_code == 503
     assert readiness.json()["checks"]["schema_versions"] == "failed"
+    assert protected.status_code == 503
+
+
+def test_startup_failure_cannot_report_ready(tmp_path: Path) -> None:
+    settings = Settings.from_data_dir(tmp_path / "data")
+    with TestClient(create_app(settings)):
+        pass
+
+    marker = settings.data_dir / ".service.pid"
+    marker.write_text(f"service:{os.getpid()}", encoding="ascii")
+    try:
+        with TestClient(create_app(settings)) as client:
+            health = client.get("/api/health")
+            readiness = client.get("/api/readiness")
+            protected = client.get("/api/modules")
+    finally:
+        marker.unlink(missing_ok=True)
+
+    assert health.status_code == 200
+    assert readiness.status_code == 503
+    assert readiness.json()["checks"]["runtime_startup"] == "failed"
     assert protected.status_code == 503
 
 
