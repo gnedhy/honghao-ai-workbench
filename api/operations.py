@@ -20,6 +20,7 @@ from api.database import SCHEMA_VERSION, Database
 from api.identity import IDENTITY_SCHEMA_VERSION, IdentityStore
 from api.knowledge import KNOWLEDGE_SCHEMA_VERSION, KnowledgeStore
 from api.modules import load_persisted_module_modes
+from api.procurement import PROCUREMENT_SCHEMA_VERSION, ProcurementStore
 from api.settings import Settings
 from api.workbenches import load_persisted_workbench_modes
 from scripts.backup_database import backup_database
@@ -31,8 +32,9 @@ _ACTIVE_MARKERS: dict[Path, tuple[str, int]] = {}
 _ACTIVE_MARKERS_LOCK = threading.Lock()
 
 
-def migrate_data(settings: Settings) -> dict[str, int]:
+def migrate_data(settings: Settings, *, include_workbenches: bool = True) -> dict[str, int]:
     settings.ensure_directories()
+    database_preexisted = settings.database_path.is_file()
     database = Database(settings.database_path)
     database.initialize()
     _backup_before_access_migration(settings)
@@ -42,12 +44,30 @@ def migrate_data(settings: Settings) -> dict[str, int]:
     identities.initialize()
     authorization.initialize()
     knowledge.initialize()
-    return {
+    versions = {
         "core": database.schema_version(),
         "identity": IDENTITY_SCHEMA_VERSION,
         "authorization": AUTHORIZATION_SCHEMA_VERSION,
         "knowledge": knowledge.schema_version(),
     }
+    if include_workbenches and settings.workbench_modes["procurement"] == "active":
+        versions["procurement"] = migrate_procurement_data(
+            settings,
+            backup_before_migration=database_preexisted,
+        )
+    return versions
+
+
+def migrate_procurement_data(settings: Settings, *, backup_before_migration: bool = True) -> int:
+    procurement = ProcurementStore(settings.database_path)
+    if backup_before_migration and "workbench_procurement_schema_version" not in _schema_versions(settings.database_path):
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        backup_database(
+            settings.database_path,
+            settings.data_dir / "backups" / f"pre-procurement-migration-{timestamp}.db",
+        )
+    procurement.initialize()
+    return procurement.schema_version()
 
 
 def create_snapshot(settings: Settings, destination_root: Path) -> Path:
@@ -184,15 +204,19 @@ def restore_snapshot(settings: Settings, snapshot: Path) -> Path | None:
 
 def doctor(settings: Settings) -> list[tuple[str, str, bool | None]]:
     checks: list[tuple[str, str, bool | None]] = []
+    versions: dict[str, int] = {}
     directory_detail, directory_ready = _data_directory_status(settings)
     checks.append(("数据目录", directory_detail, directory_ready))
     try:
         versions = _schema_versions(settings.database_path)
-        valid = versions == _expected_schema_versions()
+        valid = _core_schema_versions_valid(versions)
         checks.append(("数据库", json.dumps(versions, ensure_ascii=False), valid))
     except (OSError, sqlite3.Error, RuntimeError) as error:
         checks.append(("数据库", str(error), False))
     checks.append(("模块配置", f"{settings.environment} / 已验证", True))
+    if settings.workbench_modes["procurement"] == "active":
+        procurement_version = versions.get("workbench_procurement_schema_version")
+        checks.append(("采购工作台", f"schema {procurement_version or '未初始化'}", procurement_version == PROCUREMENT_SCHEMA_VERSION))
     try:
         from pypdf import PdfReader  # noqa: F401
 
@@ -221,7 +245,7 @@ def readiness_checks(settings: Settings) -> dict[str, str]:
         checks["database"] = "ok"
         try:
             versions = _schema_versions(settings.database_path)
-            if versions == _expected_schema_versions():
+            if _core_schema_versions_valid(versions):
                 checks["schema_versions"] = "ok"
         except (OSError, sqlite3.Error, RuntimeError):
             pass
@@ -262,6 +286,10 @@ def _expected_schema_versions() -> dict[str, int]:
         "authorization_schema_version": AUTHORIZATION_SCHEMA_VERSION,
         "knowledge_schema_version": KNOWLEDGE_SCHEMA_VERSION,
     }
+
+
+def _core_schema_versions_valid(versions: dict[str, int]) -> bool:
+    return all(versions.get(key) == value for key, value in _expected_schema_versions().items())
 
 
 @contextmanager
@@ -347,12 +375,13 @@ def _schema_versions(database_path: Path) -> dict[str, int]:
         "identity_schema_version",
         "authorization_schema_version",
         "knowledge_schema_version",
+        "workbench_procurement_schema_version",
     )
     with closing(sqlite3.connect(database_path)) as connection:
         return {
             str(key): int(value)
             for key, value in connection.execute(
-                "SELECT key, value FROM schema_metadata WHERE key IN (?, ?, ?, ?)",
+                "SELECT key, value FROM schema_metadata WHERE key IN (?, ?, ?, ?, ?)",
                 keys,
             )
         }

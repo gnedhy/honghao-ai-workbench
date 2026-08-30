@@ -1,0 +1,80 @@
+.root { position: relative; }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 22px; border-bottom: 1px solid var(--border); }
+.header h1 { margin: 9px 0 6px; font-size: 28px; font-weight: 650; letter-spacing: -.025em; }
+.header p { max-width: 620px; margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.65; }
+.eyebrow { color: var(--green); font-size: 10.5px; }
+.actions { display: flex; flex: none; gap: 8px; }
+.actions button:disabled, .importActions button:disabled { cursor: default; opacity: .45; }
+.notice { display: flex; align-items: center; gap: 7px; margin-top: 14px; padding: 9px 11px; border-radius: 8px; color: #197a4b; background: rgba(25,154,90,.075); font-size: 11px; }
+.notice button { display: grid; margin-left: auto; place-items: center; color: inherit; background: transparent; cursor: pointer; }
+.tabs { display: flex; gap: 18px; margin: 20px 0 25px; border-bottom: 1px solid var(--border); }
+.tabs button { position: relative; padding: 0 1px 10px; color: #747c83; background: transparent; font-size: 11.5px; cursor: pointer; }
+.tabs button::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 1px; background: transparent; content: ""; transition: background-color var(--motion-fast) ease; }
+.tabs button:hover, .tabs .activeTab { color: var(--text); }
+.tabs .activeTab::after { background: var(--text); }
+.section { min-width: 0; }
+.sectionHeading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 13px; }
+.sectionHeading span, .sectionHeading small { color: #92999f; font-size: 10px; }
+.sectionHeading h2 { margin: 4px 0 0; font-size: 16px; font-weight: 620; }
+.sectionHeading button { color: #626a71; background: transparent; font-size: 10.5px; cursor: pointer; }
+.tableWrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 9px; }
+.table { width: 100%; min-width: 690px; border-collapse: collapse; font-size: 11.5px; }
+.table th { padding: 9px 12px; color: #7d858c; background: #f7f8f9; font-size: 10px; font-weight: 560; text-align: left; }
+.table td { padding: 11px 12px; border-top: 1px solid #e8ebed; color: #535b62; font-variant-numeric: tabular-nums; }
+.table td:first-child span, .table td:first-child strong { display: block; }
+.table td:first-child span { margin-top: 2px; color: #858d94; font-size: 10px; }
+.table td:first-child strong { color: var(--text); font-weight: 610; }
+.table .suggested { color: var(--text); font-weight: 620; }
+.issueList, .batchList { border-top: 1px solid var(--border); }
+.issueList > div, .batchList > div { display: flex; min-height: 58px; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--border); }
+.issueList svg { color: var(--amber); }
+.batchList svg { color: var(--green); }
+.issueList span, .batchList span { display: grid; min-width: 0; flex: 1; gap: 3px; }
+.issueList strong, .batchList strong { font-size: 11.5px; font-weight: 610; }
+.issueList small, .batchList small { color: #838b92; font-size: 10px; }
+.issueList em, .batchList em { padding: 3px 7px; border-radius: 999px; color: #9a650f; background: rgba(232,154,32,.09); font-size: 9.5px; font-style: normal; }
+.issueList .reviewed, .batchList em { color: #197a4b; background: rgba(25,154,90,.08); }
+.issueList button { min-height: 30px; padding: 5px 9px; font-size: 10.5px; }
+.empty { display: grid; min-height: 240px; place-content: center; justify-items: center; color: #8a9298; text-align: center; }
+.empty strong { margin-top: 10px; color: #596168; font-size: 13px; }
+.empty p { margin: 5px 0 0; font-size: 11px; }
+.importPanel { position: absolute; top: 18px; right: 22px; z-index: 3; width: min(520px, calc(100% - 44px)); padding: 18px; border: 1px solid var(--border); border-radius: 13px; background: #fff; box-shadow: var(--shadow-soft); }
+.importHeading { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.importHeading span { color: #8d959c; font-size: 10px; }
+.importHeading h2 { margin: 4px 0 0; font-size: 16px; }
+.importPanel label { display: grid; gap: 6px; margin-top: 12px; color: #596168; font-size: 11px; }
+.importPanel .filePicker { display: inline-flex; width: fit-content; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.filePicker input { display: none; }
+.importPanel input, .importPanel textarea { width: 100%; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: #fff; font: inherit; outline: 0; transition: border-color var(--motion-fast) ease; }
+.importPanel input { height: 36px; padding: 0 10px; }
+.importPanel textarea { padding: 9px 10px; resize: vertical; line-height: 1.55; }
+.importPanel input:focus, .importPanel textarea:focus { border-color: #a8afb5; }
+.preview { display: flex; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 9px 10px; border-radius: 8px; background: var(--surface); font-size: 10.5px; }
+.preview span { color: var(--muted); }
+.previewRows { max-height: 150px; margin-top: 7px; overflow: auto; border-top: 1px solid var(--border); }
+.previewRows > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 2px; border-bottom: 1px solid var(--border); font-size: 10.5px; }
+.previewRows span { display: flex; min-width: 0; gap: 7px; }
+.previewRows em { color: #8b611e; font-style: normal; text-align: right; }
+.error { margin: 10px 0 0; color: var(--danger); font-size: 10.5px; }
+.importActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+@media (max-width: 760px) {
+  .header { display: block; }
+  .actions { margin-top: 16px; }
+  .tabs { gap: 14px; overflow-x: auto; scrollbar-width: none; }
+  .tabs button { flex: none; }
+  .importPanel { position: fixed; top: 70px; right: 12px; left: 12px; width: auto; max-height: calc(100dvh - 84px); overflow: auto; }
+  .preview { align-items: flex-start; flex-direction: column; }
+}
+
+@media (max-width: 460px) {
+  .header h1 { font-size: 24px; }
+  .actions { align-items: stretch; flex-direction: column; }
+  .issueList > div { align-items: flex-start; flex-wrap: wrap; }
+  .issueList > div > span { flex-basis: calc(100% - 30px); }
+  .issueList button { margin-left: 26px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabs button::after, .importPanel input, .importPanel textarea { transition-duration: .01ms; }
+}

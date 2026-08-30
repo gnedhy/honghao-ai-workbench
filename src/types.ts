@@ -77,6 +77,83 @@ export type WorkbenchStatus = {
   mode: WorkbenchMode;
 };
 
+export type ProcurementMaterial = {
+  id: string;
+  code: string;
+  name: string;
+  unit: string;
+  latest_price?: string | null;
+  inventory_price?: string | null;
+  in_transit_price?: string | null;
+  suggested_price?: string | null;
+  updated_at: string;
+};
+
+export type ProcurementIssue = {
+  id: string;
+  material_id: string;
+  material_code: string;
+  material_name: string;
+  kind: "missing_price" | "price_spike";
+  label: string;
+  status: "open" | "reviewed" | "resolved";
+  created_at: string;
+  reviewed_at: string | null;
+};
+
+export type ProcurementBatch = {
+  id: string;
+  version: number;
+  published_at: string;
+  item_count: number;
+};
+
+export type ProcurementPriceHistory = {
+  id: string;
+  material_code: string;
+  material_name: string;
+  unit: string;
+  source_name: string;
+  latest_price?: string | null;
+  inventory_price?: string | null;
+  in_transit_price?: string | null;
+  recorded_at: string;
+};
+
+export type ProcurementOverview = {
+  metrics: {
+    material_count: number;
+    open_issue_count: number;
+    missing_price_count: number;
+    published_batch_count: number;
+  };
+  materials: ProcurementMaterial[];
+  issues: ProcurementIssue[];
+  batches: ProcurementBatch[];
+  working_state: {
+    status: "draft" | "ready" | "submitted";
+    submitted_by: string | null;
+    submitted_at: string | null;
+  };
+};
+
+export type ProcurementImportPreview = {
+  received_count: number;
+  importable_count: number;
+  skipped_count: number;
+  rows: Array<{
+    code: string;
+    name: string;
+    unit: string;
+    latest_price: string | null;
+    inventory_price: string | null;
+    in_transit_price: string | null;
+    suggested_price: string | null;
+    issues: string[];
+    importable: boolean;
+  }>;
+};
+
 export type ConversationView = "new" | "existing";
 
 export type WorkApproval = "pending" | "approved" | "rejected";

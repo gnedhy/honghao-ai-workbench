@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import ExitStack, asynccontextmanager
 from pathlib import Path
+import sqlite3
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
@@ -33,7 +34,8 @@ from api.workbenches import (
     load_persisted_workbench_modes,
     save_persisted_workbench_modes,
 )
-from api.operations import migrate_data, readiness_checks, service_marker
+from api.operations import migrate_data, migrate_procurement_data, readiness_checks, service_marker
+from api.procurement import ProcurementStore, create_procurement_router
 
 
 API_VERSION = "0.1.0"
@@ -266,19 +268,31 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     identities = IdentityStore(runtime_settings.database_path)
     authorization = AuthorizationStore(runtime_settings.database_path)
     knowledge = KnowledgeStore(runtime_settings.database_path, runtime_settings.data_dir)
+    procurement = ProcurementStore(runtime_settings.database_path)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.startup_error = None
+        app.state.procurement_error = None
         with ExitStack() as stack:
             try:
                 runtime_settings.ensure_directories()
                 stack.enter_context(service_marker(runtime_settings))
-                migrate_data(runtime_settings)
+                database_preexisted = runtime_settings.database_path.is_file()
+                migrate_data(runtime_settings, include_workbenches=False)
                 app.state.database = database
                 app.state.identities = identities
                 app.state.authorization = authorization
                 app.state.knowledge = knowledge
+                app.state.procurement = procurement
+                if runtime_settings.workbench_modes["procurement"] == "active":
+                    try:
+                        migrate_procurement_data(
+                            runtime_settings,
+                            backup_before_migration=database_preexisted,
+                        )
+                    except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
+                        app.state.procurement_error = str(error)
             except (OSError, RuntimeError, ValueError) as error:
                 app.state.startup_error = str(error)
             yield
@@ -931,6 +945,8 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
         return TaskResponse(**task)
+
+    app.include_router(create_procurement_router(procurement, authorization, runtime_settings))
 
     if static_root is not None:
         _mount_static_frontend(app, static_root)

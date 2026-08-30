@@ -10,7 +10,8 @@ import {
 } from "lucide-react";
 import { useEffect } from "react";
 import { TopBar, type ScreenChromeProps } from "../components/TopBar";
-import type { WorkbenchId, WorkbenchStatus } from "../types";
+import { WorkbenchModuleSlot } from "../workbenches/WorkbenchModuleSlot";
+import type { CurrentUser, WorkbenchId, WorkbenchStatus } from "../types";
 
 export const workbenches = [
   {
@@ -74,13 +75,14 @@ export const workbenches = [
 type WorkbenchDefinition = (typeof workbenches)[number];
 
 type WorkbenchScreenProps = ScreenChromeProps & {
+  currentUser: CurrentUser;
   statuses: WorkbenchStatus[];
   dataState: "loading" | "ready" | "error";
   selectedId: WorkbenchId;
   onSelectedIdChange: (id: WorkbenchId) => void;
 };
 
-export function WorkbenchScreen({ statuses, dataState, selectedId, onSelectedIdChange, ...chrome }: WorkbenchScreenProps) {
+export function WorkbenchScreen({ currentUser, statuses, dataState, selectedId, onSelectedIdChange, ...chrome }: WorkbenchScreenProps) {
   const modes = new Map(statuses.map((status) => [status.id, status.mode]));
   const visibleWorkbenches = dataState === "ready"
     ? workbenches.filter((item) => {
@@ -140,7 +142,7 @@ export function WorkbenchScreen({ statuses, dataState, selectedId, onSelectedIdC
         {dataState !== "ready" || !selected
           ? <article className="workbench-detail workspace-detail-empty"><ShieldCheck size={22} /><strong>职能工作台未加载</strong></article>
           : modes.get(selected.id) === "active"
-            ? <ActiveWorkbenchPending selected={selected} />
+            ? <WorkbenchModuleSlot workbenchId={selected.id} title={selected.title} currentUser={currentUser} />
             : <PrototypeWorkbenchDetail selected={selected} />}
       </section>
     </main>
@@ -149,16 +151,6 @@ export function WorkbenchScreen({ statuses, dataState, selectedId, onSelectedIdC
 
 function WorkbenchState({ title, detail }: { title: string; detail: string }) {
   return <div className="workspace-empty"><ShieldCheck size={20} /><strong>{title}</strong><p>{detail}</p></div>;
-}
-
-function ActiveWorkbenchPending({ selected }: { selected: WorkbenchDefinition }) {
-  return (
-    <article className="workbench-detail workspace-detail-empty">
-      <ShieldCheck size={24} />
-      <strong>{selected.title}已进入受保护接入状态</strong>
-      <p>服务端已标记为 active，但真实模块尚未注册。为避免误用，当前不展示示例数据，也不会执行正式写入。</p>
-    </article>
-  );
 }
 
 function PrototypeWorkbenchDetail({ selected }: { selected: WorkbenchDefinition }) {

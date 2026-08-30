@@ -1,4 +1,4 @@
-import type { AccessLevel, AccessScope, ActivationReview, AdminModuleSetting, AdminModuleSettings, AdminWorkbenchSetting, AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleMode, ModuleStatus, Project, RuntimeEnvironment, Section, SensitiveFieldPolicy, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
+import type { AccessLevel, AccessScope, ActivationReview, AdminModuleSetting, AdminModuleSettings, AdminWorkbenchSetting, AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleMode, ModuleStatus, ProcurementBatch, ProcurementImportPreview, ProcurementIssue, ProcurementOverview, ProcurementPriceHistory, Project, RuntimeEnvironment, Section, SensitiveFieldPolicy, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
 
 export type ServiceHealth = {
   status: "ok";
@@ -27,7 +27,10 @@ export async function fetchServiceHealth(signal?: AbortSignal): Promise<ServiceH
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
-  if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { detail?: string } | null;
+    throw new Error(payload?.detail ?? `Request failed with ${response.status}`);
+  }
   return response.json() as Promise<T>;
 }
 
@@ -62,6 +65,42 @@ export function fetchTasks(signal?: AbortSignal): Promise<TaskItem[]> {
 
 export function fetchWorkbenches(signal?: AbortSignal): Promise<WorkbenchStatus[]> {
   return fetchJson<WorkbenchStatus[]>("/api/workbenches", { signal });
+}
+
+export function fetchProcurementOverview(signal?: AbortSignal): Promise<ProcurementOverview> {
+  return fetchJson<ProcurementOverview>("/api/workbenches/procurement/overview", { signal });
+}
+
+export function fetchProcurementPriceHistory(signal?: AbortSignal): Promise<ProcurementPriceHistory[]> {
+  return fetchJson<ProcurementPriceHistory[]>("/api/workbenches/procurement/price-history", { signal });
+}
+
+export function previewProcurementImport(sourceName: string, content: string): Promise<ProcurementImportPreview> {
+  return fetchJson<ProcurementImportPreview>("/api/workbenches/procurement/import-preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_name: sourceName, content }),
+  });
+}
+
+export function confirmProcurementImport(sourceName: string, content: string): Promise<void> {
+  return fetchJson<void>("/api/workbenches/procurement/imports", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_name: sourceName, content }),
+  });
+}
+
+export function reviewProcurementIssue(issueId: string): Promise<ProcurementIssue> {
+  return fetchJson<ProcurementIssue>(`/api/workbenches/procurement/issues/${issueId}/review`, { method: "POST" });
+}
+
+export function submitProcurementPrices(): Promise<void> {
+  return fetchJson<void>("/api/workbenches/procurement/submit", { method: "POST" });
+}
+
+export function publishProcurementBatch(): Promise<ProcurementBatch> {
+  return fetchJson<ProcurementBatch>("/api/workbenches/procurement/batches/publish", { method: "POST" });
 }
 
 export function fetchModules(signal?: AbortSignal): Promise<ModuleStatus[]> {

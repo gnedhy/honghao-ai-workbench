@@ -165,10 +165,10 @@ def test_core_schema_ignores_additive_workbench_tables(tmp_path: Path) -> None:
     with sqlite3.connect(settings.database_path) as connection:
         connection.execute(
             "INSERT INTO schema_metadata (key, value) VALUES (?, ?)",
-            ("workbench_procurement_schema_version", 1),
+            ("workbench_future_schema_version", 1),
         )
         connection.execute(
-            "CREATE TABLE procurement_cost_baselines (id TEXT PRIMARY KEY, version INTEGER NOT NULL)"
+            "CREATE TABLE future_workbench_records (id TEXT PRIMARY KEY, version INTEGER NOT NULL)"
         )
 
     with authenticated_client(settings) as client:

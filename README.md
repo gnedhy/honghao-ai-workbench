@@ -150,7 +150,7 @@ npm.cmd run dev
 
 ### 职能工作台模块状态
 
-四个职能工作台默认保持当前原型，可分别通过环境变量切换为 `prototype`、`active` 或 `off`：
+四个职能工作台默认保持原型，可分别通过环境变量切换为 `prototype`、`active` 或 `off`。采购“原料成本管理”已完成首版真实模块；研发、销售和总经办仍使用安全阻断页等待后续接入：
 
 ```powershell
 $env:HONGHAO_WORKBENCH_PROCUREMENT_MODE = "prototype"
@@ -161,10 +161,12 @@ npm.cmd run dev
 ```
 
 - `prototype`：显示明确标注的示例界面。
-- `active`：启用真实模块；真实实现尚未接入时，界面会安全阻断，不展示示例数据。
+- `active`：启用真实模块；除采购外，真实实现尚未接入的工作台会安全阻断，不展示示例数据。
 - `off`：隐藏该职能入口；后续真实业务接口也必须使用同一开关阻断。
 
 配置只在启动时读取，修改后需要重启。影子验证应使用单独的 `HONGHAO_DATA_DIR` 和测试数据副本；正式实例发生异常时，先把对应模块切回 `prototype` 或 `off`，不要删除模块数据。当前 UI 基线可从标签 `workbench-ui-baseline-2026-08-25` 恢复。
+
+采购首版支持 CSV、TXT 和复制粘贴导入预览，保留询价历史，处理缺价、重复编码、单位冲突和超过 15% 的价格波动，并按“工作稿 → 经办提交 → 另一账号发布”形成不可变价格批次。采购接口限定在 `/api/workbenches/procurement/*`，数据使用独立的 `procurement_*` 表和 `workbench_procurement_schema_version`；迁移不会修改核心 schema v5。原料价格与询价记录仍受对应敏感字段策略控制。
 
 模块迁移前先停止本地服务，并创建不会覆盖已有文件的 SQLite 一致性备份：
 
