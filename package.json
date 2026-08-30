@@ -10,8 +10,9 @@
     "serve": "uv --cache-dir .uv-cache run python -m api.cli serve",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test:api": "uv --cache-dir .uv-cache run pytest",
-    "verify": "npm run test:api && npm run build"
+    "security:check": "uv --cache-dir .uv-cache run python -m api.security_gate",
+    "test:api": "uv --cache-dir .uv-cache run python -m pytest",
+    "verify": "npm run security:check && npm run test:api && npm run build"
   },
   "dependencies": {
     "lucide-react": "1.31.0",

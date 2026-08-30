@@ -1,7 +1,7 @@
 import json
 import os
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -10,6 +10,7 @@ ModuleId = Literal["chat", "knowledge", "automation", "workbench", "tasks"]
 ModuleMode = Literal["off", "prototype", "active"]
 RuntimeEnvironment = Literal["test", "production"]
 MODULE_MODES: tuple[ModuleMode, ...] = ("off", "prototype", "active")
+REQUIRED_ACTIVATION_REVIEWS = frozenset({"business", "security", "code", "rollback"})
 MODULE_IDS: tuple[ModuleId, ...] = (
     "chat",
     "knowledge",
@@ -91,8 +92,12 @@ def load_persisted_module_modes(
     reviewed_active_modules = payload.get("reviewed_active_modules", [])
     if not isinstance(reviewed_active_modules, list):
         raise ValueError("Runtime configuration reviewed_active_modules must be a list")
+    activation_reviews = payload.get("activation_reviews", {})
+    if not isinstance(activation_reviews, dict):
+        raise ValueError("Runtime configuration activation_reviews must be an object")
     if environment == "production" and any(
-        mode == "active" and module_id not in reviewed_active_modules
+        mode == "active"
+        and set(activation_reviews.get(module_id, [])) != REQUIRED_ACTIVATION_REVIEWS
         for module_id, mode in modes.items()
     ):
         raise ValueError("Production active modules require recorded reviews")
@@ -104,20 +109,37 @@ def save_persisted_module_modes(
     environment: RuntimeEnvironment,
     modes: Mapping[ModuleId, ModuleMode],
     approved_module: ModuleId | None = None,
+    approved_reviews: Sequence[str] | None = None,
 ) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     target = data_dir / "runtime-config.json"
     reviewed_active_modules: set[str] = set()
+    activation_reviews: dict[str, list[str]] = {}
     if target.exists():
         existing = json.loads(target.read_text(encoding="utf-8"))
         existing_reviews = existing.get("reviewed_active_modules", []) if isinstance(existing, dict) else []
         if isinstance(existing_reviews, list):
             reviewed_active_modules.update(item for item in existing_reviews if item in MODULE_IDS)
+        existing_activation_reviews = existing.get("activation_reviews", {}) if isinstance(existing, dict) else {}
+        if isinstance(existing_activation_reviews, dict):
+            activation_reviews.update({
+                module_id: sorted(set(reviews))
+                for module_id, reviews in existing_activation_reviews.items()
+                if module_id in MODULE_IDS and isinstance(reviews, list)
+            })
     if approved_module is not None:
+        if set(approved_reviews or []) != REQUIRED_ACTIVATION_REVIEWS:
+            raise ValueError("Production active modules require recorded reviews")
         reviewed_active_modules.add(approved_module)
+        activation_reviews[approved_module] = sorted(REQUIRED_ACTIVATION_REVIEWS)
     reviewed_active_modules.intersection_update(
         module_id for module_id, mode in modes.items() if mode == "active"
     )
+    activation_reviews = {
+        module_id: reviews
+        for module_id, reviews in activation_reviews.items()
+        if modes[module_id] == "active"
+    }
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -135,6 +157,7 @@ def save_persisted_module_modes(
                     "environment": environment,
                     "module_modes": {module_id: modes[module_id] for module_id in MODULE_IDS},
                     "reviewed_active_modules": sorted(reviewed_active_modules),
+                    "activation_reviews": activation_reviews,
                 },
                 temporary,
                 ensure_ascii=False,

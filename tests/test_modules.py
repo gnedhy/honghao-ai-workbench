@@ -77,26 +77,33 @@ def test_module_mode_change_is_pending_until_restart(tmp_path: Path) -> None:
     }
 
 
-def test_production_activation_requires_all_three_reviews(tmp_path: Path) -> None:
+def test_production_activation_requires_and_records_all_four_reviews(tmp_path: Path) -> None:
     data_dir = tmp_path / "production"
     settings = Settings.from_data_dir(data_dir, environment="production")
 
     with authenticated_client(settings) as client:
         blocked = client.put(
             "/api/admin/module-settings/knowledge",
-            json={"mode": "active", "reviews": ["business", "security"]},
+            json={"mode": "active", "reviews": ["business", "security", "code"]},
         )
         allowed = client.put(
             "/api/admin/module-settings/knowledge",
-            json={"mode": "active", "reviews": ["business", "security", "code"]},
+            json={"mode": "active", "reviews": ["business", "security", "code", "rollback"]},
         )
 
     assert blocked.status_code == 422
     assert blocked.json() == {
-        "detail": "Production activation requires business, security, and code reviews"
+        "detail": "Production activation requires business, security, code, and rollback reviews"
     }
     assert allowed.status_code == 200
     assert allowed.json()["pending_mode"] == "active"
+    config = json.loads((data_dir / "runtime-config.json").read_text(encoding="utf-8"))
+    assert config["activation_reviews"]["knowledge"] == [
+        "business",
+        "code",
+        "rollback",
+        "security",
+    ]
 
     restarted_settings = Settings.from_data_dir(data_dir, environment="production")
     with authenticated_client(restarted_settings) as restarted_client:

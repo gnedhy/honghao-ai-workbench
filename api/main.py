@@ -19,6 +19,7 @@ from api.modules import (
     ModuleId,
     ModuleMode,
     RuntimeEnvironment,
+    REQUIRED_ACTIVATION_REVIEWS,
     load_persisted_module_modes,
     module_for_api_path,
     save_persisted_module_modes,
@@ -30,6 +31,7 @@ from api.operations import migrate_data, readiness_checks, service_marker
 
 API_VERSION = "0.1.0"
 SERVICE_NAME = "honghao-ai-api"
+PUBLIC_API_PATHS = ("/api/health", "/api/readiness", "/api/login")
 
 
 class HealthResponse(BaseModel):
@@ -67,7 +69,7 @@ class AdminModuleSettingsResponse(BaseModel):
 
 class ModuleSettingUpdate(BaseModel):
     mode: ModuleMode
-    reviews: list[Literal["business", "security", "code"]] = Field(default_factory=list)
+    reviews: list[Literal["business", "security", "code", "rollback"]] = Field(default_factory=list)
 
 
 class LoginRequest(BaseModel):
@@ -316,11 +318,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
 
     @app.middleware("http")
     async def require_authentication(request: Request, call_next):
-        if request.url.path.startswith("/api/") and request.url.path not in {
-            "/api/health",
-            "/api/readiness",
-            "/api/login",
-        }:
+        if request.url.path.startswith("/api/") and request.url.path not in PUBLIC_API_PATHS:
             token = request.cookies.get(SESSION_COOKIE_NAME)
             user = identities.user_for_session(token) if token else None
             if user is None:
@@ -556,11 +554,11 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         if (
             runtime_settings.environment == "production"
             and update.mode == "active"
-            and set(update.reviews) != {"business", "security", "code"}
+            and set(update.reviews) != REQUIRED_ACTIVATION_REVIEWS
         ):
             raise HTTPException(
                 status_code=422,
-                detail="Production activation requires business, security, and code reviews",
+                detail="Production activation requires business, security, code, and rollback reviews",
             )
         typed_module_id = cast(ModuleId, module_id)
         pending_modes = load_persisted_module_modes(
@@ -576,6 +574,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             approved_module=typed_module_id
             if runtime_settings.environment == "production" and update.mode == "active"
             else None,
+            approved_reviews=update.reviews,
         )
         authorization.audit(
             "module.mode.pending",

@@ -35,7 +35,7 @@ export type AdminModuleSettings = {
   modules: AdminModuleSetting[];
 };
 
-export type ActivationReview = "business" | "security" | "code";
+export type ActivationReview = "business" | "security" | "code" | "rollback";
 
 export type ManagedUser = CurrentUser & {
   is_active: boolean;
