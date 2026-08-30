@@ -158,6 +158,21 @@ def test_restore_requires_confirmation_and_replaces_data(tmp_path: Path, capsys)
     assert source.read_text(encoding="utf-8") == "# 产品说明书"
 
 
+def test_restore_removes_runtime_configuration_missing_from_snapshot(tmp_path: Path, capsys) -> None:
+    settings = Settings.from_data_dir(tmp_path / "data")
+    _ready_data(settings)
+    (settings.data_dir / "workbench-runtime-config.json").unlink()
+    snapshot = _create_snapshot(settings, tmp_path / "snapshots", capsys)
+    later_config = settings.data_dir / "workbench-runtime-config.json"
+    later_config.write_text('{"environment":"test"}', encoding="utf-8")
+
+    assert main(
+        ["restore", str(snapshot), "--apply", "--confirm", "RESTORE"],
+        settings=settings,
+    ) == 0
+    assert not later_config.exists()
+
+
 def test_doctor_reports_a_ready_local_environment(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
     _ready_data(settings)

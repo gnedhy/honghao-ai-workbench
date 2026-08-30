@@ -132,6 +132,19 @@ def test_production_activation_requires_and_records_all_four_reviews(tmp_path: P
 
     assert next(item for item in restarted.json() if item["id"] == "knowledge")["mode"] == "active"
 
+    with authenticated_client(restarted_settings) as restarted_client:
+        downgraded = restarted_client.put(
+            "/api/admin/module-settings/knowledge",
+            json={"mode": "prototype", "reviews": []},
+        )
+        audit = restarted_client.get("/api/admin/audit-events")
+
+    assert downgraded.status_code == 200
+    config = json.loads((data_dir / "runtime-config.json").read_text(encoding="utf-8"))
+    assert config["activation_reviews"]["knowledge"] == record
+    assert [entry["mode"] for entry in config["activation_history"]] == ["active", "prototype"]
+    assert audit.json()[0]["action"] == "module.mode.prototype"
+
 
 def test_fresh_production_starts_with_every_module_off(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "production", environment="production")
@@ -182,7 +195,15 @@ def test_production_rejects_malformed_activation_reviews_as_configuration_error(
             "environment": "production",
             "module_modes": {**default_module_modes("production"), "knowledge": "active"},
             "reviewed_active_modules": ["knowledge"],
-            "activation_reviews": {"knowledge": {"checks": [{}]}},
+            "activation_reviews": {
+                "knowledge": {
+                    "checks": ["business", "code", "rollback", "security"],
+                    "reviewed_by": "not-a-user-id",
+                    "reviewed_at": "not-a-date",
+                    "issue_url": "x",
+                    "pull_request_url": "y",
+                }
+            },
         }),
         encoding="utf-8",
     )
@@ -263,7 +284,7 @@ def test_unregistered_module_cannot_be_enabled(tmp_path: Path) -> None:
     assert response.json() == {"detail": "Module not found"}
 
 
-def test_module_mode_change_is_audited_without_configuration_values(tmp_path: Path) -> None:
+def test_module_mode_change_audit_distinguishes_target_mode(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
 
     with authenticated_client(settings) as client:
@@ -274,10 +295,9 @@ def test_module_mode_change_is_audited_without_configuration_values(tmp_path: Pa
         events = client.get("/api/admin/audit-events")
 
     assert changed.status_code == 200
-    event = next(item for item in events.json() if item["action"] == "module.mode.pending")
+    event = next(item for item in events.json() if item["action"] == "module.mode.prototype")
     assert event["target_type"] == "module"
     assert event["target_id"] == "knowledge"
-    assert "prototype" not in str(event)
 
 
 def test_module_registry_reads_environment_modes(tmp_path: Path, monkeypatch) -> None:

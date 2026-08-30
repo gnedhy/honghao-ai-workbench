@@ -617,9 +617,12 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             )
             if runtime_settings.environment == "production" and update.mode == "active"
             else None,
+            changed_module=typed_module_id,
+            changed_mode=update.mode,
+            changed_by=actor["id"],
         )
         authorization.audit(
-            "module.mode.pending",
+            f"module.mode.{update.mode}",
             actor_user_id=actor["id"],
             target_type="module",
             target_id=typed_module_id,
@@ -674,9 +677,12 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                 issue_url=update.issue_url or "",
                 pull_request_url=update.pull_request_url or "",
             ) if is_production_activation else None,
+            changed_workbench=typed_workbench_id,
+            changed_mode=update.mode,
+            changed_by=actor["id"],
         )
         authorization.audit(
-            "workbench.mode.pending",
+            f"workbench.mode.{update.mode}",
             actor_user_id=actor["id"],
             target_type="workbench",
             target_id=typed_workbench_id,

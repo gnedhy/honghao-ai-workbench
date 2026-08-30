@@ -130,9 +130,11 @@ def test_security_gate_scans_tests_and_build_output_for_strong_tokens(tmp_path: 
     dist.mkdir()
     token = "ghp_" + "A" * 36
     (tests / "test_client.py").write_text(f'TOKEN = "{token}"', encoding="utf-8")
-    (dist / "index.js").write_text(f'window.token = "{token}"', encoding="utf-8")
+    (dist / "index.html").write_text(f'<meta content="{token}">', encoding="utf-8")
+    (dist / "customer.pdf").write_bytes(b"private")
 
     assert main(["--root", str(tmp_path)]) == 1
     output = capsys.readouterr().out
     assert "tests" in output
     assert "dist" in output
+    assert "SEC002" in output

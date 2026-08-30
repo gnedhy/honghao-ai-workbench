@@ -5,7 +5,12 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
-from api.modules import RuntimeEnvironment, activation_review_is_complete
+from api.modules import (
+    RuntimeEnvironment,
+    activation_review_is_complete,
+    create_mode_change_record,
+    mode_change_record_is_valid,
+)
 
 
 WorkbenchId = Literal["management", "procurement", "research", "sales"]
@@ -56,6 +61,12 @@ def load_persisted_workbench_modes(
         for workbench_id, record in reviews.items()
     ):
         raise ValueError("Workbench runtime configuration activation_reviews is invalid")
+    history = payload.get("activation_history", [])
+    if not isinstance(history, list) or any(
+        not mode_change_record_is_valid(record, WORKBENCH_IDS, WORKBENCH_MODES)
+        for record in history
+    ):
+        raise ValueError("Workbench runtime configuration activation_history is invalid")
     for workbench_id in WORKBENCH_IDS:
         mode = configured_modes.get(workbench_id, modes[workbench_id])
         if mode not in WORKBENCH_MODES:
@@ -72,10 +83,14 @@ def save_persisted_workbench_modes(
     modes: Mapping[WorkbenchId, WorkbenchMode],
     approved_workbench: WorkbenchId | None = None,
     approved_review_record: Mapping[str, object] | None = None,
+    changed_workbench: WorkbenchId | None = None,
+    changed_mode: WorkbenchMode | None = None,
+    changed_by: str | None = None,
 ) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     target = data_dir / "workbench-runtime-config.json"
     reviews: dict[str, dict[str, object]] = {}
+    history: list[dict[str, object]] = []
     if target.exists():
         existing = json.loads(target.read_text(encoding="utf-8"))
         existing_reviews = existing.get("activation_reviews", {}) if isinstance(existing, dict) else {}
@@ -85,15 +100,21 @@ def save_persisted_workbench_modes(
                 for workbench_id, record in existing_reviews.items()
                 if workbench_id in WORKBENCH_IDS and activation_review_is_complete(record)
             })
+        existing_history = existing.get("activation_history", []) if isinstance(existing, dict) else []
+        if isinstance(existing_history, list):
+            history.extend(
+                dict(record)
+                for record in existing_history
+                if mode_change_record_is_valid(record, WORKBENCH_IDS, WORKBENCH_MODES)
+            )
     if approved_workbench is not None:
         if not activation_review_is_complete(approved_review_record):
             raise ValueError("Production active workbenches require recorded reviews")
         reviews[approved_workbench] = dict(approved_review_record)
-    reviews = {
-        workbench_id: record
-        for workbench_id, record in reviews.items()
-        if modes[workbench_id] == "active"
-    }
+    if changed_workbench is not None and changed_mode is not None and changed_by is not None:
+        history.append(
+            create_mode_change_record(changed_workbench, changed_mode, changed_by, approved_review_record)
+        )
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -111,6 +132,7 @@ def save_persisted_workbench_modes(
                     "environment": environment,
                     "workbench_modes": {workbench_id: modes[workbench_id] for workbench_id in WORKBENCH_IDS},
                     "activation_reviews": reviews,
+                    "activation_history": history,
                 },
                 temporary,
                 ensure_ascii=False,

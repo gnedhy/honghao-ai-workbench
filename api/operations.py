@@ -161,10 +161,19 @@ def restore_snapshot(settings: Settings, snapshot: Path) -> Path | None:
                 _write_staging_manifest(staging, manifest),
                 expected_environment=settings.environment,
             )
+            snapshot_paths = {record["path"] for record in records}
+            for config_name in ("runtime-config.json", "workbench-runtime-config.json"):
+                if config_name not in snapshot_paths:
+                    (settings.data_dir / config_name).unlink(missing_ok=True)
             for record in records:
                 relative = Path(record["path"])
                 target = settings.data_dir / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
+                if relative.as_posix() == "honghao.db":
+                    with closing(sqlite3.connect(staging / relative)) as source_connection:
+                        with closing(sqlite3.connect(target)) as target_connection:
+                            source_connection.backup(target_connection)
+                    continue
                 temporary_target = target.with_name(f".{target.name}.restore")
                 shutil.copy2(staging / relative, temporary_target)
                 os.replace(temporary_target, target)

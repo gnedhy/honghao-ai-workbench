@@ -97,6 +97,19 @@ def test_production_workbench_activation_requires_and_records_reviews(tmp_path: 
     restarted_settings = Settings.from_data_dir(data_dir, environment="production")
     assert restarted_settings.workbench_modes["procurement"] == "active"
 
+    with authenticated_client(restarted_settings) as restarted_client:
+        downgraded = restarted_client.put(
+            "/api/admin/workbench-settings/procurement",
+            json={"mode": "prototype", "reviews": []},
+        )
+        audit = restarted_client.get("/api/admin/audit-events")
+
+    assert downgraded.status_code == 200
+    config = json.loads((data_dir / "workbench-runtime-config.json").read_text(encoding="utf-8"))
+    assert config["activation_reviews"]["procurement"] == record
+    assert [entry["mode"] for entry in config["activation_history"]] == ["active", "prototype"]
+    assert audit.json()[0]["action"] == "workbench.mode.prototype"
+
 
 def test_core_schema_ignores_additive_workbench_tables(tmp_path: Path) -> None:
     module_modes = default_module_modes()

@@ -10,6 +10,7 @@ from pathlib import Path
 
 _SOURCE_SUFFIXES = {".cjs", ".js", ".mjs", ".py", ".ts", ".tsx"}
 _CONFIG_SUFFIXES = {".json", ".toml", ".yaml", ".yml"}
+_BUILD_TEXT_SUFFIXES = {".css", ".html", ".map", ".svg", ".txt", ".xml"}
 _COMMAND_FILES = {"package.json", "pyproject.toml"}
 _EXCLUDED_PARTS = {".git", ".uv-cache", ".venv", "node_modules"}
 _ALLOWED_PUBLIC_API_PATHS = {"/api/health", "/api/login", "/api/readiness"}
@@ -49,11 +50,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             or relative.suffix.lower() in {".db", ".key", ".pem", ".sqlite", ".sqlite3"}
             or relative.parts[0] == "public"
             and relative.suffix.lower() in {".csv", ".doc", ".docx", ".pdf", ".xls", ".xlsx"}
+            or relative.parts[0] == "dist"
+            and relative.suffix.lower() in {".csv", ".doc", ".docx", ".pdf", ".xls", ".xlsx"}
         ):
             findings.append(f"SEC002 {relative}：数据或凭据文件不得进入代码仓库")
             continue
         is_source = path.suffix.lower() in _SOURCE_SUFFIXES
-        is_text = is_source or path.suffix.lower() in _CONFIG_SUFFIXES
+        is_text = is_source or path.suffix.lower() in _CONFIG_SUFFIXES | _BUILD_TEXT_SUFFIXES
         if (not is_text and relative.name not in _COMMAND_FILES) or any(part in _EXCLUDED_PARTS for part in relative.parts):
             continue
         try:

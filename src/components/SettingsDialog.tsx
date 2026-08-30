@@ -83,8 +83,12 @@ const AUDIT_LABELS: Record<string, string> = {
   "field.created": "新增敏感字段",
   "user.created": "创建账号",
   "user.updated": "修改账号",
-  "module.mode.pending": "修改待生效模块状态",
-  "workbench.mode.pending": "修改待生效工作台状态",
+  "module.mode.off": "关闭功能模块",
+  "module.mode.prototype": "切换功能模块为原型",
+  "module.mode.active": "启用功能模块",
+  "workbench.mode.off": "关闭职能工作台",
+  "workbench.mode.prototype": "切换职能工作台为原型",
+  "workbench.mode.active": "启用职能工作台",
 };
 
 const EMPTY_FIELD = {

@@ -1,10 +1,12 @@
 import json
 import os
+import re
 import tempfile
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 
 ModuleId = Literal["chat", "knowledge", "automation", "workbench", "tasks"]
@@ -12,6 +14,8 @@ ModuleMode = Literal["off", "prototype", "active"]
 RuntimeEnvironment = Literal["test", "production"]
 MODULE_MODES: tuple[ModuleMode, ...] = ("off", "prototype", "active")
 REQUIRED_ACTIVATION_REVIEWS = frozenset({"business", "security", "code", "rollback"})
+_ISSUE_URL = re.compile(r"^https://github\.com/[^/]+/[^/]+/issues/\d+$")
+_PULL_REQUEST_URL = re.compile(r"^https://github\.com/[^/]+/[^/]+/pull/\d+$")
 MODULE_IDS: tuple[ModuleId, ...] = (
     "chat",
     "knowledge",
@@ -63,7 +67,7 @@ def activation_review_is_complete(record: object) -> bool:
     if not isinstance(record, dict):
         return False
     checks = record.get("checks")
-    return (
+    if not (
         isinstance(checks, list)
         and all(isinstance(check, str) for check in checks)
         and set(checks) == REQUIRED_ACTIVATION_REVIEWS
@@ -71,6 +75,51 @@ def activation_review_is_complete(record: object) -> bool:
             isinstance(record.get(key), str) and bool(record[key])
             for key in ("reviewed_by", "reviewed_at", "issue_url", "pull_request_url")
         )
+    ):
+        return False
+    try:
+        UUID(record["reviewed_by"])
+        reviewed_at = datetime.fromisoformat(record["reviewed_at"])
+    except (TypeError, ValueError):
+        return False
+    return (
+        reviewed_at.tzinfo is not None
+        and _ISSUE_URL.fullmatch(record["issue_url"]) is not None
+        and _PULL_REQUEST_URL.fullmatch(record["pull_request_url"]) is not None
+    )
+
+
+def create_mode_change_record(
+    target_id: str,
+    mode: str,
+    changed_by: str,
+    activation_review: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "target_id": target_id,
+        "mode": mode,
+        "changed_by": changed_by,
+        "changed_at": datetime.now(UTC).isoformat(),
+        "activation_review": dict(activation_review) if activation_review is not None else None,
+    }
+
+
+def mode_change_record_is_valid(record: object, target_ids: Sequence[str], modes: Sequence[str]) -> bool:
+    if not isinstance(record, dict):
+        return False
+    try:
+        UUID(record.get("changed_by"))
+        changed_at = datetime.fromisoformat(record.get("changed_at"))
+    except (TypeError, ValueError):
+        return False
+    mode = record.get("mode")
+    review = record.get("activation_review")
+    return (
+        record.get("target_id") in target_ids
+        and mode in modes
+        and changed_at.tzinfo is not None
+        and (mode != "active" or activation_review_is_complete(review))
+        and (mode == "active" or review is None)
     )
 
 
@@ -134,6 +183,12 @@ def load_persisted_module_modes(
         for module_id, record in activation_reviews.items()
     ):
         raise ValueError("Runtime configuration activation_reviews is invalid")
+    activation_history = payload.get("activation_history", [])
+    if not isinstance(activation_history, list) or any(
+        not mode_change_record_is_valid(record, MODULE_IDS, MODULE_MODES)
+        for record in activation_history
+    ):
+        raise ValueError("Runtime configuration activation_history is invalid")
     if environment == "production" and any(
         mode == "active"
         and not activation_review_is_complete(activation_reviews.get(module_id))
@@ -149,11 +204,15 @@ def save_persisted_module_modes(
     modes: Mapping[ModuleId, ModuleMode],
     approved_module: ModuleId | None = None,
     approved_review_record: Mapping[str, object] | None = None,
+    changed_module: ModuleId | None = None,
+    changed_mode: ModuleMode | None = None,
+    changed_by: str | None = None,
 ) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     target = data_dir / "runtime-config.json"
     reviewed_active_modules: set[str] = set()
     activation_reviews: dict[str, dict[str, object]] = {}
+    activation_history: list[dict[str, object]] = []
     if target.exists():
         existing = json.loads(target.read_text(encoding="utf-8"))
         existing_reviews = existing.get("reviewed_active_modules", []) if isinstance(existing, dict) else []
@@ -166,19 +225,25 @@ def save_persisted_module_modes(
                 for module_id, record in existing_activation_reviews.items()
                 if module_id in MODULE_IDS and activation_review_is_complete(record)
             })
+        existing_history = existing.get("activation_history", []) if isinstance(existing, dict) else []
+        if isinstance(existing_history, list):
+            activation_history.extend(
+                dict(record)
+                for record in existing_history
+                if mode_change_record_is_valid(record, MODULE_IDS, MODULE_MODES)
+            )
     if approved_module is not None:
         if not activation_review_is_complete(approved_review_record):
             raise ValueError("Production active modules require recorded reviews")
         reviewed_active_modules.add(approved_module)
         activation_reviews[approved_module] = dict(approved_review_record)
+    if changed_module is not None and changed_mode is not None and changed_by is not None:
+        activation_history.append(
+            create_mode_change_record(changed_module, changed_mode, changed_by, approved_review_record)
+        )
     reviewed_active_modules.intersection_update(
         module_id for module_id, mode in modes.items() if mode == "active"
     )
-    activation_reviews = {
-        module_id: reviews
-        for module_id, reviews in activation_reviews.items()
-        if modes[module_id] == "active"
-    }
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -197,6 +262,7 @@ def save_persisted_module_modes(
                     "module_modes": {module_id: modes[module_id] for module_id in MODULE_IDS},
                     "reviewed_active_modules": sorted(reviewed_active_modules),
                     "activation_reviews": activation_reviews,
+                    "activation_history": activation_history,
                 },
                 temporary,
                 ensure_ascii=False,
