@@ -119,6 +119,41 @@ def test_sensitive_field_policy_uses_role_union_for_read_and_write(tmp_path: Pat
     assert not store.can_write_field("procurement.material_unit_price", [reader["id"]])
 
 
+def test_system_admin_can_register_a_custom_sensitive_field(tmp_path: Path) -> None:
+    settings = Settings.from_data_dir(tmp_path / "data")
+
+    with authenticated_client(settings) as admin:
+        reader = admin.post("/api/roles", json={"name": "合同查看人"}).json()
+        created = admin.post(
+            "/api/admin/fields",
+            json={
+                "area": "采购",
+                "name": "合同付款条件",
+                "description": "采购合同约定的付款方式与账期",
+                "read_role_ids": [reader["id"]],
+                "write_role_ids": [],
+            },
+        )
+        fields = admin.get("/api/admin/fields")
+        events = admin.get("/api/admin/audit-events")
+
+    created_field = created.json()
+    assert created.status_code == 201
+    assert created_field["id"].startswith("custom.")
+    assert {key: value for key, value in created_field.items() if key != "id"} == {
+        "area": "采购",
+        "name": "合同付款条件",
+        "description": "采购合同约定的付款方式与账期",
+        "read_role_ids": [reader["id"]],
+        "write_role_ids": [],
+    }
+    assert created_field in fields.json()
+    assert any(
+        event["action"] == "field.created" and event["target_id"] == created_field["id"]
+        for event in events.json()
+    )
+
+
 def test_security_changes_and_logins_are_audited_without_field_values(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
 
@@ -173,10 +208,45 @@ def test_non_admin_cannot_read_management_policies_or_audit(tmp_path: Path) -> N
             employee.get("/api/admin/permissions"),
             employee.get("/api/admin/role-permissions"),
             employee.get("/api/admin/fields"),
+            employee.post(
+                "/api/admin/fields",
+                json={
+                    "area": "销售",
+                    "name": "客户折扣",
+                    "description": "客户协议折扣",
+                    "read_role_ids": [],
+                    "write_role_ids": [],
+                },
+            ),
             employee.get("/api/admin/audit-events"),
         ]
 
-    assert [response.status_code for response in responses] == [403, 403, 403, 403]
+    assert [response.status_code for response in responses] == [403, 403, 403, 403, 403]
+
+
+def test_authorization_schema_migrates_custom_fields_additively(tmp_path: Path) -> None:
+    settings = Settings.from_data_dir(tmp_path / "data")
+
+    with TestClient(create_app(settings)):
+        pass
+    with sqlite3.connect(settings.database_path) as connection:
+        connection.execute("DROP TABLE authorization_custom_fields")
+        connection.execute(
+            "UPDATE schema_metadata SET value = 1 WHERE key = 'authorization_schema_version'"
+        )
+
+    with TestClient(create_app(settings)):
+        pass
+    with sqlite3.connect(settings.database_path) as connection:
+        version = connection.execute(
+            "SELECT value FROM schema_metadata WHERE key = 'authorization_schema_version'"
+        ).fetchone()
+        custom_fields_table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'authorization_custom_fields'"
+        ).fetchone()
+
+    assert version == (2,)
+    assert custom_fields_table == ("authorization_custom_fields",)
 
 
 def test_authorization_schema_is_additive_and_not_downgraded(tmp_path: Path) -> None:
@@ -190,11 +260,11 @@ def test_authorization_schema_is_additive_and_not_downgraded(tmp_path: Path) -> 
             "SELECT value FROM schema_metadata WHERE key = 'authorization_schema_version'"
         ).fetchone()
         connection.execute(
-            "UPDATE schema_metadata SET value = 2 WHERE key = 'authorization_schema_version'"
+            "UPDATE schema_metadata SET value = 3 WHERE key = 'authorization_schema_version'"
         )
 
     assert health.json()["schema_version"] == 5
-    assert version == (1,)
+    assert version == (2,)
     with pytest.raises(RuntimeError, match="Unsupported authorization schema version"):
         with TestClient(create_app(settings)):
             pass

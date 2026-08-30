@@ -17,6 +17,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import {
   createRole,
+  createSensitiveField,
   createUser,
   fetchAdminModuleSettings,
   fetchAuditEvents,
@@ -64,6 +65,7 @@ const AUDIT_LABELS: Record<string, string> = {
   "role.created": "创建角色",
   "role.permissions.updated": "修改角色权限",
   "field.policy.updated": "修改敏感字段策略",
+  "field.created": "新增敏感字段",
   "user.created": "创建账号",
   "user.updated": "修改账号",
   "module.mode.pending": "修改待生效模块状态",
@@ -104,6 +106,8 @@ export function SettingsDialog({
   const [policyView, setPolicyView] = useState<PolicyView>("modules");
   const [selectedRoleId, setSelectedRoleId] = useState("");
   const [selectedFieldId, setSelectedFieldId] = useState("");
+  const [newFieldOpen, setNewFieldOpen] = useState(false);
+  const [newField, setNewField] = useState({ area: "采购", name: "", description: "", read_role_ids: [] as string[], write_role_ids: [] as string[] });
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -270,6 +274,25 @@ export function SettingsDialog({
     }
   };
 
+  const submitField = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!newField.name.trim() || !newField.description.trim()) return;
+    try {
+      const created = await createSensitiveField({
+        ...newField,
+        name: newField.name.trim(),
+        description: newField.description.trim(),
+      });
+      setFields((current) => [...current, created]);
+      setSelectedFieldId(created.id);
+      setNewField({ area: "采购", name: "", description: "", read_role_ids: [], write_role_ids: [] });
+      setNewFieldOpen(false);
+      showNotice("敏感字段已新增");
+    } catch {
+      showNotice("字段名称已存在或暂时无法新增");
+    }
+  };
+
   const saveModuleMode = async (
     moduleId: Section,
     mode: ModuleMode,
@@ -348,13 +371,13 @@ export function SettingsDialog({
             )}
             {tab === "permissions" && loadState === "ready" && (
               <section className="admin-settings-section">
-                <div className="admin-section-heading"><div><h2>权限与敏感字段</h2><p>模块状态、操作权限和字段策略均由服务端执行。</p></div><div className="policy-switch"><button className={policyView === "modules" ? "is-active" : ""} type="button" onClick={() => setPolicyView("modules")}>模块操作</button><button className={policyView === "fields" ? "is-active" : ""} type="button" onClick={() => setPolicyView("fields")}>敏感字段</button></div></div>
+                <div className="admin-section-heading"><div><h2>权限与敏感字段</h2><p>模块状态、操作权限和字段策略均由服务端执行。</p></div><div className="admin-section-actions"><div className="policy-switch"><button className={policyView === "modules" ? "is-active" : ""} type="button" onClick={() => setPolicyView("modules")}>模块操作</button><button className={policyView === "fields" ? "is-active" : ""} type="button" onClick={() => setPolicyView("fields")}>敏感字段</button></div>{policyView === "fields" && <button className="secondary-button" type="button" onClick={() => setNewFieldOpen(true)}><Plus size={14} />新增字段</button>}</div></div>
                 {policyView === "modules" ? <div className="admin-split">
                   <div className="admin-list-panel"><p className="admin-list-label">选择角色</p>{roles.map((role) => <button className={selectedRoleId === role.id ? "admin-list-row is-active" : "admin-list-row"} type="button" key={role.id} onClick={() => setSelectedRoleId(role.id)}><span className="admin-user-mark"><UserRoundCog size={14} /></span><span><strong>{role.name}</strong><small>{role.system ? "系统预置角色" : "自定义角色"}</small></span></button>)}</div>
                   <div className="admin-detail-panel">{selectedRole && selectedRolePolicy ? <><div className="admin-detail-heading"><div><h3>{selectedRole.name}</h3><p>{selectedRole.id === "system-admin" ? "系统管理员固定拥有全部权限。" : "修改后立即影响该角色的现有登录账号。"}</p></div></div><div className="permission-groups">{permissionsByModule.map((module) => <fieldset key={module.id}><legend>{module.label}</legend>{module.permissions.map((permission) => <label key={permission.id}><input type="checkbox" checked={selectedRolePolicy.permission_ids.includes(permission.id)} disabled={selectedRole.id === "system-admin"} onChange={() => togglePermission(permission.id)} /><span><strong>{permission.name}</strong><small>{permission.description}</small></span></label>)}</fieldset>)}</div>{selectedRole.id !== "system-admin" && <div className="admin-form-actions"><button className="primary-button" type="button" onClick={savePermissions}>保存权限</button></div>}</> : <SettingsState copy="请选择一个角色。" />}</div>
                 </div> : <div className="admin-split">
                   <div className="admin-list-panel"><p className="admin-list-label">字段目录 · {fields.length}</p>{fields.map((field) => <button className={selectedFieldId === field.id ? "admin-list-row is-active" : "admin-list-row"} type="button" key={field.id} onClick={() => setSelectedFieldId(field.id)}><span className="admin-user-mark"><KeyRound size={14} /></span><span><strong>{field.name}</strong><small>{field.area}</small></span><i>{field.read_role_ids.length + field.write_role_ids.length > 0 ? "已配置" : "仅管理员"}</i></button>)}</div>
-                  <div className="admin-detail-panel">{selectedField ? <><div className="admin-detail-heading"><div><h3>{selectedField.name}</h3><p>{selectedField.description}</p></div><span className="status-chip">{selectedField.area}</span></div><div className="field-role-grid"><RoleChecks title="允许读取" hint="未选择时仅系统管理员可读取" roles={roles.filter((role) => role.id !== "system-admin")} selectedIds={selectedField.read_role_ids} onToggle={(roleId) => toggleFieldRole("read_role_ids", roleId)} /><RoleChecks title="允许写入" hint="写入权限与读取权限分别控制" roles={roles.filter((role) => role.id !== "system-admin")} selectedIds={selectedField.write_role_ids} onToggle={(roleId) => toggleFieldRole("write_role_ids", roleId)} /></div><div className="admin-form-actions"><button className="primary-button" type="button" onClick={saveField}>保存字段策略</button></div></> : <SettingsState copy="请选择一个字段。" />}</div>
+                  <div className="admin-detail-panel">{newFieldOpen ? <form className="admin-field-form" onSubmit={submitField}><div className="admin-detail-heading"><div><h3>新增敏感字段</h3><p>登记业务字段并设置可读、可写角色。</p></div></div><div className="admin-form-grid"><label>字段名称<input required maxLength={100} value={newField.name} onChange={(event) => setNewField({ ...newField, name: event.target.value })} /></label><label>业务区域<select value={newField.area} onChange={(event) => setNewField({ ...newField, area: event.target.value })}>{["采购", "研发", "销售", "总经办", "知识库", "其他"].map((area) => <option key={area} value={area}>{area}</option>)}</select></label><label className="admin-form-grid__wide">字段说明<textarea required maxLength={300} rows={3} value={newField.description} onChange={(event) => setNewField({ ...newField, description: event.target.value })} /></label></div><div className="field-role-grid"><RoleChecks title="允许读取" hint="未选择时仅系统管理员可读取" roles={roles.filter((role) => role.id !== "system-admin")} selectedIds={newField.read_role_ids} onToggle={(roleId) => setNewField({ ...newField, read_role_ids: toggleId(newField.read_role_ids, roleId) })} /><RoleChecks title="允许写入" hint="写入权限与读取权限分别控制" roles={roles.filter((role) => role.id !== "system-admin")} selectedIds={newField.write_role_ids} onToggle={(roleId) => setNewField({ ...newField, write_role_ids: toggleId(newField.write_role_ids, roleId) })} /></div><div className="admin-form-actions"><button className="secondary-button" type="button" onClick={() => setNewFieldOpen(false)}>取消</button><button className="primary-button" type="submit">创建字段</button></div></form> : selectedField ? <><div className="admin-detail-heading"><div><h3>{selectedField.name}</h3><p>{selectedField.description}</p></div><span className="status-chip">{selectedField.area}</span></div><div className="field-role-grid"><RoleChecks title="允许读取" hint="未选择时仅系统管理员可读取" roles={roles.filter((role) => role.id !== "system-admin")} selectedIds={selectedField.read_role_ids} onToggle={(roleId) => toggleFieldRole("read_role_ids", roleId)} /><RoleChecks title="允许写入" hint="写入权限与读取权限分别控制" roles={roles.filter((role) => role.id !== "system-admin")} selectedIds={selectedField.write_role_ids} onToggle={(roleId) => toggleFieldRole("write_role_ids", roleId)} /></div><div className="admin-form-actions"><button className="primary-button" type="button" onClick={saveField}>保存字段策略</button></div></> : <SettingsState copy="请选择一个字段。" />}</div>
                 </div>}
               </section>
             )}

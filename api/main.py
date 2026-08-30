@@ -119,6 +119,12 @@ class FieldPolicyUpdate(BaseModel):
     write_role_ids: list[str]
 
 
+class SensitiveFieldCreate(FieldPolicyUpdate):
+    area: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    description: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
+
+
 class FieldPolicyResponse(BaseModel):
     id: str
     area: str
@@ -486,6 +492,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def list_field_policies(request: Request) -> list[FieldPolicyResponse]:
         require_system_admin(request)
         return [FieldPolicyResponse(**field) for field in authorization.list_field_policies()]
+
+    @app.post("/api/admin/fields", response_model=FieldPolicyResponse, status_code=201)
+    def create_sensitive_field(
+        create: SensitiveFieldCreate,
+        request: Request,
+    ) -> FieldPolicyResponse:
+        actor = require_system_admin(request)
+        try:
+            field = authorization.create_field(
+                create.area,
+                create.name,
+                create.description,
+                create.read_role_ids,
+                create.write_role_ids,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        authorization.audit(
+            "field.created",
+            actor_user_id=actor["id"],
+            target_type="field",
+            target_id=field["id"],
+        )
+        return FieldPolicyResponse(**field)
 
     @app.put("/api/admin/fields/{field_id}", response_model=FieldPolicyResponse)
     def update_field_policy(

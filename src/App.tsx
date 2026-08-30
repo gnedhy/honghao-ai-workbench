@@ -1,4 +1,4 @@
-import { FolderClosed, FolderKanban, LibraryBig, MessageCircle, Search, WandSparkles, Workflow, X } from "lucide-react";
+import { FolderClosed, FolderKanban, LibraryBig, MessageCircle, PanelsTopLeft, Search, WandSparkles, Workflow, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createConversationSubmission, createProject, fetchConversations, fetchMessages, fetchModules, fetchProjects, fetchServiceHealth, fetchTasks, fetchWorkbenches, setConversationProject, submitConversation, type ServiceConnection } from "./api";
 import { ContextSidebar } from "./components/ContextSidebar";
@@ -9,16 +9,16 @@ import { AutomationScreen } from "./screens/AutomationScreen";
 import { ConversationScreen } from "./screens/ConversationScreen";
 import { KnowledgeScreen } from "./screens/KnowledgeScreen";
 import { TaskBoardScreen } from "./screens/TaskBoardScreen";
-import { WorkbenchScreen } from "./screens/WorkbenchScreen";
-import type { Conversation, ConversationMessage, ConversationView, CurrentUser, ModuleStatus, ModuleVisibility, Project, Section, TaskItem, WorkbenchStatus } from "./types";
+import { workbenches, WorkbenchScreen } from "./screens/WorkbenchScreen";
+import type { Conversation, ConversationMessage, ConversationView, CurrentUser, ModuleStatus, ModuleVisibility, Project, Section, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
 
 type AppProps = {
   currentUser: CurrentUser;
   onLogout: () => Promise<void>;
 };
 
-type SearchScope = "全部" | "会话" | "项目" | "知识" | "自动化" | "任务";
-type SearchResultKind = "conversation" | "project" | "knowledge" | "skill" | "workflow" | "task";
+type SearchScope = "全部" | "会话" | "项目" | "知识" | "自动化" | "工作台" | "任务";
+type SearchResultKind = "conversation" | "project" | "knowledge" | "skill" | "workflow" | "workbench" | "task";
 type GlobalSearchResult = {
   id: string;
   sourceId: string;
@@ -61,6 +61,7 @@ function App({ currentUser, onLogout }: AppProps) {
   const [workbenchDataState, setWorkbenchDataState] = useState<"loading" | "ready" | "error">("loading");
   const [workbenchStatuses, setWorkbenchStatuses] = useState<WorkbenchStatus[]>([]);
   const [workbenchRegistryState, setWorkbenchRegistryState] = useState<"loading" | "ready" | "error">("loading");
+  const [selectedWorkbenchId, setSelectedWorkbenchId] = useState<WorkbenchId>("management");
   const [knowledgeScope, setKnowledgeScope] = useState<"个人" | "公共">("个人");
   const [selectedKnowledgeTitle, setSelectedKnowledgeTitle] = useState(knowledgeItems[0].title);
   const [automationTab, setAutomationTab] = useState<"技能" | "工作流">("技能");
@@ -335,7 +336,7 @@ function App({ currentUser, onLogout }: AppProps) {
       {section === "chat" && enabledModules.chat && <ConversationScreen {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversationId) { const update = projectUpdatePromise.current.catch(() => undefined).then(async () => { const updated = await setConversationProject(selectedConversationId, projectId); setConversations((current) => current.map((conversation) => conversation.id === updated.id ? updated : conversation)); }); projectUpdatePromise.current = update; void update.catch(() => setWorkbenchDataState("error")); } else { setCurrentProjectId(projectId); } }} messages={messages} messagesState={messagesState} onSubmit={submitMessage} />}
       {section === "knowledge" && enabledModules.knowledge && <KnowledgeScreen {...screenChrome} scopeTab={knowledgeScope} onScopeTabChange={setKnowledgeScope} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
       {section === "automation" && enabledModules.automation && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
-      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} statuses={workbenchStatuses} dataState={workbenchRegistryState} />}
+      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} statuses={workbenchStatuses} dataState={workbenchRegistryState} selectedId={selectedWorkbenchId} onSelectedIdChange={setSelectedWorkbenchId} />}
       {section === "tasks" && enabledModules.tasks && <TaskBoardScreen {...screenChrome} tasks={tasks} projects={projects} conversations={conversations} dataState={workbenchDataState} selectedTask={selectedTask} onSelectedTaskChange={(task) => setSelectedTaskId(task.id)} />}
       <ContextSidebar
         section={section}
@@ -360,6 +361,7 @@ function App({ currentUser, onLogout }: AppProps) {
         projects={projects}
         conversations={conversations}
         tasks={tasks}
+        workbenchStatuses={workbenchStatuses}
         onClose={() => setGlobalSearchOpen(false)}
         onSelect={(result) => {
           setProfileOpen(false);
@@ -389,6 +391,9 @@ function App({ currentUser, onLogout }: AppProps) {
             if (workflow) setSelectedWorkflow(workflow);
             setAutomationTab("工作流");
             setSection("automation");
+          } else if (result.kind === "workbench") {
+            setSelectedWorkbenchId(result.sourceId as WorkbenchId);
+            setSection("workbench");
           } else {
             setSelectedTaskId(result.sourceId);
             setSection("tasks");
@@ -406,6 +411,7 @@ function GlobalSearchDialog({
   projects,
   conversations,
   tasks,
+  workbenchStatuses,
   onClose,
   onSelect,
 }: {
@@ -414,6 +420,7 @@ function GlobalSearchDialog({
   projects: Project[];
   conversations: Conversation[];
   tasks: TaskItem[];
+  workbenchStatuses: WorkbenchStatus[];
   onClose: () => void;
   onSelect: (result: GlobalSearchResult) => void;
 }) {
@@ -443,6 +450,7 @@ function GlobalSearchDialog({
     ...knowledgeItems.map((item) => ({ id: `knowledge:${item.title}`, sourceId: item.title, kind: "knowledge" as const, scope: "知识" as const, title: item.title, meta: `${item.scope} · ${item.updated}`, keywords: `${item.title} ${item.scope} ${item.tags.join(" ")} ${item.project ?? ""}` })),
     ...skills.map((item) => ({ id: `skill:${item.title}`, sourceId: item.title, kind: "skill" as const, scope: "自动化" as const, title: item.title, meta: `技能 · ${item.status} · ${item.version}`, keywords: `${item.title} ${item.description} 技能 ${item.status}` })),
     ...workflows.map((item) => ({ id: `workflow:${item.title}`, sourceId: item.title, kind: "workflow" as const, scope: "自动化" as const, title: item.title, meta: `工作流 · ${item.status} · ${item.version}`, keywords: `${item.title} ${item.description} 工作流 ${item.status}` })),
+    ...workbenches.filter((item) => workbenchStatuses.some((status) => status.id === item.id && status.mode !== "off")).map((item) => ({ id: `workbench:${item.id}`, sourceId: item.id, kind: "workbench" as const, scope: "工作台" as const, title: item.title, meta: `${item.department} · 职能工作台`, keywords: `${item.department} ${item.title} ${item.summary} ${item.modules.join(" ")} ${item.source} ${item.output}` })),
     ...[...tasks].reverse().map((task) => ({ id: `task:${task.id}`, sourceId: task.id, kind: "task" as const, scope: "任务" as const, title: task.objective, meta: `任务 · ${projectTitle(task.project_id) ?? conversationTitleById(task.conversation_id) ?? "未关联项目"}`, keywords: `${task.objective} ${projectTitle(task.project_id) ?? ""} ${conversationTitleById(task.conversation_id) ?? ""}` })),
   ];
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -451,7 +459,9 @@ function GlobalSearchDialog({
       ? enabledModules.knowledge
       : result.scope === "自动化"
         ? enabledModules.automation
-        : result.scope === "任务"
+        : result.scope === "工作台"
+          ? enabledModules.workbench
+          : result.scope === "任务"
           ? enabledModules.tasks
           : enabledModules.chat;
     const scopeMatches = scope === "全部" || result.scope === scope;
@@ -461,6 +471,7 @@ function GlobalSearchDialog({
   if (enabledModules.chat) scopes.push("会话", "项目");
   if (enabledModules.knowledge) scopes.push("知识");
   if (enabledModules.automation) scopes.push("自动化");
+  if (enabledModules.workbench) scopes.push("工作台");
   if (enabledModules.tasks) scopes.push("任务");
 
   const chooseResult = (result: GlobalSearchResult) => {
@@ -518,6 +529,7 @@ function SearchResultIcon({ kind }: { kind: SearchResultKind }) {
   if (kind === "knowledge") return <LibraryBig size={16} />;
   if (kind === "skill") return <WandSparkles size={16} />;
   if (kind === "workflow") return <Workflow size={16} />;
+  if (kind === "workbench") return <PanelsTopLeft size={16} />;
   if (kind === "task") return <FolderKanban size={16} />;
   return null;
 }
