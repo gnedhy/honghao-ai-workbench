@@ -11,8 +11,9 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "security:check": "uv --cache-dir .uv-cache run python -m api.security_gate",
+    "test:count": "uv --cache-dir .uv-cache run python -m api.test_count_gate",
     "test:api": "uv --cache-dir .uv-cache run python -m pytest",
-    "verify": "npm run security:check && npm run test:api && npm run build"
+    "verify": "npm run test:count && npm run test:api && npm run build && npm run security:check"
   },
   "dependencies": {
     "lucide-react": "1.31.0",

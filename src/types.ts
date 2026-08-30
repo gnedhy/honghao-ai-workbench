@@ -30,9 +30,16 @@ export type AdminModuleSetting = {
   pending_mode: ModuleMode;
 };
 
+export type AdminWorkbenchSetting = {
+  id: WorkbenchId;
+  current_mode: WorkbenchMode;
+  pending_mode: WorkbenchMode;
+};
+
 export type AdminModuleSettings = {
   environment: RuntimeEnvironment;
   modules: AdminModuleSetting[];
+  workbenches: AdminWorkbenchSetting[];
 };
 
 export type ActivationReview = "business" | "security" | "code" | "rollback";

@@ -9,11 +9,15 @@ from pathlib import Path
 
 
 _SOURCE_SUFFIXES = {".cjs", ".js", ".mjs", ".py", ".ts", ".tsx"}
+_CONFIG_SUFFIXES = {".json", ".toml", ".yaml", ".yml"}
 _COMMAND_FILES = {"package.json", "pyproject.toml"}
-_EXCLUDED_PARTS = {".git", ".uv-cache", ".venv", "dist", "node_modules"}
+_EXCLUDED_PARTS = {".git", ".uv-cache", ".venv", "node_modules"}
 _ALLOWED_PUBLIC_API_PATHS = {"/api/health", "/api/login", "/api/readiness"}
-_SECRET_PATTERNS = (
-    re.compile(r"\b(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*['\"][^'\"]{8,}['\"]", re.IGNORECASE),
+_GENERIC_SECRET_PATTERN = re.compile(
+    r"['\"]?(?:api[_-]?key|access[_-]?token|secret|password)['\"]?\s*[:=]\s*['\"][^'\"]{8,}['\"]",
+    re.IGNORECASE,
+)
+_STRONG_SECRET_PATTERNS = (
     re.compile(r"\b(?:AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9_-]{20,})\b"),
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
 )
@@ -43,20 +47,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             relative.parts[0] == ".data"
             or relative.name.startswith(".env")
             or relative.suffix.lower() in {".db", ".key", ".pem", ".sqlite", ".sqlite3"}
+            or relative.parts[0] == "public"
+            and relative.suffix.lower() in {".csv", ".doc", ".docx", ".pdf", ".xls", ".xlsx"}
         ):
             findings.append(f"SEC002 {relative}：数据或凭据文件不得进入代码仓库")
             continue
         is_source = path.suffix.lower() in _SOURCE_SUFFIXES
-        if (not is_source and relative.name not in _COMMAND_FILES) or any(part in _EXCLUDED_PARTS for part in relative.parts):
+        is_text = is_source or path.suffix.lower() in _CONFIG_SUFFIXES
+        if (not is_text and relative.name not in _COMMAND_FILES) or any(part in _EXCLUDED_PARTS for part in relative.parts):
             continue
         try:
             content = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
         is_test = relative.parts and relative.parts[0] == "tests"
-        if is_source and not is_test and any(pattern.search(content) for pattern in _SECRET_PATTERNS):
+        is_build = relative.parts and relative.parts[0] == "dist"
+        if any(pattern.search(content) for pattern in _STRONG_SECRET_PATTERNS) or (
+            not is_test and _GENERIC_SECRET_PATTERN.search(content)
+        ):
             findings.append(f"SEC001 {relative}：疑似硬编码凭据")
-        if is_source and not is_test and any(pattern.search(content) for pattern in _DANGEROUS_EXECUTION_PATTERNS):
+        if is_source and not is_test and not is_build and any(pattern.search(content) for pattern in _DANGEROUS_EXECUTION_PATTERNS):
             findings.append(f"SEC003 {relative}：禁止动态执行或未经净化的 HTML")
         if not is_test and path.suffix.lower() == ".py" and _has_unapproved_public_api(content):
             findings.append(f"SEC004 {relative}：发现未批准的免登录 API")
@@ -79,7 +89,11 @@ def _candidate_files(root: Path) -> list[Path]:
         )
     except (OSError, subprocess.CalledProcessError):
         return [path for path in root.rglob("*") if path.is_file()]
-    return [root / item.decode("utf-8") for item in result.stdout.split(b"\0") if item]
+    files = {root / item.decode("utf-8") for item in result.stdout.split(b"\0") if item}
+    dist = root / "dist"
+    if dist.is_dir():
+        files.update(path for path in dist.rglob("*") if path.is_file())
+    return sorted(files)
 
 
 def _has_unapproved_public_api(content: str) -> bool:

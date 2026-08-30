@@ -42,6 +42,12 @@ def test_admin_can_read_environment_and_pending_module_settings(tmp_path: Path) 
             {"id": "workbench", "current_mode": "active", "pending_mode": "active"},
             {"id": "tasks", "current_mode": "off", "pending_mode": "off"},
         ],
+        "workbenches": [
+            {"id": "management", "current_mode": "prototype", "pending_mode": "prototype"},
+            {"id": "procurement", "current_mode": "prototype", "pending_mode": "prototype"},
+            {"id": "research", "current_mode": "prototype", "pending_mode": "prototype"},
+            {"id": "sales", "current_mode": "prototype", "pending_mode": "prototype"},
+        ],
     }
 
 
@@ -84,11 +90,21 @@ def test_production_activation_requires_and_records_all_four_reviews(tmp_path: P
     with authenticated_client(settings) as client:
         blocked = client.put(
             "/api/admin/module-settings/knowledge",
-            json={"mode": "active", "reviews": ["business", "security", "code"]},
+            json={
+                "mode": "active",
+                "reviews": ["business", "security", "code"],
+                "issue_url": "https://github.com/gnedhy/honghao-ai-workbench/issues/43",
+                "pull_request_url": "https://github.com/gnedhy/honghao-ai-workbench/pull/56",
+            },
         )
         allowed = client.put(
             "/api/admin/module-settings/knowledge",
-            json={"mode": "active", "reviews": ["business", "security", "code", "rollback"]},
+            json={
+                "mode": "active",
+                "reviews": ["business", "security", "code", "rollback"],
+                "issue_url": "https://github.com/gnedhy/honghao-ai-workbench/issues/43",
+                "pull_request_url": "https://github.com/gnedhy/honghao-ai-workbench/pull/56",
+            },
         )
 
     assert blocked.status_code == 422
@@ -98,12 +114,17 @@ def test_production_activation_requires_and_records_all_four_reviews(tmp_path: P
     assert allowed.status_code == 200
     assert allowed.json()["pending_mode"] == "active"
     config = json.loads((data_dir / "runtime-config.json").read_text(encoding="utf-8"))
-    assert config["activation_reviews"]["knowledge"] == [
+    record = config["activation_reviews"]["knowledge"]
+    assert record["checks"] == [
         "business",
         "code",
         "rollback",
         "security",
     ]
+    assert record["issue_url"].endswith("/issues/43")
+    assert record["pull_request_url"].endswith("/pull/56")
+    assert record["reviewed_by"]
+    assert record["reviewed_at"]
 
     restarted_settings = Settings.from_data_dir(data_dir, environment="production")
     with authenticated_client(restarted_settings) as restarted_client:
@@ -147,6 +168,26 @@ def test_production_rejects_active_module_without_recorded_reviews(tmp_path: Pat
     )
 
     with pytest.raises(ValueError, match="require recorded reviews"):
+        Settings.from_data_dir(data_dir, environment="production")
+
+
+def test_production_rejects_malformed_activation_reviews_as_configuration_error(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "production"
+    data_dir.mkdir()
+    (data_dir / "runtime-config.json").write_text(
+        json.dumps({
+            "version": 1,
+            "environment": "production",
+            "module_modes": {**default_module_modes("production"), "knowledge": "active"},
+            "reviewed_active_modules": ["knowledge"],
+            "activation_reviews": {"knowledge": {"checks": [{}]}},
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="activation_reviews"):
         Settings.from_data_dir(data_dir, environment="production")
 
 

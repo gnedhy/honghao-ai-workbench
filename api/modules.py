@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -38,6 +39,39 @@ _API_PREFIXES: tuple[tuple[str, ModuleId], ...] = (
     ("/api/workbenches", "workbench"),
     ("/api/tasks", "tasks"),
 )
+
+
+def create_activation_review_record(
+    reviews: Sequence[str],
+    *,
+    reviewed_by: str,
+    issue_url: str,
+    pull_request_url: str,
+) -> dict[str, object]:
+    if set(reviews) != REQUIRED_ACTIVATION_REVIEWS:
+        raise ValueError("Production active modules require recorded reviews")
+    return {
+        "checks": sorted(REQUIRED_ACTIVATION_REVIEWS),
+        "reviewed_by": reviewed_by,
+        "reviewed_at": datetime.now(UTC).isoformat(),
+        "issue_url": issue_url,
+        "pull_request_url": pull_request_url,
+    }
+
+
+def activation_review_is_complete(record: object) -> bool:
+    if not isinstance(record, dict):
+        return False
+    checks = record.get("checks")
+    return (
+        isinstance(checks, list)
+        and all(isinstance(check, str) for check in checks)
+        and set(checks) == REQUIRED_ACTIVATION_REVIEWS
+        and all(
+            isinstance(record.get(key), str) and bool(record[key])
+            for key in ("reviewed_by", "reviewed_at", "issue_url", "pull_request_url")
+        )
+    )
 
 
 def default_module_modes(environment: RuntimeEnvironment = "test") -> dict[ModuleId, ModuleMode]:
@@ -95,9 +129,14 @@ def load_persisted_module_modes(
     activation_reviews = payload.get("activation_reviews", {})
     if not isinstance(activation_reviews, dict):
         raise ValueError("Runtime configuration activation_reviews must be an object")
+    if any(
+        module_id not in MODULE_IDS or not activation_review_is_complete(record)
+        for module_id, record in activation_reviews.items()
+    ):
+        raise ValueError("Runtime configuration activation_reviews is invalid")
     if environment == "production" and any(
         mode == "active"
-        and set(activation_reviews.get(module_id, [])) != REQUIRED_ACTIVATION_REVIEWS
+        and not activation_review_is_complete(activation_reviews.get(module_id))
         for module_id, mode in modes.items()
     ):
         raise ValueError("Production active modules require recorded reviews")
@@ -109,12 +148,12 @@ def save_persisted_module_modes(
     environment: RuntimeEnvironment,
     modes: Mapping[ModuleId, ModuleMode],
     approved_module: ModuleId | None = None,
-    approved_reviews: Sequence[str] | None = None,
+    approved_review_record: Mapping[str, object] | None = None,
 ) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     target = data_dir / "runtime-config.json"
     reviewed_active_modules: set[str] = set()
-    activation_reviews: dict[str, list[str]] = {}
+    activation_reviews: dict[str, dict[str, object]] = {}
     if target.exists():
         existing = json.loads(target.read_text(encoding="utf-8"))
         existing_reviews = existing.get("reviewed_active_modules", []) if isinstance(existing, dict) else []
@@ -123,15 +162,15 @@ def save_persisted_module_modes(
         existing_activation_reviews = existing.get("activation_reviews", {}) if isinstance(existing, dict) else {}
         if isinstance(existing_activation_reviews, dict):
             activation_reviews.update({
-                module_id: sorted(set(reviews))
-                for module_id, reviews in existing_activation_reviews.items()
-                if module_id in MODULE_IDS and isinstance(reviews, list)
+                module_id: dict(record)
+                for module_id, record in existing_activation_reviews.items()
+                if module_id in MODULE_IDS and activation_review_is_complete(record)
             })
     if approved_module is not None:
-        if set(approved_reviews or []) != REQUIRED_ACTIVATION_REVIEWS:
+        if not activation_review_is_complete(approved_review_record):
             raise ValueError("Production active modules require recorded reviews")
         reviewed_active_modules.add(approved_module)
-        activation_reviews[approved_module] = sorted(REQUIRED_ACTIVATION_REVIEWS)
+        activation_reviews[approved_module] = dict(approved_review_record)
     reviewed_active_modules.intersection_update(
         module_id for module_id, mode in modes.items() if mode == "active"
     )

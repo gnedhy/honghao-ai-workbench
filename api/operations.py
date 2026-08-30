@@ -21,6 +21,7 @@ from api.identity import IDENTITY_SCHEMA_VERSION, IdentityStore
 from api.knowledge import KNOWLEDGE_SCHEMA_VERSION, KnowledgeStore
 from api.modules import load_persisted_module_modes
 from api.settings import Settings
+from api.workbenches import load_persisted_workbench_modes
 from scripts.backup_database import backup_database
 
 
@@ -221,6 +222,11 @@ def readiness_checks(settings: Settings) -> dict[str, str]:
             settings.environment,
             settings.module_modes,
         )
+        load_persisted_workbench_modes(
+            settings.data_dir,
+            settings.environment,
+            settings.workbench_modes,
+        )
         valid_modes = all(mode in {"off", "prototype", "active"} for mode in settings.module_modes.values())
         valid_workbenches = all(mode in {"off", "prototype", "active"} for mode in settings.workbench_modes.values())
     except (OSError, RuntimeError, ValueError):
@@ -349,6 +355,7 @@ def _snapshot_sources(settings: Settings) -> list[Path]:
         for path in (
             settings.data_dir / "environment",
             settings.data_dir / "runtime-config.json",
+            settings.data_dir / "workbench-runtime-config.json",
         )
         if path.is_file()
     ]
@@ -375,7 +382,7 @@ def _file_record(path: Path, root: Path) -> dict[str, str | int]:
 
 
 def _allowed_snapshot_path(path: Path) -> bool:
-    if path.as_posix() in {"honghao.db", "environment", "runtime-config.json"}:
+    if path.as_posix() in {"honghao.db", "environment", "runtime-config.json", "workbench-runtime-config.json"}:
         return True
     if len(path.parts) < 3:
         return False

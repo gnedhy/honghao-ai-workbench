@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 
@@ -49,6 +50,52 @@ def test_invalid_workbench_mode_stops_startup(monkeypatch) -> None:
         match="HONGHAO_WORKBENCH_RESEARCH_MODE must be prototype, active, or off",
     ):
         Settings.from_environment()
+
+
+def test_production_rejects_workbench_mode_environment_override(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HONGHAO_ENVIRONMENT", "production")
+    monkeypatch.setenv("HONGHAO_DATA_DIR", str(tmp_path / "production"))
+    monkeypatch.setenv("HONGHAO_WORKBENCH_PROCUREMENT_MODE", "active")
+
+    with pytest.raises(ValueError, match="Production workbench modes must be changed through admin settings"):
+        Settings.from_environment()
+
+
+def test_production_workbench_activation_requires_and_records_reviews(tmp_path: Path) -> None:
+    data_dir = tmp_path / "production"
+    settings = Settings.from_data_dir(data_dir, environment="production")
+    evidence = {
+        "issue_url": "https://github.com/gnedhy/honghao-ai-workbench/issues/23",
+        "pull_request_url": "https://github.com/gnedhy/honghao-ai-workbench/pull/57",
+    }
+
+    with authenticated_client(settings) as client:
+        blocked = client.put(
+            "/api/admin/workbench-settings/procurement",
+            json={"mode": "active", "reviews": ["business", "security", "code"], **evidence},
+        )
+        allowed = client.put(
+            "/api/admin/workbench-settings/procurement",
+            json={
+                "mode": "active",
+                "reviews": ["business", "security", "code", "rollback"],
+                **evidence,
+            },
+        )
+
+    assert blocked.status_code == 422
+    assert allowed.status_code == 200
+    assert allowed.json()["pending_mode"] == "active"
+    config = json.loads((data_dir / "workbench-runtime-config.json").read_text(encoding="utf-8"))
+    record = config["activation_reviews"]["procurement"]
+    assert record["checks"] == ["business", "code", "rollback", "security"]
+    assert record["reviewed_by"]
+    assert record["reviewed_at"]
+    assert record["issue_url"].endswith("/issues/23")
+    assert record["pull_request_url"].endswith("/pull/57")
+
+    restarted_settings = Settings.from_data_dir(data_dir, environment="production")
+    assert restarted_settings.workbench_modes["procurement"] == "active"
 
 
 def test_core_schema_ignores_additive_workbench_tables(tmp_path: Path) -> None:

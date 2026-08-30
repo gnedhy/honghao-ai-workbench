@@ -12,7 +12,7 @@ def test_security_gate_rejects_a_hardcoded_secret(tmp_path: Path, capsys) -> Non
     source = tmp_path / "src"
     source.mkdir()
     (source / "client.py").write_text(
-        'api_key = "sk-live-this-must-not-be-committed-123456"',
+        'api_key = "' + "sk-" + 'live-this-must-not-be-committed-123456"',
         encoding="utf-8",
     )
 
@@ -102,3 +102,37 @@ def test_security_gate_rejects_a_command_that_hides_failure(tmp_path: Path, caps
 
     assert result == 1
     assert "SEC005" in capsys.readouterr().out
+
+
+def test_security_gate_scans_configuration_files_for_secrets(tmp_path: Path, capsys) -> None:
+    (tmp_path / "settings.json").write_text(
+        '{"api_key":"plain-secret-value-123456"}',
+        encoding="utf-8",
+    )
+
+    assert main(["--root", str(tmp_path)]) == 1
+    assert "SEC001" in capsys.readouterr().out
+
+
+def test_security_gate_rejects_documents_in_public_assets(tmp_path: Path, capsys) -> None:
+    public = tmp_path / "public"
+    public.mkdir()
+    (public / "customer.pdf").write_bytes(b"private")
+
+    assert main(["--root", str(tmp_path)]) == 1
+    assert "SEC002" in capsys.readouterr().out
+
+
+def test_security_gate_scans_tests_and_build_output_for_strong_tokens(tmp_path: Path, capsys) -> None:
+    tests = tmp_path / "tests"
+    dist = tmp_path / "dist"
+    tests.mkdir()
+    dist.mkdir()
+    token = "ghp_" + "A" * 36
+    (tests / "test_client.py").write_text(f'TOKEN = "{token}"', encoding="utf-8")
+    (dist / "index.js").write_text(f'window.token = "{token}"', encoding="utf-8")
+
+    assert main(["--root", str(tmp_path)]) == 1
+    output = capsys.readouterr().out
+    assert "tests" in output
+    assert "dist" in output
