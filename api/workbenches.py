@@ -63,7 +63,7 @@ def load_persisted_workbench_modes(
         raise ValueError("Workbench runtime configuration activation_reviews is invalid")
     history = payload.get("activation_history", [])
     if not isinstance(history, list) or any(
-        not mode_change_record_is_valid(record, WORKBENCH_IDS, WORKBENCH_MODES)
+        not mode_change_record_is_valid(record, WORKBENCH_IDS, WORKBENCH_MODES, environment == "production")
         for record in history
     ):
         raise ValueError("Workbench runtime configuration activation_history is invalid")
@@ -105,7 +105,7 @@ def save_persisted_workbench_modes(
             history.extend(
                 dict(record)
                 for record in existing_history
-                if mode_change_record_is_valid(record, WORKBENCH_IDS, WORKBENCH_MODES)
+                if mode_change_record_is_valid(record, WORKBENCH_IDS, WORKBENCH_MODES, environment == "production")
             )
     if approved_workbench is not None:
         if not activation_review_is_complete(approved_review_record):

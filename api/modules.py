@@ -104,7 +104,12 @@ def create_mode_change_record(
     }
 
 
-def mode_change_record_is_valid(record: object, target_ids: Sequence[str], modes: Sequence[str]) -> bool:
+def mode_change_record_is_valid(
+    record: object,
+    target_ids: Sequence[str],
+    modes: Sequence[str],
+    require_active_review: bool = False,
+) -> bool:
     if not isinstance(record, dict):
         return False
     try:
@@ -119,6 +124,7 @@ def mode_change_record_is_valid(record: object, target_ids: Sequence[str], modes
         and mode in modes
         and changed_at.tzinfo is not None
         and (review is None or activation_review_is_complete(review))
+        and (not require_active_review or mode != "active" or activation_review_is_complete(review))
     )
 
 
@@ -184,7 +190,7 @@ def load_persisted_module_modes(
         raise ValueError("Runtime configuration activation_reviews is invalid")
     activation_history = payload.get("activation_history", [])
     if not isinstance(activation_history, list) or any(
-        not mode_change_record_is_valid(record, MODULE_IDS, MODULE_MODES)
+        not mode_change_record_is_valid(record, MODULE_IDS, MODULE_MODES, environment == "production")
         for record in activation_history
     ):
         raise ValueError("Runtime configuration activation_history is invalid")
@@ -229,7 +235,7 @@ def save_persisted_module_modes(
             activation_history.extend(
                 dict(record)
                 for record in existing_history
-                if mode_change_record_is_valid(record, MODULE_IDS, MODULE_MODES)
+                if mode_change_record_is_valid(record, MODULE_IDS, MODULE_MODES, environment == "production")
             )
     if approved_module is not None:
         if not activation_review_is_complete(approved_review_record):

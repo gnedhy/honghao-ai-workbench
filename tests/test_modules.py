@@ -212,6 +212,30 @@ def test_production_rejects_malformed_activation_reviews_as_configuration_error(
         Settings.from_data_dir(data_dir, environment="production")
 
 
+def test_production_rejects_unreviewed_active_module_history(tmp_path: Path) -> None:
+    data_dir = tmp_path / "production"
+    data_dir.mkdir()
+    (data_dir / "runtime-config.json").write_text(
+        json.dumps({
+            "version": 1,
+            "environment": "production",
+            "module_modes": default_module_modes("production"),
+            "activation_reviews": {},
+            "activation_history": [{
+                "target_id": "knowledge",
+                "mode": "active",
+                "changed_by": "00000000-0000-4000-8000-000000000001",
+                "changed_at": "2026-08-30T10:00:00+00:00",
+                "activation_review": None,
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="activation_history"):
+        Settings.from_data_dir(data_dir, environment="production")
+
+
 def test_non_admin_cannot_read_or_change_module_settings(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
     app = create_app(settings)

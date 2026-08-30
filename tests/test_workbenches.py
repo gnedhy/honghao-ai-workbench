@@ -126,6 +126,35 @@ def test_production_workbench_activation_requires_and_records_reviews(tmp_path: 
     assert audit.json()[0]["action"] == "workbench.mode.prototype"
 
 
+def test_production_rejects_unreviewed_active_workbench_history(tmp_path: Path) -> None:
+    data_dir = tmp_path / "production"
+    data_dir.mkdir()
+    (data_dir / "workbench-runtime-config.json").write_text(
+        json.dumps({
+            "version": 1,
+            "environment": "production",
+            "workbench_modes": {
+                "management": "prototype",
+                "procurement": "prototype",
+                "research": "prototype",
+                "sales": "prototype",
+            },
+            "activation_reviews": {},
+            "activation_history": [{
+                "target_id": "procurement",
+                "mode": "active",
+                "changed_by": "00000000-0000-4000-8000-000000000001",
+                "changed_at": "2026-08-30T10:00:00+00:00",
+                "activation_review": None,
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="activation_history"):
+        Settings.from_data_dir(data_dir, environment="production")
+
+
 def test_core_schema_ignores_additive_workbench_tables(tmp_path: Path) -> None:
     module_modes = default_module_modes()
     module_modes["chat"] = "active"
