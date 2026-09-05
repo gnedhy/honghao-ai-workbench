@@ -14,7 +14,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type CSSProperties, useEffect, useState } from "react";
 import {
   createSensitiveField,
   createUser,
@@ -46,6 +46,15 @@ import type {
 
 type SettingsTab = "general" | "accounts" | "permissions" | "audit";
 type FieldScopeKey = "read_scope_ids" | "write_scope_ids";
+export type UiFontSize = 1 | 2 | 3 | 4 | 5;
+
+const UI_FONT_SIZES: { id: UiFontSize; label: string }[] = [
+  { id: 1, label: "小" },
+  { id: 2, label: "较小" },
+  { id: 3, label: "标准" },
+  { id: 4, label: "较大" },
+  { id: 5, label: "大" },
+];
 
 const MODULE_OPTIONS = [
   { id: "chat", label: "新聊天", description: "对话、工作模式及会话侧栏", icon: PenLine },
@@ -106,10 +115,12 @@ type SettingsDialogProps = {
   serviceConnection: ServiceConnection;
   moduleStatuses: ModuleStatus[];
   moduleRegistryState: "loading" | "ready" | "error";
+  uiFontSize: UiFontSize;
+  onUiFontSizeChange: (size: UiFontSize) => void;
   onClose: () => void;
 };
 
-export function SettingsDialog({ currentUser, serviceConnection, moduleStatuses, moduleRegistryState, onClose }: SettingsDialogProps) {
+export function SettingsDialog({ currentUser, serviceConnection, moduleStatuses, moduleRegistryState, uiFontSize, onUiFontSizeChange, onClose }: SettingsDialogProps) {
   const isAdmin = currentUser.is_system_admin;
   const [tab, setTab] = useState<SettingsTab>("general");
   const [loadState, setLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -280,7 +291,7 @@ export function SettingsDialog({ currentUser, serviceConnection, moduleStatuses,
           <nav aria-label="设置分类">{navItems.map(({ id, label, icon: Icon }) => <button className={tab === id ? "is-active" : ""} key={id} type="button" onClick={() => setTab(id)}><span><Icon size={15} />{label}</span><ChevronRight size={15} /></button>)}</nav>
           <article>
             {notice && <div className="settings-notice" role="status"><Check size={14} />{notice}</div>}
-            {tab === "general" && <GeneralSettings serviceCopy={serviceCopy} environment={runtimeEnvironment} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} enabledCount={enabledCount} isAdmin={isAdmin} adminModuleSettings={adminModuleSettings} onModeChange={saveModuleMode} onWorkbenchModeChange={saveWorkbenchMode} />}
+            {tab === "general" && <><FontSizeSetting value={uiFontSize} onChange={onUiFontSizeChange} /><GeneralSettings serviceCopy={serviceCopy} environment={runtimeEnvironment} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} enabledCount={enabledCount} isAdmin={isAdmin} adminModuleSettings={adminModuleSettings} onModeChange={saveModuleMode} onWorkbenchModeChange={saveWorkbenchMode} /></>}
             {tab !== "general" && loadState === "loading" && <SettingsState copy="正在读取管理数据…" />}
             {tab !== "general" && loadState === "error" && <SettingsState copy="管理数据暂时无法读取，请稍后重试。" error />}
             {tab === "accounts" && loadState === "ready" && <section className="admin-settings-section">
@@ -326,7 +337,23 @@ function LevelButtons({ label, value, levels, onChange }: { label: string; value
   return <fieldset className="field-policy-levels"><legend>{label}</legend><div className="policy-switch">{levels.map((level) => <button className={value === level.id ? "is-active" : ""} type="button" key={level.id} aria-pressed={value === level.id} onClick={() => onChange(level.id)}>{level.label}</button>)}</div></fieldset>;
 }
 
-function GeneralSettings({ serviceCopy, environment: serviceEnvironment, moduleStatuses, moduleRegistryState, enabledCount, isAdmin, adminModuleSettings, onModeChange, onWorkbenchModeChange }: { serviceCopy: { label: string; detail: string }; environment: RuntimeEnvironment | null; moduleStatuses: ModuleStatus[]; moduleRegistryState: "loading" | "ready" | "error"; enabledCount: number; isAdmin: boolean; adminModuleSettings: AdminModuleSettings | null; onModeChange: (moduleId: Section, mode: ModuleMode, reviews?: ActivationReview[], issueUrl?: string, pullRequestUrl?: string) => Promise<void>; onWorkbenchModeChange: (workbenchId: WorkbenchId, mode: ModuleMode, reviews?: ActivationReview[], issueUrl?: string, pullRequestUrl?: string) => Promise<void>; }) {
+function FontSizeSetting({ value, onChange }: { value: UiFontSize; onChange: (size: UiFontSize) => void }) {
+  const selected = UI_FONT_SIZES[value - 1];
+  const sliderStyle = { "--ui-font-progress": `${(value - 1) * 25}%` } as CSSProperties;
+  return <section className="ui-preferences"><h2>常规</h2><div className="ui-font-setting"><div><strong id="ui-font-size-title">界面字号</strong><p>调整导航、正文、表格和表单文字大小。</p></div><div className="ui-font-control"><div className="ui-font-current" aria-live="polite"><span>当前</span><strong>{selected.label}</strong></div><input className="ui-font-range" type="range" min="1" max="5" step="1" value={value} aria-labelledby="ui-font-size-title" aria-valuetext={selected.label} style={sliderStyle} onChange={(event) => onChange(Number(event.currentTarget.value) as UiFontSize)} /><div className="ui-font-ticks" role="group" aria-label="字号档位">{UI_FONT_SIZES.map((option) => <button key={option.id} type="button" aria-pressed={value === option.id} onClick={() => onChange(option.id)}>{option.label}</button>)}</div></div></div></section>;
+}
+
+function GeneralSettings({ serviceCopy, environment: serviceEnvironment, moduleStatuses, moduleRegistryState, enabledCount, isAdmin, adminModuleSettings, onModeChange, onWorkbenchModeChange }: {
+  serviceCopy: { label: string; detail: string };
+  environment: RuntimeEnvironment | null;
+  moduleStatuses: ModuleStatus[];
+  moduleRegistryState: "loading" | "ready" | "error";
+  enabledCount: number;
+  isAdmin: boolean;
+  adminModuleSettings: AdminModuleSettings | null;
+  onModeChange: (moduleId: Section, mode: ModuleMode, reviews?: ActivationReview[], issueUrl?: string, pullRequestUrl?: string) => Promise<void>;
+  onWorkbenchModeChange: (workbenchId: WorkbenchId, mode: ModuleMode, reviews?: ActivationReview[], issueUrl?: string, pullRequestUrl?: string) => Promise<void>;
+}) {
   const [activationTarget, setActivationTarget] = useState<{ kind: "module"; id: Section } | { kind: "workbench"; id: WorkbenchId } | null>(null);
   const [reviews, setReviews] = useState<ActivationReview[]>([]);
   const [issueUrl, setIssueUrl] = useState("");

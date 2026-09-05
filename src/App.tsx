@@ -1,8 +1,8 @@
 import { FolderClosed, FolderKanban, LibraryBig, MessageCircle, PanelsTopLeft, Search, WandSparkles, Workflow, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createConversationSubmission, createProject, fetchConversations, fetchMessages, fetchModules, fetchProjects, fetchServiceHealth, fetchTasks, fetchWorkbenches, setConversationProject, submitConversation, type ServiceConnection } from "./api";
 import { ContextSidebar } from "./components/ContextSidebar";
-import { SettingsDialog } from "./components/SettingsDialog";
+import { SettingsDialog, type UiFontSize } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
 import { knowledgeItems, skills, workflows } from "./data";
 import { AutomationScreen } from "./screens/AutomationScreen";
@@ -10,7 +10,7 @@ import { ConversationScreen } from "./screens/ConversationScreen";
 import { KnowledgeScreen } from "./screens/KnowledgeScreen";
 import { TaskBoardScreen } from "./screens/TaskBoardScreen";
 import { workbenches, WorkbenchScreen } from "./screens/WorkbenchScreen";
-import type { Conversation, ConversationMessage, ConversationView, CurrentUser, ModuleStatus, ModuleVisibility, Project, Section, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
+import type { Conversation, ConversationMessage, ConversationView, CurrentUser, ModuleStatus, ModuleVisibility, ProcurementPage, Project, Section, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
 
 type AppProps = {
   currentUser: CurrentUser;
@@ -30,6 +30,18 @@ type GlobalSearchResult = {
 };
 
 const MODULE_IDS: Section[] = ["chat", "knowledge", "automation", "workbench", "tasks"];
+const UI_FONT_SIZE_KEY = "honghao-ui-font-size";
+
+function loadUiFontSize(): UiFontSize {
+  try {
+    const stored = window.localStorage.getItem(UI_FONT_SIZE_KEY);
+    if (stored === "1" || stored === "2" || stored === "3" || stored === "4" || stored === "5") return Number(stored) as UiFontSize;
+    if (stored === "small") return 1;
+    if (stored === "standard") return 2;
+    return 3;
+  } catch { return 3; }
+}
+
 function App({ currentUser, onLogout }: AppProps) {
   const [moduleStatuses, setModuleStatuses] = useState<ModuleStatus[]>([]);
   const [moduleRegistryState, setModuleRegistryState] = useState<"loading" | "ready" | "error">("loading");
@@ -49,6 +61,7 @@ function App({ currentUser, onLogout }: AppProps) {
   const selectedConversationIdRef = useRef<string | null>(null);
   const conversationViewRef = useRef<ConversationView>("new");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [uiFontSize, setUiFontSize] = useState<UiFontSize>(loadUiFontSize);
   const [conversationView, setConversationView] = useState<ConversationView>("new");
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [conversationMode, setConversationMode] = useState<"聊天" | "工作">("工作");
@@ -62,6 +75,8 @@ function App({ currentUser, onLogout }: AppProps) {
   const [workbenchStatuses, setWorkbenchStatuses] = useState<WorkbenchStatus[]>([]);
   const [workbenchRegistryState, setWorkbenchRegistryState] = useState<"loading" | "ready" | "error">("loading");
   const [selectedWorkbenchId, setSelectedWorkbenchId] = useState<WorkbenchId>("management");
+  const [openedWorkbenchId, setOpenedWorkbenchId] = useState<WorkbenchId | null>(null);
+  const [procurementPage, setProcurementPage] = useState<ProcurementPage>("dashboard");
   const [knowledgeScope, setKnowledgeScope] = useState<"个人" | "公共">("个人");
   const [selectedKnowledgeTitle, setSelectedKnowledgeTitle] = useState(knowledgeItems[0].title);
   const [automationTab, setAutomationTab] = useState<"技能" | "工作流">("技能");
@@ -76,6 +91,11 @@ function App({ currentUser, onLogout }: AppProps) {
   const conversationTitle = selectedConversation?.title ?? "新聊天";
   const conversationProjectId = conversationView === "existing" ? selectedConversation?.project_id ?? null : currentProjectId;
   const conversationProjectTitle = projects.find((project) => project.id === conversationProjectId)?.title ?? null;
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.fontSize = String(uiFontSize);
+    try { window.localStorage.setItem(UI_FONT_SIZE_KEY, String(uiFontSize)); } catch { /* The preference remains active for this session. */ }
+  }, [uiFontSize]);
 
   useEffect(() => {
     selectedConversationIdRef.current = selectedConversationId;
@@ -321,7 +341,10 @@ function App({ currentUser, onLogout }: AppProps) {
         dataState={workbenchDataState}
         enabledModules={enabledModules}
         environment={runtimeEnvironment}
-        onSectionChange={(nextSection) => { setSection(nextSection); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
+        openedWorkbenchId={openedWorkbenchId}
+        procurementPage={procurementPage}
+        onProcurementPageChange={setProcurementPage}
+        onSectionChange={(nextSection) => { setSection(nextSection); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
         onNewConversation={() => { setSection("chat"); setConversationView("new"); setSelectedConversationId(null); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
         onConversationOpen={(conversationId) => { setSection("chat"); setConversationView("existing"); setSelectedConversationId(conversationId); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
         onProjectCreate={(title) => { void createProject(title).then((created) => { setProjects((current) => [...current, created]); setCurrentProjectId(created.id); }).catch(() => setWorkbenchDataState("error")); }}
@@ -336,7 +359,7 @@ function App({ currentUser, onLogout }: AppProps) {
       {section === "chat" && enabledModules.chat && <ConversationScreen {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversationId) { const update = projectUpdatePromise.current.catch(() => undefined).then(async () => { const updated = await setConversationProject(selectedConversationId, projectId); setConversations((current) => current.map((conversation) => conversation.id === updated.id ? updated : conversation)); }); projectUpdatePromise.current = update; void update.catch(() => setWorkbenchDataState("error")); } else { setCurrentProjectId(projectId); } }} messages={messages} messagesState={messagesState} onSubmit={submitMessage} />}
       {section === "knowledge" && enabledModules.knowledge && <KnowledgeScreen {...screenChrome} scopeTab={knowledgeScope} onScopeTabChange={setKnowledgeScope} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
       {section === "automation" && enabledModules.automation && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
-      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} currentUser={currentUser} statuses={workbenchStatuses} dataState={workbenchRegistryState} selectedId={selectedWorkbenchId} onSelectedIdChange={setSelectedWorkbenchId} />}
+      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} currentUser={currentUser} statuses={workbenchStatuses} dataState={workbenchRegistryState} selectedId={selectedWorkbenchId} onSelectedIdChange={(id) => { setSelectedWorkbenchId(id); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); }} openedWorkbenchId={openedWorkbenchId} onOpenedWorkbenchIdChange={setOpenedWorkbenchId} procurementPage={procurementPage} onProcurementPageChange={setProcurementPage} />}
       {section === "tasks" && enabledModules.tasks && <TaskBoardScreen {...screenChrome} tasks={tasks} projects={projects} conversations={conversations} dataState={workbenchDataState} selectedTask={selectedTask} onSelectedTaskChange={(task) => setSelectedTaskId(task.id)} />}
       <ContextSidebar
         section={section}
@@ -400,7 +423,7 @@ function App({ currentUser, onLogout }: AppProps) {
           }
         }}
       />
-      {settingsOpen && <SettingsDialog currentUser={currentUser} serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsDialog currentUser={currentUser} serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} uiFontSize={uiFontSize} onUiFontSizeChange={setUiFontSize} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import type { AccessLevel, AccessScope, ActivationReview, AdminModuleSetting, AdminModuleSettings, AdminWorkbenchSetting, AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleMode, ModuleStatus, ProcurementBatch, ProcurementImportPreview, ProcurementIssue, ProcurementOverview, ProcurementPriceHistory, Project, RuntimeEnvironment, Section, SensitiveFieldPolicy, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
+import type { AccessLevel, AccessScope, ActivationReview, AdminModuleSetting, AdminModuleSettings, AdminWorkbenchSetting, AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleMode, ModuleStatus, ProcurementBatch, ProcurementBatchDetail, ProcurementHistoryBatch, ProcurementHistoryBatchDetail, ProcurementImportPreview, ProcurementIssue, ProcurementMaterialDetail, ProcurementOverview, ProcurementPreferences, ProcurementPriceHistory, ProcurementUpdate, Project, RuntimeEnvironment, Section, SensitiveFieldPolicy, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
 
 export type ServiceHealth = {
   status: "ok";
@@ -75,24 +75,92 @@ export function fetchProcurementPriceHistory(signal?: AbortSignal): Promise<Proc
   return fetchJson<ProcurementPriceHistory[]>("/api/workbenches/procurement/price-history", { signal });
 }
 
-export function previewProcurementImport(sourceName: string, content: string): Promise<ProcurementImportPreview> {
+export function fetchProcurementHistoryBatches(signal?: AbortSignal): Promise<ProcurementHistoryBatch[]> {
+  return fetchJson<ProcurementHistoryBatch[]>("/api/workbenches/procurement/history/batches", { signal });
+}
+
+export function fetchProcurementHistoryBatch(id: string, signal?: AbortSignal): Promise<ProcurementHistoryBatchDetail> {
+  return fetchJson<ProcurementHistoryBatchDetail>(`/api/workbenches/procurement/history/batches/${id}`, { signal });
+}
+
+export function fetchProcurementBatch(id: string, signal?: AbortSignal): Promise<ProcurementBatchDetail> {
+  return fetchJson<ProcurementBatchDetail>(`/api/workbenches/procurement/batches/${id}`, { signal });
+}
+
+export function fetchProcurementMaterial(id: string, signal?: AbortSignal): Promise<ProcurementMaterialDetail> {
+  return fetchJson<ProcurementMaterialDetail>(`/api/workbenches/procurement/materials/${id}`, { signal });
+}
+
+export function adjustProcurementPrice(id: string, input: { price: string; effective_date: string; reason: string; target_history_id?: string | null }): Promise<void> {
+  return fetchJson<void>(`/api/workbenches/procurement/materials/${id}/adjustments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateProcurementMaterial(id: string, input: { code: string; name: string }): Promise<ProcurementMaterialDetail> {
+  return fetchJson<ProcurementMaterialDetail>(`/api/workbenches/procurement/materials/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function fetchProcurementPreferences(signal?: AbortSignal): Promise<ProcurementPreferences> {
+  return fetchJson<ProcurementPreferences>("/api/workbenches/procurement/preferences", { signal });
+}
+
+export function saveProcurementPreferences(input: ProcurementPreferences): Promise<ProcurementPreferences> {
+  return fetchJson<ProcurementPreferences>("/api/workbenches/procurement/preferences", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function previewProcurementImport(sourceName: string, effectiveDate: string, content: string): Promise<ProcurementImportPreview> {
   return fetchJson<ProcurementImportPreview>("/api/workbenches/procurement/import-preview", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_name: sourceName, content }),
+    body: JSON.stringify({ source_name: sourceName, effective_date: effectiveDate, content }),
   });
 }
 
-export function confirmProcurementImport(sourceName: string, content: string): Promise<void> {
+export function confirmProcurementImport(sourceName: string, effectiveDate: string, content: string): Promise<void> {
   return fetchJson<void>("/api/workbenches/procurement/imports", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_name: sourceName, content }),
+    body: JSON.stringify({ source_name: sourceName, effective_date: effectiveDate, content }),
   });
 }
 
-export function reviewProcurementIssue(issueId: string): Promise<ProcurementIssue> {
-  return fetchJson<ProcurementIssue>(`/api/workbenches/procurement/issues/${issueId}/review`, { method: "POST" });
+export function reviewProcurementIssue(updateId: string, issueId: string, reason: string): Promise<ProcurementIssue> {
+  return fetchJson<ProcurementIssue>(`/api/workbenches/procurement/updates/${updateId}/issues/${issueId}/review`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }),
+  });
+}
+
+export function submitProcurementUpdate(updateId: string): Promise<ProcurementUpdate> {
+  return fetchJson<ProcurementUpdate>(`/api/workbenches/procurement/updates/${updateId}/submit`, { method: "POST" });
+}
+
+export function returnProcurementUpdate(updateId: string, reason: string): Promise<ProcurementUpdate> {
+  return fetchJson<ProcurementUpdate>(`/api/workbenches/procurement/updates/${updateId}/return`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }),
+  });
+}
+
+export function publishProcurementUpdate(updateId: string, input: { mode: "immediate" | "scheduled"; activate_at?: string }): Promise<ProcurementBatch | ProcurementUpdate> {
+  return fetchJson<ProcurementBatch | ProcurementUpdate>(`/api/workbenches/procurement/updates/${updateId}/publish`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+  });
+}
+
+export function cancelProcurementSchedule(updateId: string, reason: string, copyToDraft = false): Promise<ProcurementUpdate & { copied_update?: ProcurementUpdate | null }> {
+  return fetchJson<ProcurementUpdate & { copied_update?: ProcurementUpdate | null }>(`/api/workbenches/procurement/updates/${updateId}/cancel-schedule`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason, copy_to_draft: copyToDraft }),
+  });
 }
 
 export function submitProcurementPrices(): Promise<void> {

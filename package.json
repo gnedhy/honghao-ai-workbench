@@ -13,12 +13,14 @@
     "security:check": "uv --cache-dir .uv-cache run python -m api.security_gate",
     "test:count": "uv --cache-dir .uv-cache run python -m api.test_count_gate",
     "test:api": "uv --cache-dir .uv-cache run python -m pytest",
-    "verify": "npm run test:count && npm run test:api && npm run build && npm run security:check"
+    "test:frontend": "node --test tests_ui/*.test.ts",
+    "verify": "npm run test:count && npm run test:api && npm run test:frontend && npm run build && npm run security:check"
   },
   "dependencies": {
     "lucide-react": "1.31.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "recharts": "3.10.1"
   },
   "devDependencies": {
     "@types/react": "19.2.18",

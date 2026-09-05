@@ -60,7 +60,8 @@ def migrate_data(settings: Settings, *, include_workbenches: bool = True) -> dic
 
 def migrate_procurement_data(settings: Settings, *, backup_before_migration: bool = True) -> int:
     procurement = ProcurementStore(settings.database_path)
-    if backup_before_migration and "workbench_procurement_schema_version" not in _schema_versions(settings.database_path):
+    current = _schema_versions(settings.database_path).get("workbench_procurement_schema_version")
+    if backup_before_migration and current != PROCUREMENT_SCHEMA_VERSION:
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         backup_database(
             settings.database_path,

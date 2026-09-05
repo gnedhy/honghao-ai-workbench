@@ -70,6 +70,16 @@ export type AuditEvent = {
 
 export type WorkbenchId = "management" | "procurement" | "research" | "sales";
 
+export type ProcurementPage = "dashboard" | "updates" | "materials" | "history" | "batches";
+
+export const PROCUREMENT_PAGE_LABELS: Record<ProcurementPage, string> = {
+  dashboard: "采购看板",
+  updates: "本轮更新",
+  materials: "原料台账",
+  history: "询价历史",
+  batches: "价格批次",
+};
+
 export type WorkbenchMode = "prototype" | "active" | "off";
 
 export type WorkbenchStatus = {
@@ -83,9 +93,17 @@ export type ProcurementMaterial = {
   name: string;
   unit: string;
   latest_price?: string | null;
+  previous_latest_price?: string | null;
   inventory_price?: string | null;
   in_transit_price?: string | null;
   suggested_price?: string | null;
+  published_price?: string | null;
+  previous_published_price?: string | null;
+  published_price_date?: string | null;
+  draft_price?: string | null;
+  draft_change?: number | null;
+  draft_status?: ProcurementUpdateStatus | null;
+  price_date: string;
   updated_at: string;
 };
 
@@ -99,6 +117,7 @@ export type ProcurementIssue = {
   status: "open" | "reviewed" | "resolved";
   created_at: string;
   reviewed_at: string | null;
+  review_reason?: string | null;
 };
 
 export type ProcurementBatch = {
@@ -106,6 +125,46 @@ export type ProcurementBatch = {
   version: number;
   published_at: string;
   item_count: number;
+  price_date?: string | null;
+  activated_at?: string | null;
+  source_name?: string | null;
+  status?: "active" | "historical";
+};
+
+export type ProcurementBatchDetail = ProcurementBatch & {
+  activation_mode?: "immediate" | "scheduled";
+  submitted_by_name?: string | null;
+  published_by_name?: string | null;
+  items: Array<{
+    material_id: string;
+    code: string;
+    name: string;
+    unit: string;
+    latest_price?: string | null;
+    inventory_price?: string | null;
+    in_transit_price?: string | null;
+    recommended_price?: string | null;
+  }>;
+};
+
+export type ProcurementUpdateStatus = "draft" | "returned" | "submitted" | "scheduled" | "revalidation_required" | "published" | "cancelled";
+
+export type ProcurementUpdate = {
+  id: string;
+  price_date: string;
+  source_name: string;
+  status: ProcurementUpdateStatus;
+  created_at: string;
+  updated_at: string;
+  submitted_at: string | null;
+  return_reason: string | null;
+  activate_at: string | null;
+  created_by_name: string;
+  submitted_by_name: string | null;
+  summary: { coverage_count: number; changed_count: number; unchanged_count: number; error_count: number; risk_count: number };
+  items: Array<{ material_id: string; code: string; name: string; unit: string; published_price: string | null; draft_price: string | null; change: number | null; comparison_basis: "published" | "previous_inquiry" | "none" }>;
+  issues: ProcurementIssue[];
+  events: Array<{ event: string; actor_name: string; reason: string | null; created_at: string }>;
 };
 
 export type ProcurementPriceHistory = {
@@ -120,6 +179,59 @@ export type ProcurementPriceHistory = {
   recorded_at: string;
 };
 
+export type ProcurementHistoryBatch = {
+  id: string;
+  effective_date: string;
+  source_name: string;
+  material_count: number;
+  up_count: number;
+  down_count: number;
+  flat_count: number;
+  missing_count: number;
+  created_by: string;
+  created_at: string;
+};
+
+export type ProcurementHistoryEntry = {
+  id: string;
+  material_id: string;
+  material_code: string;
+  material_name: string;
+  unit: string;
+  source_name: string;
+  effective_date: string;
+  created_at: string;
+  created_by_name: string;
+  latest_price?: string | null;
+  previous_price?: string | null;
+  inventory_price?: string | null;
+  in_transit_price?: string | null;
+  change?: number | null;
+};
+
+export type ProcurementHistoryBatchDetail = ProcurementHistoryBatch & {
+  previous_date: string | null;
+  items: ProcurementHistoryEntry[];
+};
+
+export type ProcurementMaterialDetail = {
+  material: { id: string; code: string; name: string; unit: string; archived: boolean };
+  latest_price?: string | null;
+  previous_price?: string | null;
+  change?: number | null;
+  price_date: string | null;
+  status: "active" | "missing";
+  history: ProcurementHistoryEntry[];
+  adjustments: Array<{ id: string; target_history_id: string | null; replacement_history_id: string; reason: string; created_by: string; created_at: string }>;
+};
+
+export type ProcurementPreferences = {
+  ledger_columns: string[];
+  history_view: "batches" | "materials";
+  ledger_view: "scroll" | "paged";
+  ledger_page_size: number;
+};
+
 export type ProcurementOverview = {
   metrics: {
     material_count: number;
@@ -130,10 +242,22 @@ export type ProcurementOverview = {
   materials: ProcurementMaterial[];
   issues: ProcurementIssue[];
   batches: ProcurementBatch[];
+  current_update: ProcurementUpdate | null;
+  scheduled_update: ProcurementUpdate | null;
+  next_action: string;
   working_state: {
     status: "draft" | "ready" | "submitted";
     submitted_by: string | null;
     submitted_at: string | null;
+    submitted_by_name: string | null;
+    latest_import: {
+      id: string;
+      source_name: string;
+      effective_date: string;
+      item_count: number;
+      created_at: string;
+      created_by_name: string;
+    } | null;
   };
 };
 

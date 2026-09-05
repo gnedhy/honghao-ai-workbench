@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import ExitStack, asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, suppress
 from pathlib import Path
 import sqlite3
 from typing import Annotated, Literal, cast
@@ -274,6 +275,18 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.startup_error = None
         app.state.procurement_error = None
+        app.state.procurement_scheduler = "ok"
+        scheduler_task: asyncio.Task[None] | None = None
+
+        async def run_procurement_scheduler() -> None:
+            while True:
+                await asyncio.sleep(30)
+                try:
+                    procurement.process_scheduled()
+                    app.state.procurement_scheduler = "ok"
+                except (OSError, RuntimeError, ValueError, sqlite3.Error):
+                    app.state.procurement_scheduler = "failed"
+
         with ExitStack() as stack:
             try:
                 runtime_settings.ensure_directories()
@@ -291,11 +304,20 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                             runtime_settings,
                             backup_before_migration=database_preexisted,
                         )
+                        procurement.process_scheduled()
+                        scheduler_task = asyncio.create_task(run_procurement_scheduler())
                     except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
                         app.state.procurement_error = str(error)
+                        app.state.procurement_scheduler = "failed"
             except (OSError, RuntimeError, ValueError) as error:
                 app.state.startup_error = str(error)
-            yield
+            try:
+                yield
+            finally:
+                if scheduler_task is not None:
+                    scheduler_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await scheduler_task
 
     app = FastAPI(title="Honghao AI API", version=API_VERSION, lifespan=lifespan)
 
@@ -383,6 +405,8 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         checks["runtime_startup"] = (
             "failed" if app.state.startup_error is not None else "ok"
         )
+        if runtime_settings.workbench_modes["procurement"] == "active" and app.state.procurement_error is None:
+            checks["procurement_scheduler"] = app.state.procurement_scheduler
         response = ReadinessResponse(
             status="ready" if all(value == "ok" for value in checks.values()) else "not_ready",
             checks=cast(dict[str, Literal["ok", "failed"]], checks),

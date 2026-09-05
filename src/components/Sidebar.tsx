@@ -1,15 +1,21 @@
 import {
+  ArrowLeft,
   ChevronDown,
   ChevronRight,
+  CircleAlert,
   Columns2,
+  Database,
   FolderClosed,
   FolderKanban,
+  History,
   LibraryBig,
+  LayoutDashboard,
   LogOut,
   MessageCircle,
   PanelsTopLeft,
   PenLine,
   Plus,
+  PackageCheck,
   Search,
   Settings,
   UserRound,
@@ -18,7 +24,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import userAvatar from "../assets/avatar-zhang-wei-v1.png";
-import type { Conversation, CurrentUser, ModuleVisibility, Project, RuntimeEnvironment, Section } from "../types";
+import { PROCUREMENT_PAGE_LABELS, type Conversation, type CurrentUser, type ModuleVisibility, type ProcurementPage, type Project, type RuntimeEnvironment, type Section, type WorkbenchId } from "../types";
 
 type SidebarProps = {
   currentUser: CurrentUser;
@@ -30,6 +36,9 @@ type SidebarProps = {
   dataState: "loading" | "ready" | "error";
   enabledModules: ModuleVisibility;
   environment: RuntimeEnvironment | null;
+  openedWorkbenchId: WorkbenchId | null;
+  procurementPage: ProcurementPage;
+  onProcurementPageChange: (page: ProcurementPage) => void;
   onSectionChange: (section: Section) => void;
   onNewConversation: () => void;
   onConversationOpen: (conversationId: string) => void;
@@ -51,6 +60,14 @@ const navItems = [
   { id: "tasks", label: "任务看板", icon: FolderKanban },
 ] as const;
 
+const procurementPages = [
+  { id: "dashboard", icon: LayoutDashboard },
+  { id: "updates", icon: CircleAlert },
+  { id: "materials", icon: Database },
+  { id: "history", icon: History },
+  { id: "batches", icon: PackageCheck },
+] as const;
+
 export function Sidebar({
   currentUser,
   activeSection,
@@ -61,6 +78,9 @@ export function Sidebar({
   dataState,
   enabledModules,
   environment,
+  openedWorkbenchId,
+  procurementPage,
+  onProcurementPageChange,
   onSectionChange,
   onNewConversation,
   onConversationOpen,
@@ -88,6 +108,11 @@ export function Sidebar({
 
   const openConversation = (conversationId: string) => {
     onConversationOpen(conversationId);
+    onMobileClose();
+  };
+
+  const openProcurementPage = (page: ProcurementPage) => {
+    onProcurementPageChange(page);
     onMobileClose();
   };
 
@@ -126,13 +151,23 @@ export function Sidebar({
               aria-current={activeSection === id && id !== "chat" ? "page" : undefined}
               onClick={() => id === "chat" ? onNewConversation() : selectSection(id)}
             >
-              <Icon size={18} strokeWidth={1.7} />
-              <span>{label}</span>
+              {id === "workbench" && openedWorkbenchId ? <ArrowLeft size={18} strokeWidth={1.7} /> : <Icon size={18} strokeWidth={1.7} />}
+              <span>{id === "workbench" && openedWorkbenchId ? "返回工作台" : label}</span>
             </button>
           ))}
         </nav>
 
         <div className="sidebar__scroll">
+          {activeSection === "workbench" && openedWorkbenchId === "procurement" && (
+            <SidebarGroup title="采购工作台">
+              {procurementPages.map(({ id, icon: Icon }) => (
+                <button className={procurementPage === id ? "workbench-page-row is-active" : "workbench-page-row"} type="button" key={id} aria-current={procurementPage === id ? "page" : undefined} onClick={() => openProcurementPage(id)}>
+                  <Icon size={15} strokeWidth={1.7} />
+                  <span>{PROCUREMENT_PAGE_LABELS[id]}</span>
+                </button>
+              ))}
+            </SidebarGroup>
+          )}
           {enabledModules.chat && <>
             <SidebarGroup title="置顶"><p className="sidebar-empty">暂无置顶会话</p></SidebarGroup>
             <SidebarGroup title="项目" action={<button className="sidebar-group__action" type="button" aria-label="新建项目" onClick={() => setProjectCreateOpen((open) => !open)}><Plus size={14} /></button>}>
