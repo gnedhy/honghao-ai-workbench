@@ -7,6 +7,10 @@ export type ServiceHealth = {
   environment: RuntimeEnvironment | null;
 };
 
+export function createProcurementMaterial(payload: { code: string; name: string; department_ids: string[]; price: string | null; effective_date: string | null; reason: string; update_id: string | null; updated_at: string | null; baseline_id: string | null }): Promise<{ id: string }> {
+  return fetchJson("/api/workbenches/procurement/materials", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)});
+}
+
 export type ServiceConnection =
   | { state: "checking" }
   | { state: "online"; health: ServiceHealth }
@@ -28,8 +32,12 @@ export async function fetchServiceHealth(signal?: AbortSignal): Promise<ServiceH
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
   if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { detail?: string } | null;
-    throw new Error(payload?.detail ?? `Request failed with ${response.status}`);
+    const payload = await response.json().catch(() => null) as { detail?: unknown } | null;
+    const detail = payload?.detail;
+    const message = typeof detail === "string" ? detail : Array.isArray(detail)
+      ? detail.map(item => typeof item?.msg === "string" ? item.msg : "输入格式不正确").join("；")
+      : `请求未完成（${response.status}），请核对输入后重试`;
+    throw new Error(message);
   }
   return response.json() as Promise<T>;
 }
@@ -67,8 +75,34 @@ export function fetchWorkbenches(signal?: AbortSignal): Promise<WorkbenchStatus[
   return fetchJson<WorkbenchStatus[]>("/api/workbenches", { signal });
 }
 
+export function fetchPersonalProfile(signal?: AbortSignal): Promise<import("./types").PersonalProfile> {
+  return fetchJson("/api/me/profile", { signal });
+}
+
+export function changeMyPassword(input: { current_password: string; new_password: string; confirm_password: string }): Promise<{ message: string }> {
+  return fetchJson("/api/me/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
+}
+
+export function updateUserProfile(id: string, input: { display_name: string; department: string | null }): Promise<ManagedUser> {
+  return fetchJson(`/api/users/${id}/profile`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
+}
+
 export function fetchProcurementOverview(signal?: AbortSignal): Promise<ProcurementOverview> {
   return fetchJson<ProcurementOverview>("/api/workbenches/procurement/overview", { signal });
+}
+
+export type ActivationGrants = { users: Array<{ id: string; name: string; eligible: boolean; granted: boolean; manager: boolean }>; events: Array<{ id: string; actor: string; action: string; target_id: string; created_at: string }> };
+export function fetchActivationGrants(): Promise<ActivationGrants> { return fetchJson("/api/workbenches/procurement/activation-grants"); }
+export function saveActivationGrant(id: string, enabled: boolean, manager?: boolean): Promise<ActivationGrants> {
+  return fetchJson(`/api/workbenches/procurement/activation-grants/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({enabled, manager}) });
+}
+export function saveDepartmentMaterials(id: string, material_ids: string[]): Promise<ProcurementOverview> {
+  return fetchJson(`/api/workbenches/procurement/departments/${id}/materials`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({material_ids}) });
+}
+export type ExcelPreview = { default_sheet: string; sheets: Array<{ name: string; dates: string[]; rows: number }>; selection?: { content: string; valid: number; blocked: number; unreported: number; rows: Array<{ row: number; code: string; raw_price: string; state: string }> } };
+export function previewProcurementExcel(file: File, sheet?: string, price_date?: string): Promise<ExcelPreview> {
+  const body = new FormData(); body.append("file", file); if (sheet) body.append("sheet", sheet); if (price_date) body.append("price_date", price_date);
+  return fetchJson("/api/workbenches/procurement/excel-preview", { method: "POST", body });
 }
 
 export function fetchProcurementPriceHistory(signal?: AbortSignal): Promise<ProcurementPriceHistory[]> {
@@ -91,12 +125,27 @@ export function fetchProcurementMaterial(id: string, signal?: AbortSignal): Prom
   return fetchJson<ProcurementMaterialDetail>(`/api/workbenches/procurement/materials/${id}`, { signal });
 }
 
-export function adjustProcurementPrice(id: string, input: { price: string; effective_date: string; reason: string; target_history_id?: string | null }): Promise<void> {
+export type PriceConfirmation = { baseline_id: string | null; references: Record<string, string | null> };
+export type PricePreview = { baseline_id: string | null; rows: Array<{ material_id: string; code: string; name: string; reference_price: string | null; comparison_basis: "published" | "previous_inquiry"; price: string; change: number | null; high_risk: boolean }> };
+export function previewPriceAdjustments(effective_date: string, items: Array<{ material_id: string; price: string }>, signal?: AbortSignal): Promise<PricePreview> {
+  return fetchJson<PricePreview>("/api/workbenches/procurement/prices/preview-adjustments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ effective_date, items }), signal });
+}
+
+export function adjustProcurementPrice(id: string, input: { price: string; effective_date: string; reason: string; updated_at: string; target_history_id?: string | null; price_confirmation?: PriceConfirmation }): Promise<void> {
   return fetchJson<void>(`/api/workbenches/procurement/materials/${id}/adjustments`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
+}
+
+export function bulkAdjustProcurementPrices(input: { update_id: string | null; updated_at: string | null; effective_date: string; reason: string; items: Array<{ material_id: string; price: string }>; price_confirmation?: PriceConfirmation }): Promise<ProcurementOverview> {
+  return fetchJson<ProcurementOverview>("/api/workbenches/procurement/prices/bulk-adjustments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
+}
+
+export async function cancelProcurementUpdate(id: string, reason: string): Promise<ProcurementOverview> {
+  await fetchJson(`/api/workbenches/procurement/updates/${id}/cancel`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) });
+  return fetchProcurementOverview();
 }
 
 export function updateProcurementMaterial(id: string, input: { code: string; name: string }): Promise<ProcurementMaterialDetail> {
@@ -127,17 +176,17 @@ export function previewProcurementImport(sourceName: string, effectiveDate: stri
   });
 }
 
-export function confirmProcurementImport(sourceName: string, effectiveDate: string, content: string): Promise<void> {
+export function confirmProcurementImport(sourceName: string, effectiveDate: string, content: string, revision: {update_id: string | null; updated_at: string | null}, reason?: string): Promise<void> {
   return fetchJson<void>("/api/workbenches/procurement/imports", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_name: sourceName, effective_date: effectiveDate, content }),
+    body: JSON.stringify({ source_name: sourceName, effective_date: effectiveDate, content, ...revision, reason }),
   });
 }
 
-export function reviewProcurementIssue(updateId: string, issueId: string, reason: string): Promise<ProcurementIssue> {
+export function reviewProcurementIssue(updateId: string, issueId: string, reason: string, updated_at: string): Promise<ProcurementIssue> {
   return fetchJson<ProcurementIssue>(`/api/workbenches/procurement/updates/${updateId}/issues/${issueId}/review`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }),
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason, updated_at }),
   });
 }
 
@@ -151,7 +200,7 @@ export function returnProcurementUpdate(updateId: string, reason: string): Promi
   });
 }
 
-export function publishProcurementUpdate(updateId: string, input: { mode: "immediate" | "scheduled"; activate_at?: string }): Promise<ProcurementBatch | ProcurementUpdate> {
+export function publishProcurementUpdate(updateId: string, input: { mode: "immediate" | "scheduled"; activate_at?: string; updated_at: string; baseline_id: string | null }): Promise<ProcurementBatch | ProcurementUpdate> {
   return fetchJson<ProcurementBatch | ProcurementUpdate>(`/api/workbenches/procurement/updates/${updateId}/publish`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
   });

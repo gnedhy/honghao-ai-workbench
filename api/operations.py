@@ -305,18 +305,44 @@ def service_is_running(settings: Settings) -> bool:
         return False
     try:
         pid = int(marker.read_text(encoding="ascii").strip().split(":", 1)[-1])
+        if pid <= 0:
+            return True
         if pid == os.getpid():
             return True
+        if os.name == "nt":
+            # Windows os.kill(pid, 0) is not a portable liveness probe.
+            import ctypes
+            from ctypes import wintypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+            kernel.WaitForSingleObject.restype = wintypes.DWORD
+            kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+            handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE only
+            if not handle:
+                if ctypes.get_last_error() == 87:  # PID no longer exists
+                    marker.unlink(missing_ok=True)
+                    return False
+                return True  # Cannot inspect: keep the directory locked.
+            try:
+                if kernel.WaitForSingleObject(handle, 0) != 0:
+                    return True
+                marker.unlink(missing_ok=True)
+                return False
+            finally:
+                kernel.CloseHandle(handle)
         os.kill(pid, 0)
         return True
-    except (ValueError, ProcessLookupError):
+    except ValueError:
+        return True  # Another owner may have created but not finished writing it.
+    except ProcessLookupError:
         marker.unlink(missing_ok=True)
         return False
     except PermissionError:
         return True
     except OSError:
-        marker.unlink(missing_ok=True)
-        return False
+        return True  # Unknown query/read failure must not unlock a live service.
 
 
 @contextmanager

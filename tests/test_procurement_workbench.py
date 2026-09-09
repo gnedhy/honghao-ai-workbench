@@ -36,16 +36,16 @@ def switch_to_publisher(settings: Settings, client: TestClient) -> None:
             password=PUBLISHER_PASSWORD,
             is_system_admin=True,
         )
-    client.post("/api/logout")
-    assert client.post(
+    procurement_post(client,"/api/logout")
+    assert procurement_post(client,
         "/api/login",
         json={"username": "procurement-publisher", "password": PUBLISHER_PASSWORD},
     ).status_code == 200
 
 
 def switch_to_test_admin(client: TestClient) -> None:
-    client.post("/api/logout")
-    assert client.post(
+    procurement_post(client,"/api/logout")
+    assert procurement_post(client,
         "/api/login",
         json={"username": "test-admin", "password": TEST_ADMIN_PASSWORD},
     ).status_code == 200
@@ -80,7 +80,7 @@ def test_procurement_migration_is_additive_and_overview_starts_empty(tmp_path: P
         version = connection.execute(
             "SELECT value FROM schema_metadata WHERE key = 'workbench_procurement_schema_version'"
         ).fetchone()
-    assert version == (4,)
+    assert version == (5,)
 
 
 def test_existing_database_is_backed_up_before_procurement_migration(tmp_path: Path) -> None:
@@ -107,11 +107,11 @@ DUP,重复原料B,kg,11,,,9
 """
 
     with authenticated_client(settings) as client:
-        response = client.post(
+        response = procurement_post(client,
             "/api/workbenches/procurement/import-preview",
             json={"source_name": "复制粘贴", "effective_date": "2026-07-30", "content": content},
         )
-        rejected = client.post(
+        rejected = procurement_post(client,
             "/api/workbenches/procurement/imports",
             json={"source_name": "复制粘贴", "effective_date": "2026-07-30", "content": content},
         )
@@ -124,22 +124,22 @@ DUP,重复原料B,kg,11,,,9
     duplicates = [row for row in rows if row["code"] == "DUP"]
     assert zero["suggested_price"] == "0"
     assert "missing_price" not in zero["issues"]
-    assert missing["issues"] == ["missing_price"]
+    assert set(missing["issues"]) == {"missing_price", "unknown_code"}
     assert all(row["importable"] is False and "duplicate_code" in row["issues"] for row in duplicates)
     assert rejected.status_code == 422
-    assert "重复编码或计量单位冲突" in rejected.json()["detail"]
+    assert "重复" in rejected.json()["detail"]
 
 
 def test_single_buyer_can_publish_immutable_price_batch(tmp_path: Path) -> None:
     settings = procurement_settings(tmp_path)
 
     with authenticated_client(settings) as client:
-        imported = client.post(
+        imported = procurement_post(client,
             "/api/workbenches/procurement/imports",
             json={"source_name": "成本报价试点工作簿", "effective_date": "2026-07-30", "content": SAMPLE_CONTENT},
         )
         update = client.get("/api/workbenches/procurement/updates/current").json()["current"]
-        published = client.post(f"/api/workbenches/procurement/updates/{update['id']}/publish", json={"mode": "immediate"})
+        published = procurement_post(client,f"/api/workbenches/procurement/updates/{update['id']}/publish", json={"mode": "immediate"})
         overview = client.get("/api/workbenches/procurement/overview")
         history = client.get("/api/workbenches/procurement/price-history")
         batch = client.get(f"/api/workbenches/procurement/batches/{published.json()['id']}")
@@ -180,16 +180,16 @@ RM-01,试点原料,kg,11,,
 """
 
     with authenticated_client(settings) as client:
-        client.post(
+        procurement_post(client,
             "/api/workbenches/procurement/imports",
             json={"source_name": "首批", "effective_date": "2026-07-23", "content": first},
         )
         first_update = client.get("/api/workbenches/procurement/updates/current").json()["current"]
-        published = client.post(
+        published = procurement_post(client,
             f"/api/workbenches/procurement/updates/{first_update['id']}/publish",
             json={"mode": "immediate"},
         ).json()
-        client.post(
+        procurement_post(client,
             "/api/workbenches/procurement/imports",
             json={"source_name": "待发布调价", "effective_date": "2026-07-30", "content": changed},
         )
@@ -215,23 +215,22 @@ def test_missing_price_blocks_publish_until_corrected(tmp_path: Path) -> None:
 MISS,待补原料,kg,,,
 """
     with authenticated_client(settings) as client:
-        assert client.post(
+        assert procurement_post(client,
             "/api/workbenches/procurement/imports",
             json={"source_name": "缺价样本", "effective_date": "2026-07-30", "content": missing},
-        ).status_code == 201
+        ).status_code == 422
         initial = client.get("/api/workbenches/procurement/overview").json()
-        update_id = initial["current_update"]["id"]
-        blocked = client.post(f"/api/workbenches/procurement/updates/{update_id}/publish", json={"mode": "immediate"})
+        assert initial["current_update"] is None
+        assert initial["materials"][0]["published_price"] is None
         material = initial["materials"][0]
-        assert client.post(
+        assert procurement_post(client,
             f"/api/workbenches/procurement/materials/{material['id']}/adjustments",
             json={"price": "8.25", "effective_date": "2026-07-30", "reason": "补录当前确认价格"},
         ).status_code == 201
         corrected_overview = client.get("/api/workbenches/procurement/overview").json()
-        published = client.post(f"/api/workbenches/procurement/updates/{update_id}/publish", json={"mode": "immediate"})
+        update_id = corrected_overview["current_update"]["id"]
+        published = procurement_post(client,f"/api/workbenches/procurement/updates/{update_id}/publish", json={"mode": "immediate"})
 
-    assert blocked.status_code == 409
-    assert "未处理问题" in blocked.json()["detail"]
     assert corrected_overview["metrics"]["open_issue_count"] == 0
     assert corrected_overview["working_state"]["latest_import"]["source_name"] == "手工价格修正"
     assert published.status_code == 200
@@ -247,23 +246,23 @@ RM-01,试点原料,kg,20,,
 """
 
     with authenticated_client(settings) as client:
-        client.post("/api/workbenches/procurement/imports", json={"source_name": "首批", "effective_date": "2026-07-23", "content": first})
+        procurement_post(client,"/api/workbenches/procurement/imports", json={"source_name": "首批", "effective_date": "2026-07-23", "content": first})
         first_update = client.get("/api/workbenches/procurement/updates/current").json()["current"]
-        batch_one = client.post(f"/api/workbenches/procurement/updates/{first_update['id']}/publish", json={"mode": "immediate"}).json()
-        client.post("/api/workbenches/procurement/imports", json={"source_name": "调价", "effective_date": "2026-07-30", "content": changed})
+        batch_one = procurement_post(client,f"/api/workbenches/procurement/updates/{first_update['id']}/publish", json={"mode": "immediate"}).json()
+        procurement_post(client,"/api/workbenches/procurement/imports", json={"source_name": "调价", "effective_date": "2026-07-30", "content": changed})
         overview = client.get("/api/workbenches/procurement/overview").json()
         update_id = overview["current_update"]["id"]
         spike = next(issue for issue in overview["issues"] if issue["kind"] == "price_spike")
-        short_reason = client.post(
+        short_reason = procurement_post(client,
             f"/api/workbenches/procurement/updates/{update_id}/issues/{spike['id']}/review",
             json={"reason": "短"},
         )
-        blocked = client.post(f"/api/workbenches/procurement/updates/{update_id}/publish", json={"mode": "immediate"})
-        reviewed = client.post(
+        blocked = procurement_post(client,f"/api/workbenches/procurement/updates/{update_id}/publish", json={"mode": "immediate"})
+        reviewed = procurement_post(client,
             f"/api/workbenches/procurement/updates/{update_id}/issues/{spike['id']}/review",
             json={"reason": "已核对供应商书面报价，确认本次上涨"},
         )
-        batch_two = client.post(f"/api/workbenches/procurement/updates/{update_id}/publish", json={"mode": "immediate"}).json()
+        batch_two = procurement_post(client,f"/api/workbenches/procurement/updates/{update_id}/publish", json={"mode": "immediate"}).json()
         old_batch = client.get(f"/api/workbenches/procurement/batches/{batch_one['id']}").json()
 
     assert short_reason.status_code == 422
@@ -283,22 +282,22 @@ RM-01,试点原料,kg,20,,
 """
 
     with authenticated_client(settings) as client:
-        client.post(
+        procurement_post(client,
             "/api/workbenches/procurement/imports",
             json={"source_name": "首批", "effective_date": "2026-07-23", "content": first},
         )
         first_update = client.get("/api/workbenches/procurement/updates/current").json()["current"]
-        client.post(
+        procurement_post(client,
             f"/api/workbenches/procurement/updates/{first_update['id']}/publish",
             json={"mode": "immediate"},
         )
-        client.post(
+        procurement_post(client,
             "/api/workbenches/procurement/imports",
             json={"source_name": "调价", "effective_date": "2026-07-30", "content": changed},
         )
         current = client.get("/api/workbenches/procurement/updates/current").json()["current"]
         issue = next(item for item in current["issues"] if item["kind"] == "price_spike")
-        response = client.post(
+        response = procurement_post(client,
             f"/api/workbenches/procurement/updates/not-the-update/issues/{issue['id']}/review",
             json={"reason": "已核对供应商报价并确认变动"},
         )
@@ -318,14 +317,16 @@ def test_scheduled_activation_keeps_official_price_until_due_and_is_idempotent(t
     activate_at = datetime.now(UTC) + timedelta(hours=1)
 
     with authenticated_client(settings) as client:
-        client.post("/api/workbenches/procurement/imports", json={"source_name": "首批", "effective_date": "2026-07-23", "content": first})
-        client.post("/api/workbenches/procurement/submit")
+        procurement_post(client,"/api/workbenches/procurement/imports", json={"source_name": "首批", "effective_date": "2026-07-23", "content": first})
+        procurement_post(client,"/api/workbenches/procurement/submit")
         switch_to_publisher(settings, client)
-        assert client.post("/api/workbenches/procurement/batches/publish").status_code == 201
-        client.post("/api/workbenches/procurement/imports", json={"source_name": "调价", "effective_date": "2026-07-30", "content": changed})
-        update = client.post("/api/workbenches/procurement/submit").json()
+        update = client.get("/api/workbenches/procurement/updates/current").json()["current"]
+        assert procurement_post(client, f"/api/workbenches/procurement/updates/{update['id']}/publish", json={"mode": "immediate"}).status_code == 200
+        assert client.post("/api/workbenches/procurement/batches/publish").status_code == 409
+        procurement_post(client,"/api/workbenches/procurement/imports", json={"source_name": "调价", "effective_date": "2026-07-30", "content": changed})
+        update = procurement_post(client,"/api/workbenches/procurement/submit").json()
         switch_to_test_admin(client)
-        scheduled = client.post(
+        scheduled = procurement_post(client,
             f"/api/workbenches/procurement/updates/{update['id']}/publish",
             json={"mode": "scheduled", "activate_at": activate_at.isoformat()},
         )
@@ -349,21 +350,22 @@ def test_new_immediate_baseline_forces_scheduled_batch_to_revalidate(tmp_path: P
     activate_at = datetime.now(UTC) + timedelta(hours=1)
 
     with authenticated_client(settings) as client:
-        client.post("/api/workbenches/procurement/imports", json={"source_name": "首批", "effective_date": "2026-07-23", "content": "编号,名称,单位,最新价\nRM-01,试点原料,kg,10\n"})
-        client.post("/api/workbenches/procurement/submit")
+        procurement_post(client,"/api/workbenches/procurement/imports", json={"source_name": "首批", "effective_date": "2026-07-23", "content": "编号,名称,单位,最新价\nRM-01,试点原料,kg,10\n"})
+        procurement_post(client,"/api/workbenches/procurement/submit")
         switch_to_publisher(settings, client)
-        client.post("/api/workbenches/procurement/batches/publish")
-        client.post("/api/workbenches/procurement/imports", json={"source_name": "排期调价", "effective_date": "2026-07-30", "content": "编号,名称,单位,最新价\nRM-01,试点原料,kg,11\n"})
-        scheduled_update = client.post("/api/workbenches/procurement/submit").json()
+        first_update = client.get("/api/workbenches/procurement/updates/current").json()["current"]
+        assert procurement_post(client, f"/api/workbenches/procurement/updates/{first_update['id']}/publish", json={"mode": "immediate"}).status_code == 200
+        procurement_post(client,"/api/workbenches/procurement/imports", json={"source_name": "排期调价", "effective_date": "2026-07-30", "content": "编号,名称,单位,最新价\nRM-01,试点原料,kg,11\n"})
+        scheduled_update = procurement_post(client,"/api/workbenches/procurement/submit").json()
         switch_to_test_admin(client)
-        client.post(f"/api/workbenches/procurement/updates/{scheduled_update['id']}/publish", json={"mode": "scheduled", "activate_at": activate_at.isoformat()})
-        client.post("/api/workbenches/procurement/imports", json={"source_name": "即时调价", "effective_date": "2026-08-01", "content": "编号,名称,单位,最新价\nRM-01,试点原料,kg,12\n"})
-        immediate = client.post("/api/workbenches/procurement/submit").json()
+        procurement_post(client,f"/api/workbenches/procurement/updates/{scheduled_update['id']}/publish", json={"mode": "scheduled", "activate_at": activate_at.isoformat()})
+        procurement_post(client,"/api/workbenches/procurement/imports", json={"source_name": "即时调价", "effective_date": "2026-08-01", "content": "编号,名称,单位,最新价\nRM-01,试点原料,kg,12\n"})
+        immediate = procurement_post(client,"/api/workbenches/procurement/submit").json()
         switch_to_publisher(settings, client)
         for issue in immediate["issues"]:
             if issue["kind"] == "price_spike" and issue["status"] == "open":
-                assert client.post(f"/api/workbenches/procurement/updates/{immediate['id']}/issues/{issue['id']}/review", json={"reason": "已核对较正式基线上涨20%"}).status_code == 200
-        assert client.post(f"/api/workbenches/procurement/updates/{immediate['id']}/publish", json={"mode": "immediate"}).status_code == 200
+                assert procurement_post(client,f"/api/workbenches/procurement/updates/{immediate['id']}/issues/{issue['id']}/review", json={"reason": "已核对较正式基线上涨20%"}).status_code == 200
+        assert procurement_post(client,f"/api/workbenches/procurement/updates/{immediate['id']}/publish", json={"mode": "immediate"}).status_code == 200
         overview = client.get("/api/workbenches/procurement/overview").json()
 
     assert overview["current_update"]["id"] == scheduled_update["id"]
@@ -377,15 +379,16 @@ def test_cancel_schedule_keeps_official_baseline_and_can_copy_draft(tmp_path: Pa
     settings = procurement_settings(tmp_path)
     activate_at = datetime.now(UTC) + timedelta(hours=1)
     with authenticated_client(settings) as client:
-        client.post("/api/workbenches/procurement/imports", json={"source_name": "首批", "effective_date": "2026-07-23", "content": "编号,名称,单位,最新价\nRM-01,试点原料,kg,10\n"})
-        client.post("/api/workbenches/procurement/submit")
+        procurement_post(client,"/api/workbenches/procurement/imports", json={"source_name": "首批", "effective_date": "2026-07-23", "content": "编号,名称,单位,最新价\nRM-01,试点原料,kg,10\n"})
+        procurement_post(client,"/api/workbenches/procurement/submit")
         switch_to_publisher(settings, client)
-        client.post("/api/workbenches/procurement/batches/publish")
-        client.post("/api/workbenches/procurement/imports", json={"source_name": "排期调价", "effective_date": "2026-07-30", "content": "编号,名称,单位,最新价\nRM-01,试点原料,kg,11\n"})
-        update = client.post("/api/workbenches/procurement/submit").json()
+        first_update = client.get("/api/workbenches/procurement/updates/current").json()["current"]
+        assert procurement_post(client, f"/api/workbenches/procurement/updates/{first_update['id']}/publish", json={"mode": "immediate"}).status_code == 200
+        procurement_post(client,"/api/workbenches/procurement/imports", json={"source_name": "排期调价", "effective_date": "2026-07-30", "content": "编号,名称,单位,最新价\nRM-01,试点原料,kg,11\n"})
+        update = procurement_post(client,"/api/workbenches/procurement/submit").json()
         switch_to_test_admin(client)
-        client.post(f"/api/workbenches/procurement/updates/{update['id']}/publish", json={"mode": "scheduled", "activate_at": activate_at.isoformat()})
-        cancelled = client.post(
+        procurement_post(client,f"/api/workbenches/procurement/updates/{update['id']}/publish", json={"mode": "scheduled", "activate_at": activate_at.isoformat()})
+        cancelled = procurement_post(client,
             f"/api/workbenches/procurement/updates/{update['id']}/cancel-schedule",
             json={"reason": "供应商交期变化，撤销原排期", "copy_to_draft": True},
         )
@@ -435,13 +438,17 @@ def test_procurement_scope_levels_enforce_view_edit_and_field_policy(tmp_path: P
             scope_levels={"procurement": 3},
         )
 
+        for row in SAMPLE_CONTENT.strip().splitlines()[1:]:
+            code = row.split(",")[0]
+            assert admin.post("/api/workbenches/procurement/materials", json={"code": code, "name": code}).status_code == 201
+
     with TestClient(create_app(settings)) as viewer:
-        assert viewer.post(
+        assert procurement_post(viewer,
             "/api/login",
             json={"username": "buyer-viewer", "password": "Buyer-Viewer-Password-2026"},
         ).status_code == 200
         overview = viewer.get("/api/workbenches/procurement/overview")
-        write = viewer.post(
+        write = procurement_post(viewer,
             "/api/workbenches/procurement/import-preview",
             json={"source_name": "越权测试", "effective_date": "2026-07-30", "content": SAMPLE_CONTENT},
         )
@@ -450,19 +457,19 @@ def test_procurement_scope_levels_enforce_view_edit_and_field_policy(tmp_path: P
     assert write.status_code == 403
 
     with TestClient(create_app(settings)) as editor:
-        assert editor.post(
+        assert procurement_post(editor,
             "/api/login",
             json={"username": "buyer-editor", "password": "Buyer-Editor-Password-2026"},
         ).status_code == 200
-        assert editor.post(
+        assert procurement_post(editor,
             "/api/workbenches/procurement/imports",
-            json={"source_name": "采购员单人闭环", "effective_date": "2026-07-30", "content": SAMPLE_CONTENT},
+            json={"source_name": "共同录价", "effective_date": "2026-07-30", "content": SAMPLE_CONTENT},
         ).status_code == 201
         update_id = editor.get("/api/workbenches/procurement/updates/current").json()["current"]["id"]
-        assert editor.post(
+        assert procurement_post(editor,
             f"/api/workbenches/procurement/updates/{update_id}/publish",
             json={"mode": "immediate"},
-        ).status_code == 200
+        ).status_code == 403
 
 
 def test_history_views_preferences_adjustments_and_archive(tmp_path: Path) -> None:
@@ -470,27 +477,27 @@ def test_history_views_preferences_adjustments_and_archive(tmp_path: Path) -> No
     later = SAMPLE_CONTENT.replace("12.2", "13.2", 1)
 
     with authenticated_client(settings) as client:
-        first = client.post("/api/workbenches/procurement/imports", json={"source_name": "采购询价单 2026-07-23", "effective_date": "2026-07-23", "content": SAMPLE_CONTENT}).json()
+        first = procurement_post(client,"/api/workbenches/procurement/imports", json={"source_name": "采购询价单 2026-07-23", "effective_date": "2026-07-23", "content": SAMPLE_CONTENT}).json()
         update_id = client.get("/api/workbenches/procurement/updates/current").json()["current"]["id"]
-        assert client.post(f"/api/workbenches/procurement/updates/{update_id}/cancel", json={"reason": "仅用于历史视图测试"}).status_code == 200
-        client.post("/api/workbenches/procurement/imports", json={"source_name": "采购询价单 2026-07-30", "effective_date": "2026-07-30", "content": later})
+        assert procurement_post(client,f"/api/workbenches/procurement/updates/{update_id}/publish", json={"mode": "immediate"}).status_code == 200
+        procurement_post(client,"/api/workbenches/procurement/imports", json={"source_name": "采购询价单 2026-07-30", "effective_date": "2026-07-30", "content": later})
         batches = client.get("/api/workbenches/procurement/history/batches").json()
         materials = client.get("/api/workbenches/procurement/history/materials").json()
         cf004 = next(item for item in materials if item["material_code"] == "CF004")
         detail = client.get(f"/api/workbenches/procurement/materials/{cf004['material_id']}").json()
         saved = client.put("/api/workbenches/procurement/preferences", json={"ledger_columns": ["unit", "latest_price", "change"], "history_view": "materials", "ledger_view": "paged", "ledger_page_size": 75})
         preferences = client.get("/api/workbenches/procurement/preferences")
-        adjusted = client.post(
+        adjusted = procurement_post(client,
             f"/api/workbenches/procurement/materials/{cf004['material_id']}/adjustments",
             json={"price": "13.5", "effective_date": "2026-07-30", "reason": "复核供应商确认价格"},
         )
-        conflict = client.post(
+        conflict = procurement_post(client,
             f"/api/workbenches/procurement/materials/{cf004['material_id']}/adjustments",
             json={"price": "12.8", "effective_date": "2026-07-30", "reason": "尝试重复有效日期", "target_history_id": detail["history"][0]["id"]},
         )
-        archived = client.post(f"/api/workbenches/procurement/imports/{first['id']}/archive")
+        archived = procurement_post(client,f"/api/workbenches/procurement/imports/{first['id']}/archive")
         remaining = client.get(f"/api/workbenches/procurement/materials/{cf004['material_id']}").json()
-        restored = client.post(f"/api/workbenches/procurement/imports/{first['id']}/restore")
+        restored = procurement_post(client,f"/api/workbenches/procurement/imports/{first['id']}/restore")
 
     assert [item["effective_date"] for item in batches] == ["2026-07-30", "2026-07-23"]
     assert batches[0]["material_count"] == 5
@@ -515,7 +522,7 @@ def test_material_identity_permissions_and_old_code_alias_import(tmp_path: Path)
     manager_password = "Buyer-Manager-Password-2026"
 
     with authenticated_client(settings) as admin:
-        assert admin.post(
+        assert procurement_post(admin,
             "/api/workbenches/procurement/imports",
             json={"source_name": "采购询价单 2026-07-30", "effective_date": "2026-07-30", "content": SAMPLE_CONTENT},
         ).status_code == 201
@@ -536,7 +543,7 @@ def test_material_identity_permissions_and_old_code_alias_import(tmp_path: Path)
         )
 
     with TestClient(create_app(settings)) as editor:
-        assert editor.post("/api/login", json={"username": "buyer-editor", "password": buyer_password}).status_code == 200
+        assert procurement_post(editor,"/api/login", json={"username": "buyer-editor", "password": buyer_password}).status_code == 200
         renamed = editor.patch(
             f"/api/workbenches/procurement/materials/{material['id']}",
             json={"code": "CF004", "name": "聚合氯化铝（采购备注）"},
@@ -547,7 +554,9 @@ def test_material_identity_permissions_and_old_code_alias_import(tmp_path: Path)
         )
 
     with TestClient(create_app(settings)) as manager:
-        assert manager.post("/api/login", json={"username": "buyer-manager", "password": manager_password}).status_code == 200
+        assert procurement_post(manager,"/api/login", json={"username": "buyer-manager", "password": manager_password}).status_code == 200
+        assert manager.patch(f"/api/workbenches/procurement/materials/{material['id']}", json={"code": "CF004-N", "name": "测试"}).status_code == 403
+        switch_to_test_admin(manager)
         recoded = manager.patch(
             f"/api/workbenches/procurement/materials/{material['id']}",
             json={"code": "CF004-N", "name": "聚合氯化铝（采购备注）"},
@@ -559,8 +568,8 @@ def test_material_identity_permissions_and_old_code_alias_import(tmp_path: Path)
         )
         switch_to_test_admin(manager)
         update_id = manager.get("/api/workbenches/procurement/updates/current").json()["current"]["id"]
-        assert manager.post(f"/api/workbenches/procurement/updates/{update_id}/cancel", json={"reason": "完成首轮资料维护测试"}).status_code == 200
-        alias_import = manager.post(
+        assert procurement_post(manager,f"/api/workbenches/procurement/updates/{update_id}/cancel", json={"reason": "完成首轮资料维护测试"}).status_code == 200
+        alias_import = procurement_post(manager,
             "/api/workbenches/procurement/imports",
             json={
                 "source_name": "采购询价单 2026-08-06",
@@ -570,7 +579,7 @@ def test_material_identity_permissions_and_old_code_alias_import(tmp_path: Path)
         )
         overview = manager.get("/api/workbenches/procurement/overview").json()
 
-    assert renamed.status_code == 200
+    assert renamed.status_code == 403
     assert denied.status_code == 403
     assert recoded.status_code == 200
     assert recoded.json()["material"]["code"] == "CF004-N"
@@ -600,3 +609,4 @@ def test_procurement_migration_failure_does_not_block_the_platform(tmp_path: Pat
     assert readiness.status_code == 200
     assert registry.status_code == 200
     assert procurement.status_code == 503
+from tests.procurement_helpers import procurement_post

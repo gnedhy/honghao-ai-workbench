@@ -2,12 +2,10 @@ import {
   ArrowLeft,
   ChevronDown,
   ChevronRight,
-  CircleAlert,
   Columns2,
   Database,
   FolderClosed,
   FolderKanban,
-  History,
   LibraryBig,
   LayoutDashboard,
   LogOut,
@@ -23,7 +21,6 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import userAvatar from "../assets/avatar-zhang-wei-v1.png";
 import { PROCUREMENT_PAGE_LABELS, type Conversation, type CurrentUser, type ModuleVisibility, type ProcurementPage, type Project, type RuntimeEnvironment, type Section, type WorkbenchId } from "../types";
 
 type SidebarProps = {
@@ -49,6 +46,7 @@ type SidebarProps = {
   mobileOpen: boolean;
   onMobileClose: () => void;
   onOpenSettings: () => void;
+  onOpenProfile: () => void;
   onLogout: () => Promise<void>;
 };
 
@@ -62,9 +60,8 @@ const navItems = [
 
 const procurementPages = [
   { id: "dashboard", icon: LayoutDashboard },
-  { id: "updates", icon: CircleAlert },
   { id: "materials", icon: Database },
-  { id: "history", icon: History },
+  { id: "distribution", icon: Columns2 },
   { id: "batches", icon: PackageCheck },
 ] as const;
 
@@ -91,6 +88,7 @@ export function Sidebar({
   mobileOpen,
   onMobileClose,
   onOpenSettings,
+  onOpenProfile,
   onLogout,
 }: SidebarProps) {
   const [expandedProjectId, setExpandedProjectId] = useState("");
@@ -161,7 +159,7 @@ export function Sidebar({
           {activeSection === "workbench" && openedWorkbenchId === "procurement" && (
             <SidebarGroup title="采购工作台">
               {procurementPages.map(({ id, icon: Icon }) => (
-                <button className={procurementPage === id ? "workbench-page-row is-active" : "workbench-page-row"} type="button" key={id} aria-current={procurementPage === id ? "page" : undefined} onClick={() => openProcurementPage(id)}>
+                <button className={(procurementPage === "updates" ? "materials" : procurementPage === "history" ? "batches" : procurementPage) === id ? "workbench-page-row is-active" : "workbench-page-row"} type="button" key={id} aria-current={(procurementPage === "updates" ? "materials" : procurementPage === "history" ? "batches" : procurementPage) === id ? "page" : undefined} onClick={() => openProcurementPage(id)}>
                   <Icon size={15} strokeWidth={1.7} />
                   <span>{PROCUREMENT_PAGE_LABELS[id]}</span>
                 </button>
@@ -214,15 +212,14 @@ export function Sidebar({
         <div className="profile-area">
           {profileOpen && (
             <div className="profile-menu" role="menu">
-              <button role="menuitem" type="button"><UserRound size={16} /><span>个人资料</span></button>
-              <button role="menuitem" type="button"><Columns2 size={16} /><span>使用情况</span></button>
+              <button role="menuitem" type="button" onClick={onOpenProfile}><UserRound size={16} /><span>个人资料</span></button>
               <button role="menuitem" type="button" onClick={onOpenSettings}><Settings size={16} /><span>系统设置</span><span className="profile-menu__meta">Ctrl+,</span></button>
               <div className="profile-menu__divider" />
               <button className="is-danger" role="menuitem" type="button" onClick={() => void onLogout()}><LogOut size={16} /><span>退出登录</span></button>
             </div>
           )}
           <button className="profile-trigger" type="button" onClick={onProfileToggle} aria-expanded={profileOpen}>
-            <span className="avatar"><img src={userAvatar} alt={`${currentUser.display_name}的虚拟头像`} /></span>
+            <span className="avatar" aria-hidden="true">{Array.from(currentUser.display_name)[0]}</span>
             <span className="profile-trigger__copy"><strong>{currentUser.display_name}</strong><small>{currentUser.department ?? (currentUser.is_system_admin ? "系统管理员" : "企业用户")}</small></span>
             <ChevronDown size={15} />
           </button>

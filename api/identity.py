@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from api.authorization import AuthorizationStore
 
-IDENTITY_SCHEMA_VERSION = 4
+
+IDENTITY_SCHEMA_VERSION = 5
 SESSION_COOKIE_NAME = "honghao_session"
 SYSTEM_ADMIN_ROLE_ID = "system-admin"
 
@@ -72,6 +74,12 @@ class IdentityStore:
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS identity_password_failures (
+                    user_id TEXT NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
+                    attempted_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS identity_password_failures_account
+                    ON identity_password_failures(user_id, attempted_at);
                 CREATE TABLE IF NOT EXISTS identity_user_scopes (
                     user_id TEXT NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
                     scope_id TEXT NOT NULL,
@@ -161,6 +169,10 @@ class IdentityStore:
                 )
                 version_number = IDENTITY_SCHEMA_VERSION
             if version_number != IDENTITY_SCHEMA_VERSION:
+                if version_number == 4:
+                    connection.execute("UPDATE schema_metadata SET value=? WHERE key='identity_schema_version'", (IDENTITY_SCHEMA_VERSION,))
+                    version_number = IDENTITY_SCHEMA_VERSION
+            if version_number != IDENTITY_SCHEMA_VERSION:
                 raise RuntimeError("Unsupported identity schema version")
             connection.executemany(
                 "INSERT OR IGNORE INTO identity_roles (id, name, system) VALUES (?, ?, 1)",
@@ -241,6 +253,15 @@ class IdentityStore:
         created_at = datetime.now(UTC)
         expires_at = created_at + timedelta(seconds=ttl_seconds)
         with sqlite3.connect(self.path) as connection:
+            # Recheck credentials under the same write lock as session insertion:
+            # a password change must not be followed by a late old-password session.
+            connection.execute("BEGIN IMMEDIATE")
+            valid = connection.execute(
+                "SELECT 1 FROM identity_users WHERE id=? AND password_hash=? AND password_salt=? AND is_active=1",
+                (str(row[0]), row[2], row[1]),
+            ).fetchone()
+            if valid is None:
+                return None
             connection.execute(
                 "INSERT INTO identity_sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
                 (token_hash, str(row[0]), created_at.isoformat(), expires_at.isoformat()),
@@ -249,6 +270,46 @@ class IdentityStore:
         if user is None:
             return None
         return user, token
+
+    def change_password(self, user_id: str, token: str, current: str, new: str, confirm: str) -> str:
+        if not 12 <= len(new) <= 1000 or new != confirm:
+            return "invalid"
+        now = datetime.now(UTC)
+        with sqlite3.connect(self.path) as connection:
+            # ponytail: SQLite serializes this short credential transaction; revisit
+            # per-account locking only if multi-server authentication is introduced.
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT u.password_salt,u.password_hash FROM identity_users u JOIN identity_sessions s ON s.user_id=u.id "
+                "WHERE u.id=? AND u.is_active=1 AND s.token_hash=? AND s.expires_at>?",
+                (user_id, _hash_session_token(token), now.isoformat()),
+            ).fetchone()
+            if row is None:
+                return "expired"
+            connection.execute("DELETE FROM identity_password_failures WHERE user_id=? AND attempted_at<=?", (user_id, (now-timedelta(minutes=15)).isoformat()))
+            failures = connection.execute("SELECT count(*) FROM identity_password_failures WHERE user_id=?", (user_id,)).fetchone()[0]
+            result = "limited" if failures >= 5 else "wrong" if not hmac.compare_digest(_hash_password(current, bytes(row[0])), bytes(row[1])) else "same" if current == new else "changed"
+            if result == "wrong":
+                connection.execute("INSERT INTO identity_password_failures VALUES (?,?)", (user_id, now.isoformat()))
+            elif result in ("same", "changed"):
+                connection.execute("DELETE FROM identity_password_failures WHERE user_id=?", (user_id,))
+            if result == "changed":
+                salt = os.urandom(16)
+                connection.execute("UPDATE identity_users SET password_salt=?,password_hash=? WHERE id=?", (salt, _hash_password(new, salt), user_id))
+                connection.execute("DELETE FROM identity_sessions WHERE user_id=?", (user_id,))
+            AuthorizationStore(self.path).audit("password." + result, actor_user_id=user_id, target_type="account", target_id=user_id, connection=connection)
+            return result
+
+    def update_profile(self, user_id: str, *, actor_id: str, display_name: str, department: str | None) -> dict[str, Any] | None:
+        with sqlite3.connect(self.path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            actor = connection.execute("SELECT 1 FROM identity_users WHERE id=? AND is_active=1 AND access_level=5", (actor_id,)).fetchone()
+            if actor is None:
+                raise PermissionError("Administrator required")
+            if not connection.execute("UPDATE identity_users SET display_name=?,department=? WHERE id=?", (display_name, department, user_id)).rowcount:
+                return None
+            AuthorizationStore(self.path).audit("user.profile.updated", actor_user_id=actor_id, target_type="account", target_id=user_id, connection=connection)
+        return self.get_user(user_id)
 
     def user_for_session(self, token: str) -> dict[str, Any] | None:
         token_hash = _hash_session_token(token)
@@ -346,6 +407,9 @@ class IdentityStore:
                     (int(is_active), user_id),
                 )
             connection.execute("DELETE FROM identity_sessions WHERE user_id = ?", (user_id,))
+            if is_active is False or is_system_admin is False or (normalized_scopes is not None and normalized_scopes.get("procurement", 0) < 3):
+                from api.procurement_collaboration import pause_schedules
+                pause_schedules(connection, user_id)
         return self.get_user(user_id)
 
 def _hash_password(password: str, salt: bytes) -> bytes:

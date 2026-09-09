@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import re
 import sqlite3
 from collections import Counter
@@ -11,20 +12,28 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form, status
 from pydantic import BaseModel, Field
 
 from api.authorization import AuthorizationStore
+from api.identity import IdentityStore
 from api.settings import Settings
+from api import procurement_collaboration as collaboration
 
 
-PROCUREMENT_SCHEMA_VERSION = 4
+PROCUREMENT_SCHEMA_VERSION = 5
 SHANGHAI = timezone(timedelta(hours=8), "Asia/Shanghai")
 EDITABLE_UPDATE_STATUSES = ("draft", "returned", "submitted")
-DEFAULT_LEDGER_COLUMNS = ["unit", "latest_price", "previous_latest_price", "change", "price_date", "status"]
+DEFAULT_LEDGER_COLUMNS = ["unit", "latest_price", "previous_latest_price", "change", "price_date", "modifier", "status"]
 ALLOWED_LEDGER_COLUMNS = set(DEFAULT_LEDGER_COLUMNS) | {"in_transit_price", "inventory_price", "suggested_price"}
 PRICE_FIELD_ID = "procurement.material_unit_price"
 PRICE_KEYS = {
+    "comparison": PRICE_FIELD_ID,
+    "raw_price": PRICE_FIELD_ID,
+    "previous_raw": PRICE_FIELD_ID,
+    "before": PRICE_FIELD_ID,
+    "after": PRICE_FIELD_ID,
+    "priced": PRICE_FIELD_ID,
     "published_price": PRICE_FIELD_ID,
     "draft_price": PRICE_FIELD_ID,
     "draft_change": PRICE_FIELD_ID,
@@ -58,10 +67,19 @@ ISSUE_LABELS = {
 }
 
 
+class PriceConfirmation(BaseModel):
+    baseline_id: str | None
+    references: dict[str, Decimal | None]
+
+
 class DelimitedImportRequest(BaseModel):
+    update_id: str | None = None
+    updated_at: str | None = None
     source_name: str = Field(min_length=1, max_length=120)
     effective_date: date
     content: str = Field(min_length=1, max_length=1_000_000)
+    price_confirmation: PriceConfirmation | None = None
+    reason: str = Field(default="已核对导入报价及价格波动", min_length=4, max_length=200)
 
 
 class ProcurementPreferencesRequest(BaseModel):
@@ -76,14 +94,49 @@ class MaterialIdentityRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 
 
+class MaterialCreateRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    code: str = Field(min_length=1, max_length=64)
+    name: str = Field(default="", max_length=120)
+    department_ids: list[str] = Field(default_factory=list, max_length=100)
+    price: Decimal | None = Field(default=None, ge=0)
+    effective_date: date | None = None
+    reason: str = Field(default="", max_length=200)
+    update_id: str | None = None
+    updated_at: str | None = None
+    baseline_id: str | None = None
+
+
 class PriceAdjustmentRequest(BaseModel):
+    updated_at: str | None = None
     price: Decimal = Field(ge=0)
     effective_date: date
     reason: str = Field(min_length=4, max_length=200)
     target_history_id: str | None = None
+    price_confirmation: PriceConfirmation | None = None
+
+
+class BulkPriceItem(BaseModel):
+    material_id: str = Field(min_length=1)
+    price: Decimal = Field(ge=0, allow_inf_nan=False)
+
+
+class BulkPriceAdjustmentRequest(BaseModel):
+    update_id: str | None
+    updated_at: str | None
+    effective_date: date
+    reason: str = Field(min_length=4, max_length=200)
+    items: list[BulkPriceItem] = Field(min_length=1, max_length=10000)
+    price_confirmation: PriceConfirmation | None = None
+
+
+class PricePreviewRequest(BaseModel):
+    effective_date: date
+    items: list[BulkPriceItem] = Field(min_length=1, max_length=10000)
 
 
 class UpdateReasonRequest(BaseModel):
+    updated_at: str | None = None
     reason: str = Field(min_length=4, max_length=200)
 
 
@@ -92,8 +145,19 @@ class ScheduleCancelRequest(UpdateReasonRequest):
 
 
 class PublishUpdateRequest(BaseModel):
+    updated_at: str | None = None
+    baseline_id: str | None = None
     mode: str = Field(pattern="^(immediate|scheduled)$")
     activate_at: datetime | None = None
+
+
+class ActivationGrantRequest(BaseModel):
+    enabled: bool
+    manager: bool | None = None
+
+
+class DepartmentMaterialsRequest(BaseModel):
+    material_ids: list[str] = Field(max_length=10000)
 
 
 class ProcurementStore:
@@ -193,6 +257,10 @@ class ProcurementStore:
             if int(version[0]) == 3:
                 self._migrate_v4(connection)
                 version = (4,)
+            if int(version[0]) == 4:
+                collaboration.initialize(connection)
+                connection.execute("UPDATE schema_metadata SET value=5 WHERE key='workbench_procurement_schema_version'")
+                version = (5,)
             if int(version[0]) != PROCUREMENT_SCHEMA_VERSION:
                 raise RuntimeError("Unsupported procurement workbench schema version")
 
@@ -384,18 +452,22 @@ class ProcurementStore:
         return int(row[0])
 
     def preview_import(self, content: str, effective_date: date | None = None) -> dict[str, Any]:
+        with sqlite3.connect(self.path) as connection:
+            baseline_id = self._latest_batch_id(connection)
         existing = self._materials_by_code()
         rows = _parse_delimited(content)
         counts = Counter(row["code"] for row in rows)
         preview_rows = []
         for row in rows:
-            issues: list[str] = []
+            issues: list[str] = list(row.get("validation_issues", []))
             current = existing.get(row["code"])
+            if current is None:
+                issues.append("unknown_code")
             if counts[row["code"]] > 1:
                 issues.append("duplicate_code")
             if current is not None and current["unit"] != row["unit"]:
                 issues.append("unit_conflict")
-            suggested = _suggested_price(row)
+            suggested = row["latest_price"]
             if suggested is None:
                 issues.append("missing_price")
             previous = current["latest_price"] if current is not None else row["previous_latest_price"]
@@ -407,22 +479,30 @@ class ProcurementStore:
             preview_rows.append({
                 **_serialize_import_row(row),
                 "suggested_price": _decimal_text(suggested),
+                "reference_price": _decimal_text(_decimal(previous)),
+                "change": _change(row["latest_price"], previous),
                 "issues": issues,
-                "importable": not any(issue in {"duplicate_code", "unit_conflict"} for issue in issues),
+                "importable": not any(issue in {"duplicate_code", "unit_conflict", "unknown_code", "missing_price", "invalid_price", "invalid_identity"} for issue in issues),
             })
         return {
             "received_count": len(preview_rows),
+            "baseline_id": baseline_id,
             "importable_count": sum(1 for row in preview_rows if row["importable"]),
-            "skipped_count": sum(1 for row in preview_rows if not row["importable"]),
+            "skipped_count": sum(1 for row in preview_rows if any(i in {"duplicate_code", "unit_conflict", "unknown_code", "invalid_price", "invalid_identity"} for i in row["issues"])),
+            "blank_count": sum(1 for row in preview_rows if "missing_price" in row["issues"]),
             "rows": preview_rows,
         }
 
     @staticmethod
-    def _event(connection: sqlite3.Connection, update_id: str, event: str, actor_user_id: str | None, reason: str | None = None) -> None:
+    def _event(connection: sqlite3.Connection, update_id: str, event: str, actor_user_id: str | None, reason: str | None = None) -> str:
+        event_id = str(uuid4())
         connection.execute(
             "INSERT INTO procurement_update_events VALUES (?, ?, ?, ?, ?, ?)",
-            (str(uuid4()), update_id, event, actor_user_id, reason, datetime.now(UTC).isoformat()),
+            (event_id, update_id, event, actor_user_id, reason, datetime.now(UTC).isoformat()),
         )
+
+        connection.execute("UPDATE procurement_updates SET updated_at=? WHERE id=?", (datetime.now(UTC).isoformat(), update_id))
+        return event_id
 
     @staticmethod
     def _editable_update(connection: sqlite3.Connection) -> tuple[Any, ...] | None:
@@ -465,46 +545,51 @@ class ProcurementStore:
         self._event(connection, update_id, "created", actor_user_id)
         return update_id
 
-    def confirm_import(self, source_name: str, effective_date: date, content: str, actor_user_id: str) -> dict[str, Any]:
+    def confirm_import(self, source_name: str, effective_date: date, content: str, actor_user_id: str, price_confirmation: PriceConfirmation | None = None, reason: str = "已核对导入报价及价格波动", *, revision: tuple | None = None) -> dict[str, Any]:
         preview = self.preview_import(content, effective_date)
         if preview["skipped_count"]:
-            raise ValueError("存在重复编码或计量单位冲突，请修正后重新检查")
+            raise ValueError("存在重复、未知编号或单位冲突，请先维护目录或修正文件")
+        if not preview["importable_count"]:
+            raise ValueError("没有有效新价格；空白不会清除现价")
         import_id = str(uuid4())
         now = datetime.now(UTC).isoformat()
         recorded_at = f"{effective_date.isoformat()}T00:00:00+00:00"
         imported_count = 0
         with sqlite3.connect(self.path) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            if revision is not None:
+                self._check_revision(connection, *revision)
+            collaboration.require_current(self.path, actor_user_id, "can_edit")
+            if price_confirmation is not None:
+                collaboration.require_current(self.path, actor_user_id, "can_activate")
             update_id = self._ensure_editable_update(
                 connection, effective_date.isoformat(), source_name, actor_user_id, now
             )
+            changes = []
             for row in preview["rows"]:
                 if not row["importable"]:
                     continue
                 existing = self._material_for_code(connection, row["code"])
-                material_id = str(existing[0]) if existing else str(uuid4())
-                previous_latest = str(existing[2]) if existing and existing[2] is not None else row["previous_latest_price"]
-                if existing:
-                    same_period = connection.execute(
-                        """SELECT m.previous_latest_price FROM procurement_materials m JOIN procurement_imports i ON i.id=m.last_import_id
-                           WHERE m.id=? AND i.effective_date=?""", (material_id, effective_date.isoformat()),
-                    ).fetchone()
-                    if same_period:
-                        previous_latest = same_period[0]
-                    connection.execute(
-                        """UPDATE procurement_materials SET unit = ?, latest_price = ?, inventory_price = ?,
-                                  in_transit_price = ?, previous_latest_price = ?, last_import_id = ?, updated_at = ?
-                           WHERE id = ?""",
-                        (row["unit"], row["latest_price"], row["inventory_price"], row["in_transit_price"], previous_latest, import_id, now, material_id),
-                    )
-                else:
-                    connection.execute(
-                        """INSERT INTO procurement_materials (
-                               id, code, name, unit, latest_price, inventory_price, in_transit_price,
-                               previous_latest_price, last_import_id, updated_at
-                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (material_id, row["code"], row["name"], row["unit"], row["latest_price"], row["inventory_price"], row["in_transit_price"], previous_latest, import_id, now),
-                    )
+                if not existing or existing[3] != row["unit"]:
+                    raise RuntimeError("原料目录或单位已变化，请重新预览；价格输入未保存")
+                material_id = str(existing[0])
+                before = connection.execute("SELECT latest_price FROM procurement_update_items WHERE update_id=? AND material_id=?", (update_id, material_id)).fetchone()
+                if before is None:
+                    before = connection.execute("SELECT latest_price FROM procurement_price_batch_items WHERE batch_id=? AND material_id=?", (self._latest_batch_id(connection), material_id)).fetchone()
+                changes.append((material_id, before[0] if before else None, row["latest_price"]))
+                previous_latest = str(existing[2]) if existing[2] is not None else row["previous_latest_price"]
+                same_period = connection.execute(
+                    """SELECT m.previous_latest_price FROM procurement_materials m JOIN procurement_imports i ON i.id=m.last_import_id
+                       WHERE m.id=? AND i.effective_date=?""", (material_id, effective_date.isoformat()),
+                ).fetchone()
+                if same_period:
+                    previous_latest = same_period[0]
+                connection.execute(
+                    """UPDATE procurement_materials SET latest_price = ?, inventory_price = ?,
+                              in_transit_price = ?, previous_latest_price = ?, last_import_id = ?, updated_at = ?
+                       WHERE id = ?""",
+                    (row["latest_price"], row["inventory_price"], row["in_transit_price"], previous_latest, import_id, now, material_id),
+                )
                 connection.execute(
                     "INSERT INTO procurement_price_history VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
@@ -540,9 +625,13 @@ class ProcurementStore:
                 "UPDATE procurement_working_state SET latest_import_id = ?, submitted_by = NULL, submitted_at = NULL WHERE id = 1",
                 (import_id,),
             )
-            changed_ids = {str(self._material_for_code(connection, row["code"])[0]) for row in preview["rows"]}
+            changed_ids = {change[0] for change in changes}
             self._refresh_update_issues(connection, update_id, now, changed_ids)
-            self._event(connection, update_id, "imported", actor_user_id, source_name.strip())
+            if price_confirmation is not None:
+                references = {str(self._material_for_code(connection, code)[0]): value for code, value in price_confirmation.references.items() if self._material_for_code(connection, code)}
+                self._confirm_saved_risks(connection, update_id, changed_ids, PriceConfirmation(baseline_id=price_confirmation.baseline_id, references=references), reason, actor_user_id)
+            event_id = self._event(connection, update_id, "imported", actor_user_id, reason.strip())
+            collaboration.record_changes(connection, event_id, update_id, actor_user_id, effective_date.isoformat(), changes)
         return {
             "id": import_id,
             "source_name": source_name.strip(),
@@ -610,12 +699,25 @@ class ProcurementStore:
         published_price_date = str(batch_rows[0][4]) if batch_rows and batch_rows[0][4] else None
         active_update = self.current_update()
         scheduled_update = self.scheduled_update()
+        sources = collaboration.snapshot_sources(self.path, current_batch_id)
+        all_participants = collaboration.participants(self.path)
+        round_participants = collaboration.participants(self.path, active_update["id"]) if active_update else {}
         pending = active_update or scheduled_update
+        authorship = collaboration.price_authorship(self.path)
+        official_authors = authorship["batches"].get(current_batch_id, {})
+        pending_authors = authorship["updates"].get(pending["id"], {}) if pending else {}
         pending_prices = {item["material_id"]: item["draft_price"] for item in pending["items"]} if pending else {}
         for material in materials:
             material["published_price"] = published_prices.get(material["id"])
             material["previous_published_price"] = previous_published_prices.get(material["id"])
             material["published_price_date"] = published_price_date if material["published_price"] is not None else None
+            if material["id"] in sources:
+                material["published_price_date"] = sources[material["id"]]["price_date"]
+            material["reported"] = bool(material["published_price_date"] and material["published_price_date"] == published_price_date)
+            material["participants"] = all_participants.get(material["id"], [])
+            material["round_participants"] = round_participants.get(material["id"], [])
+            material["price_modifier"] = pending_authors.get(material["id"], official_authors.get(material["id"]))
+            material["source_purchasers"] = authorship["purchasers"].get(material["id"], [])
             if pending:
                 material["draft_price"] = pending_prices.get(material["id"], material["published_price"])
             else:
@@ -640,6 +742,9 @@ class ProcurementStore:
                     "item_count": int(row[3]), "price_date": row[4], "activated_at": row[5],
                     "source_name": row[6], "submitted_by": row[7], "published_by": row[8],
                     "status": "active" if str(row[0]) == current_batch_id else "historical",
+                    "comparison": self.batch_comparison(str(row[0])),
+                    "provenance": collaboration.provenance(self.path, str(row[0])),
+                    "published_by_name": self._user_name(str(row[8])),
                 }
                 for row in batch_rows
             ],
@@ -660,6 +765,16 @@ class ProcurementStore:
                 } if working_state and working_state[3] is not None else None,
             },
         }
+
+    def _user_name(self, user_id: str) -> str:
+        with sqlite3.connect(self.path) as connection:
+            row = connection.execute("SELECT display_name FROM identity_users WHERE id=?", (user_id,)).fetchone()
+        return str(row[0]) if row else "未记录"
+
+    def _batch_update_id(self, batch_id: str) -> str | None:
+        with sqlite3.connect(self.path) as connection:
+            row = connection.execute("SELECT update_id FROM procurement_price_batches WHERE id=?", (batch_id,)).fetchone()
+        return row[0] if row else None
 
     def current_update(self) -> dict[str, Any] | None:
         with sqlite3.connect(self.path) as connection:
@@ -700,6 +815,14 @@ class ProcurementStore:
             ).fetchall())
             item_rows = [(*row[:5], official.get(row[0]), self._reference_price(connection, update_id, str(row[0])))
                          for row in self._candidate_snapshot(connection, update_id)]
+            input_ids = {str(row[0]) for row in connection.execute(
+                """SELECT material_id FROM procurement_update_items WHERE update_id = ?
+                   UNION SELECT h.material_id FROM procurement_price_history h
+                   JOIN procurement_imports i ON i.id = h.import_id
+                   LEFT JOIN procurement_price_adjustments a ON a.target_history_id = h.id
+                   WHERE i.update_id = ? AND i.archived_at IS NULL AND a.id IS NULL""",
+                (update_id, update_id),
+            ).fetchall()}
             issue_rows = connection.execute(
                 """SELECT issues.id, issues.material_id, materials.code, materials.name, issues.kind,
                           issues.status, issues.created_at, issues.reviewed_at, issues.review_reason
@@ -711,7 +834,7 @@ class ProcurementStore:
             ).fetchall()
             event_rows = connection.execute(
                 """SELECT events.event, COALESCE(users.display_name, events.actor_user_id),
-                          events.reason, events.created_at
+                          events.reason, events.created_at, events.id
                    FROM procurement_update_events AS events
                    LEFT JOIN identity_users AS users ON users.id = events.actor_user_id
                    WHERE events.update_id = ? ORDER BY events.created_at DESC""",
@@ -749,9 +872,11 @@ class ProcurementStore:
                 "risk_count": sum(1 for issue in issues if issue["kind"] == "price_spike" and issue["status"] == "open"),
             },
             "items": changed,
+            "input_items": [item for item in items if item["material_id"] in input_ids],
+            "changes": collaboration.saved_events(self.path, update_id=update_id),
             "issues": issues,
             "events": [
-                {"event": str(row[0]), "actor_name": str(row[1] or "系统"), "reason": row[2], "created_at": str(row[3])}
+                {"id": str(row[4]), "event": str(row[0]), "actor_name": str(row[1] or "系统"), "reason": row[2], "created_at": str(row[3])}
                 for row in event_rows
             ],
         }
@@ -788,6 +913,7 @@ class ProcurementStore:
         actor_user_id: str,
         reason: str,
         expected_update_id: str | None = None,
+        updated_at: str | None = None,
     ) -> dict[str, Any] | None:
         reason = reason.strip()
         if not 4 <= len(reason) <= 200:
@@ -804,6 +930,11 @@ class ProcurementStore:
             ).fetchone()
             if issue is None:
                 return None
+            collaboration.require_current(self.path, actor_user_id, "can_activate")
+            if updated_at is not None:
+                revision = connection.execute("SELECT updated_at FROM procurement_updates WHERE id=?", (issue[2],)).fetchone()
+                if not revision or revision[0] != updated_at:
+                    raise ValueError("本轮价格已变化，请刷新核对后重新确认")
             if expected_update_id is not None and str(issue[2] or "") != expected_update_id:
                 return None
             if str(issue[0]) != "price_spike":
@@ -841,6 +972,7 @@ class ProcurementStore:
         now = datetime.now(UTC).isoformat()
         with sqlite3.connect(self.path) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            collaboration.require_current(self.path, actor_user_id, "can_cancel_round")
             self._freeze_update(connection, update_id)
             changed = connection.execute(
                 """UPDATE procurement_updates SET status = 'cancelled', cancelled_by = ?,
@@ -858,6 +990,8 @@ class ProcurementStore:
                 (update_id,),
             )
             self._event(connection, update_id, "cancelled", actor_user_id, reason.strip())
+            for (material_id,) in connection.execute("SELECT material_id FROM procurement_update_items WHERE update_id=?", (update_id,)).fetchall():
+                self._refresh_material_snapshot(connection, material_id)
         return self.get_update(update_id) or {"id": update_id, "status": "cancelled"}
 
     def price_history(self) -> list[dict[str, Any]]:
@@ -961,7 +1095,7 @@ class ProcurementStore:
         rows = self._active_history(include_archived=include_archived, material_id=material_id)
         with sqlite3.connect(self.path) as connection:
             material = connection.execute(
-                "SELECT id, code, name, unit, archived_at FROM procurement_materials WHERE id = ?",
+                "SELECT id, code, name, unit, archived_at, updated_at, latest_price FROM procurement_materials WHERE id = ?",
                 (material_id,),
             ).fetchone()
             adjustments = connection.execute(
@@ -972,19 +1106,30 @@ class ProcurementStore:
                    WHERE adjustments.material_id = ? ORDER BY adjustments.created_at DESC""",
                 (material_id,),
             ).fetchall()
+            official = connection.execute("""SELECT b.id,b.version,b.price_date,i.latest_price,
+                s.price_date,s.raw_price,s.price_kind,s.sheet,s.cell
+                FROM procurement_price_batches b JOIN procurement_price_batch_items i ON i.batch_id=b.id
+                LEFT JOIN procurement_snapshot_sources s ON s.batch_id=b.id AND s.material_id=i.material_id
+                WHERE i.material_id=? ORDER BY b.version""", (material_id,)).fetchall()
+            sources = connection.execute("""SELECT s.sheet,s.source_row,s.raw_json,f.filename
+                FROM procurement_material_sources s JOIN procurement_source_imports f ON f.sha256=s.sha256
+                WHERE s.material_id=? ORDER BY s.sheet,s.source_row""", (material_id,)).fetchall()
         if material is None or (material[4] is not None and not include_archived):
             return None
+        authorship = collaboration.price_authorship(self.path, material_id)["batches"]
         rows.sort(key=lambda item: (item["effective_date"], item["created_at"]))
         latest = rows[-1] if rows else None
         previous = rows[-2] if len(rows) > 1 else None
         return {
-            "material": {"id": str(material[0]), "code": str(material[1]), "name": str(material[2]), "unit": str(material[3]), "archived": material[4] is not None},
-            "latest_price": latest["latest_price"] if latest else None,
+            "material": {"id": str(material[0]), "code": str(material[1]), "name": str(material[2]), "unit": str(material[3]), "archived": material[4] is not None, "updated_at": material[5]},
+            "latest_price": latest["latest_price"] if latest else material[6],
             "previous_price": previous["latest_price"] if previous else None,
-            "change": _change(latest["latest_price"], previous["latest_price"] if previous else None),
+            "change": _change(latest["latest_price"] if latest else material[6], previous["latest_price"] if previous else None),
             "price_date": latest["effective_date"] if latest else None,
             "status": "missing" if latest is None or latest["latest_price"] is None else "active",
             "history": rows,
+            "official_history": [{**dict(zip(("id","version","version_date","latest_price","price_date","raw_price","price_kind","sheet","cell"), row)), "modifier": authorship.get(row[0], {}).get(material_id)} for row in official],
+            "sources": [{"sheet": r[0], "row": r[1], "purchaser": json.loads(r[2])[0], "filename": r[3]} for r in sources],
             "adjustments": [
                 {"id": str(row[0]), "target_history_id": row[1], "replacement_history_id": str(row[2]), "reason": str(row[3]), "created_by": str(row[4] or "未知用户"), "created_at": str(row[5])}
                 for row in adjustments
@@ -1006,7 +1151,7 @@ class ProcurementStore:
         } if row else {
             "ledger_columns": DEFAULT_LEDGER_COLUMNS,
             "history_view": "batches",
-            "ledger_view": "scroll",
+            "ledger_view": "paged",
             "ledger_page_size": 50,
         }
 
@@ -1073,59 +1218,182 @@ class ProcurementStore:
             raise LookupError("Material not found")
         return detail
 
-    def adjust_price(self, material_id: str, price: Decimal, effective_date: date, reason: str, actor_user_id: str, target_history_id: str | None) -> dict[str, Any]:
-        now = datetime.now(UTC).isoformat()
-        date_text = effective_date.isoformat()
+    def create_material(self, payload: MaterialCreateRequest, actor_user_id: str) -> str:
+        code = payload.code.strip()
+        if not code:
+            raise ValueError("请填写原料编号")
+        if payload.price is not None and (payload.effective_date is None or not 4 <= len(payload.reason.strip()) <= 200):
+            raise ValueError("填写价格时，请选择价格日期并填写 4–200 字录入说明")
         with sqlite3.connect(self.path) as connection:
             connection.execute("BEGIN IMMEDIATE")
-            update_id = self._ensure_editable_update(
-                connection, date_text, "手工价格修正", actor_user_id, now
-            )
-            material = connection.execute("SELECT id FROM procurement_materials WHERE id = ? AND archived_at IS NULL", (material_id,)).fetchone()
-            if material is None:
-                raise LookupError("Material not found")
-            active = self._active_history(connection=connection, material_id=material_id)
-            active.sort(key=lambda item: (item["effective_date"], item["created_at"]))
-            latest = active[-1] if active else None
-            if target_history_id is None and latest and date_text < latest["effective_date"]:
-                raise ValueError("较早日期必须选择一条历史记录进行修正")
-            if target_history_id is None and latest and date_text == latest["effective_date"]:
-                target_history_id = latest["id"]
-            target = next((item for item in active if item["id"] == target_history_id), None) if target_history_id else None
-            if target_history_id and target is None:
-                raise LookupError("History record not found")
-            if any(item["effective_date"] == date_text and item["id"] != target_history_id for item in active):
-                raise RuntimeError("同一原料在该日期已有有效价格，请先处理冲突")
-            import_id = str(uuid4())
-            history_id = str(uuid4())
-            connection.execute(
-                """INSERT INTO procurement_imports (
-                    id, source_name, received_count, imported_count, skipped_count, created_by,
-                    created_at, effective_date, archived_at, archived_by, update_id
-                ) VALUES (?, '手工价格修正', 1, 1, 0, ?, ?, ?, NULL, NULL, ?)""",
-                (import_id, actor_user_id, now, date_text, update_id),
-            )
-            connection.execute(
-                "INSERT INTO procurement_price_history VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (history_id, material_id, import_id, _decimal_text(price), target["inventory_price"] if target else None, target["in_transit_price"] if target else None, f"{date_text}T00:00:00+00:00"),
-            )
-            adjustment_id = str(uuid4())
-            connection.execute(
-                """INSERT INTO procurement_price_adjustments (
-                       id, material_id, target_history_id, replacement_history_id, reason,
-                       created_by, created_at, update_id
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (adjustment_id, material_id, target_history_id, history_id, reason.strip(), actor_user_id, now, update_id),
-            )
-            self._refresh_material_snapshot(connection, material_id)
-            self._save_candidate(connection, update_id, material_id, history_id)
-            self._refresh_update_issues(connection, update_id, now, {material_id})
-            connection.execute(
-                "UPDATE procurement_working_state SET latest_import_id = ?, submitted_by = NULL, submitted_at = NULL WHERE id = 1",
-                (import_id,),
-            )
-            self._event(connection, update_id, "price_adjusted", actor_user_id, reason.strip())
+            collaboration.require_current(self.path, actor_user_id, "can_manage_catalog")
+            if connection.execute("SELECT 1 FROM procurement_materials WHERE code=? UNION ALL SELECT 1 FROM procurement_material_aliases WHERE alias_code=? LIMIT 1", (code, code)).fetchone():
+                raise RuntimeError("编号或旧编号已存在，请使用其他编号")
+            groups = set(payload.department_ids)
+            known = {row[0] for row in connection.execute("SELECT id FROM procurement_departments")}
+            if len(groups) != len(payload.department_ids) or not groups <= known:
+                raise ValueError("分流部门重复或已不存在，请刷新部门后重新选择")
+            if payload.price is not None:
+                collaboration.require_current(self.path, actor_user_id, "can_edit")
+                self._check_revision(connection, payload.update_id, payload.updated_at)
+                current = connection.execute("SELECT status FROM procurement_updates WHERE id=?", (payload.update_id,)).fetchone()
+                if current and current[0] not in ("draft", "returned"):
+                    raise RuntimeError("本轮更新暂不可录价，请先处理本轮更新，或清空价格仅新增原料")
+                if self._latest_batch_id(connection) != payload.baseline_id:
+                    raise RuntimeError("正式版本已变化，请保留输入并刷新核对")
+            material_id = str(uuid4())
+            connection.execute("INSERT INTO procurement_materials(id,code,name,unit,updated_at) VALUES (?,?,?,'kg',?)", (material_id, code, payload.name.strip() or code, datetime.now(UTC).isoformat()))
+            connection.executemany("INSERT INTO procurement_department_materials VALUES (?,?)", [(group, material_id) for group in groups])
+            collaboration.admin_event(connection, actor_user_id, "material.created", material_id, {"code": code, "name": payload.name.strip() or code, "department_ids": sorted(groups)})
+            for group in sorted(groups):
+                collaboration.admin_event(connection, actor_user_id, "department.changed", group, {"added": [material_id], "removed": []})
+            if payload.price is not None:
+                self._adjust_price(connection, material_id, payload.price, payload.effective_date, payload.reason, actor_user_id, None)
+        return material_id
+
+    def adjust_price(self, material_id: str, price: Decimal, effective_date: date, reason: str, actor_user_id: str, target_history_id: str | None, price_confirmation: PriceConfirmation | None = None, *, updated_at: str | None = None) -> dict[str, Any]:
+        with sqlite3.connect(self.path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            collaboration.require_current(self.path, actor_user_id, "can_edit")
+            if price_confirmation is not None:
+                collaboration.require_current(self.path, actor_user_id, "can_activate")
+            if updated_at is not None:
+                material = connection.execute("SELECT updated_at FROM procurement_materials WHERE id=?", (material_id,)).fetchone()
+                if not material or material[0] != updated_at:
+                    raise RuntimeError("原料已被其他人修改，请保留输入并刷新核对")
+            result = self._adjust_price(connection, material_id, price, effective_date, reason, actor_user_id, target_history_id)
+            if price_confirmation is not None:
+                self._confirm_saved_risks(connection, str(self._editable_update(connection)[0]), {material_id}, price_confirmation, reason, actor_user_id)
+            return result
+
+    def _adjust_price(self, connection: sqlite3.Connection, material_id: str, price: Decimal, effective_date: date, reason: str, actor_user_id: str, target_history_id: str | None, record_event: bool = True) -> dict[str, Any]:
+        now = datetime.now(UTC).isoformat()
+        date_text = effective_date.isoformat()
+        if not 4 <= len(reason.strip()) <= 200:
+            raise ValueError("原因须为 4–200 字")
+        update_id = self._ensure_editable_update(connection, date_text, "手工价格修正", actor_user_id, now)
+        material = connection.execute("SELECT id FROM procurement_materials WHERE id = ? AND archived_at IS NULL", (material_id,)).fetchone()
+        if material is None:
+            raise LookupError("Material not found")
+        active = self._active_history(connection=connection, material_id=material_id)
+        before_row = connection.execute("SELECT latest_price FROM procurement_update_items WHERE update_id=? AND material_id=?", (update_id, material_id)).fetchone()
+        if before_row is None:
+            before_row = connection.execute("SELECT latest_price FROM procurement_price_batch_items WHERE batch_id=? AND material_id=?", (self._latest_batch_id(connection), material_id)).fetchone()
+        active.sort(key=lambda item: (item["effective_date"], item["created_at"]))
+        latest = active[-1] if active else None
+        if target_history_id is None and latest and date_text < latest["effective_date"]:
+            raise ValueError("较早日期必须选择一条历史记录进行修正")
+        if target_history_id is None and latest and date_text == latest["effective_date"]:
+            target_history_id = latest["id"]
+        target = next((item for item in active if item["id"] == target_history_id), None) if target_history_id else None
+        if target_history_id and target is None:
+            raise LookupError("History record not found")
+        if any(item["effective_date"] == date_text and item["id"] != target_history_id for item in active):
+            raise RuntimeError("同一原料在该日期已有有效价格，请先处理冲突")
+        import_id = str(uuid4())
+        history_id = str(uuid4())
+        connection.execute(
+            """INSERT INTO procurement_imports (
+                id, source_name, received_count, imported_count, skipped_count, created_by,
+                created_at, effective_date, archived_at, archived_by, update_id
+            ) VALUES (?, '手工价格修正', 1, 1, 0, ?, ?, ?, NULL, NULL, ?)""",
+            (import_id, actor_user_id, now, date_text, update_id),
+        )
+        connection.execute(
+            "INSERT INTO procurement_price_history VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (history_id, material_id, import_id, _decimal_text(price), target["inventory_price"] if target else None, target["in_transit_price"] if target else None, f"{date_text}T00:00:00+00:00"),
+        )
+        adjustment_id = str(uuid4())
+        # A cancelled replacement keeps its audit link; a new save must not overwrite that link.
+        if target_history_id and connection.execute("SELECT 1 FROM procurement_price_adjustments WHERE target_history_id=?", (target_history_id,)).fetchone():
+            target_history_id = None
+        connection.execute(
+            """INSERT INTO procurement_price_adjustments (
+                   id, material_id, target_history_id, replacement_history_id, reason,
+                   created_by, created_at, update_id
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (adjustment_id, material_id, target_history_id, history_id, reason.strip(), actor_user_id, now, update_id),
+        )
+        self._refresh_material_snapshot(connection, material_id)
+        self._save_candidate(connection, update_id, material_id, history_id)
+        self._refresh_update_issues(connection, update_id, now, {material_id})
+        connection.execute(
+            "UPDATE procurement_working_state SET latest_import_id = ?, submitted_by = NULL, submitted_at = NULL WHERE id = 1",
+            (import_id,),
+        )
+        if record_event:
+            event_id = self._event(connection, update_id, "price_adjusted", actor_user_id, reason.strip())
+            before = before_row[0] if before_row else target["latest_price"] if target else None
+            collaboration.record_changes(connection, event_id, update_id, actor_user_id, date_text, [(material_id, before, _decimal_text(price))])
         return {"id": adjustment_id, "replacement_history_id": history_id}
+
+    @staticmethod
+    def _check_revision(connection, update_id, updated_at):
+        current = connection.execute("SELECT id,updated_at FROM procurement_updates WHERE status IN ('draft','returned','submitted','revalidation_required') ORDER BY CASE status WHEN 'revalidation_required' THEN 1 ELSE 0 END,created_at DESC LIMIT 1").fetchone()
+        if (current and tuple(current) != (update_id, updated_at)) or (not current and (update_id or updated_at)):
+            raise RuntimeError("本轮更新已变化，请保留输入，刷新核对后重新编辑")
+
+    def bulk_adjust_prices(self, payload: BulkPriceAdjustmentRequest, actor_user_id: str) -> str:
+        with sqlite3.connect(self.path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            collaboration.require_current(self.path, actor_user_id, "can_edit")
+            if payload.price_confirmation is not None:
+                collaboration.require_current(self.path, actor_user_id, "can_activate")
+            current = connection.execute(
+                """SELECT id, updated_at, status FROM procurement_updates
+                   WHERE status IN ('draft', 'returned', 'submitted', 'revalidation_required')
+                   ORDER BY CASE status WHEN 'revalidation_required' THEN 1 ELSE 0 END, created_at DESC LIMIT 1"""
+            ).fetchone()
+            if (current and (current[0] != payload.update_id or current[1] != payload.updated_at or current[2] not in ('draft', 'returned'))) or (not current and (payload.update_id is not None or payload.updated_at is not None)):
+                raise RuntimeError("本轮更新已变化，请保留输入，刷新核对后重新编辑")
+            if len({item.material_id for item in payload.items}) != len(payload.items):
+                raise ValueError("同一原料不能重复提交")
+            changes = []
+            for item in payload.items:
+                before = connection.execute("SELECT latest_price FROM procurement_update_items WHERE update_id=? AND material_id=?", (payload.update_id, item.material_id)).fetchone()
+                if before is None:
+                    before = connection.execute("SELECT latest_price FROM procurement_price_batch_items WHERE batch_id=? AND material_id=?", (self._latest_batch_id(connection), item.material_id)).fetchone()
+                changes.append((item.material_id, before[0] if before else None, _decimal_text(item.price)))
+                material = connection.execute("SELECT code FROM procurement_materials WHERE id=?", (item.material_id,)).fetchone()
+                try:
+                    self._adjust_price(connection, item.material_id, item.price, payload.effective_date, payload.reason, actor_user_id, None, record_event=False)
+                except (ValueError, LookupError, RuntimeError) as error:
+                    raise type(error)(f"{material[0] if material else item.material_id}：{error}") from error
+            update_id = str(self._editable_update(connection)[0])
+            if payload.price_confirmation is not None:
+                self._confirm_saved_risks(connection, update_id, {item.material_id for item in payload.items}, payload.price_confirmation, payload.reason, actor_user_id)
+            event_id = self._event(connection, update_id, "prices_adjusted", actor_user_id, f"修改 {len(payload.items)} 项原料；{payload.reason.strip()}")
+            collaboration.record_changes(connection, event_id, update_id, actor_user_id, payload.effective_date.isoformat(), changes)
+            return update_id
+
+    def preview_prices(self, payload: PricePreviewRequest) -> dict[str, Any]:
+        with sqlite3.connect(self.path) as connection:
+            connection.execute("BEGIN")
+            baseline_id = self._latest_batch_id(connection)
+            rows = []
+            for item in payload.items:
+                material = connection.execute("SELECT code, name FROM procurement_materials WHERE id=? AND archived_at IS NULL", (item.material_id,)).fetchone()
+                if material is None:
+                    raise LookupError("原料不存在")
+                reference = self._reference_for_date(connection, payload.effective_date.isoformat(), item.material_id)
+                official = connection.execute("SELECT 1 FROM procurement_price_batch_items WHERE batch_id=? AND material_id=?", (baseline_id, item.material_id)).fetchone()
+                rows.append({"material_id": item.material_id, "code": material[0], "name": material[1], "reference_price": reference, "comparison_basis": "published" if official else "previous_inquiry", "price": _decimal_text(item.price), "change": _change(item.price, reference), "high_risk": _has_price_spike(item.price, _decimal(reference))})
+            return {"baseline_id": baseline_id, "rows": rows}
+
+    def _confirm_saved_risks(self, connection: sqlite3.Connection, update_id: str, changed_ids: set[str], confirmation: PriceConfirmation, reason: str, actor_user_id: str) -> None:
+        if not 4 <= len(reason.strip()) <= 200:
+            raise ValueError("确认原因须为 4–200 字")
+        if confirmation.baseline_id != self._latest_batch_id(connection) or set(confirmation.references) != changed_ids:
+            raise RuntimeError("价格核对已过期，请重新检查价格变化后保存")
+        for material_id in changed_ids:
+            if _decimal(self._reference_price(connection, update_id, material_id)) != confirmation.references[material_id]:
+                raise RuntimeError("参考价格已变化，请重新检查价格变化后保存")
+        now = datetime.now(UTC).isoformat()
+        for material_id in changed_ids:
+            changed = connection.execute("""UPDATE procurement_issues SET status='reviewed', reviewed_by=?, reviewed_at=?, review_reason=?
+                WHERE update_id=? AND material_id=? AND kind='price_spike' AND status='open'""", (actor_user_id, now, reason.strip(), update_id, material_id)).rowcount
+            if changed:
+                self._event(connection, update_id, "risk_reviewed", actor_user_id, f"{material_id}：{reason.strip()}")
 
     def set_archive(self, kind: str, item_id: str, archived: bool, actor_user_id: str) -> bool:
         table = "procurement_imports" if kind == "imports" else "procurement_materials"
@@ -1153,7 +1421,7 @@ class ProcurementStore:
         own_connection = connection is None
         connection = connection or sqlite3.connect(self.path)
         try:
-            where = ["replacements.id IS NULL"]
+            where = ["""NOT EXISTS (SELECT 1 FROM procurement_price_adjustments a JOIN procurement_price_history h ON h.id=a.replacement_history_id JOIN procurement_imports i ON i.id=h.import_id JOIN procurement_updates u ON u.id=i.update_id WHERE a.target_history_id=history.id AND u.status!='cancelled' AND i.archived_at IS NULL)""", "NOT EXISTS (SELECT 1 FROM procurement_updates u WHERE u.id=imports.update_id AND u.status='cancelled')"]
             params: list[Any] = []
             if not include_archived:
                 where += ["materials.archived_at IS NULL", "imports.archived_at IS NULL"]
@@ -1169,7 +1437,6 @@ class ProcurementStore:
                     JOIN procurement_materials AS materials ON materials.id = history.material_id
                     JOIN procurement_imports AS imports ON imports.id = history.import_id
                     LEFT JOIN identity_users AS users ON users.id = imports.created_by
-                    LEFT JOIN procurement_price_adjustments AS replacements ON replacements.target_history_id = history.id
                     WHERE {' AND '.join(where)}
                     ORDER BY imports.effective_date, materials.code, imports.created_at""",
                 params,
@@ -1177,9 +1444,11 @@ class ProcurementStore:
         finally:
             if own_connection:
                 connection.close()
+        # Date summaries use the latest non-cancelled save; individual operations remain in saved_events.
+        latest_by_period = {(row[1], row[6]): row for row in rows}
         return [
             {"id": str(row[0]), "material_id": str(row[1]), "material_code": str(row[2]), "material_name": str(row[3]), "unit": str(row[4]), "source_name": str(row[5]), "effective_date": str(row[6]), "created_at": str(row[7]), "created_by_name": str(row[8]), "latest_price": row[9], "inventory_price": row[10], "in_transit_price": row[11]}
-            for row in rows
+            for row in latest_by_period.values()
         ]
 
     def _refresh_material_snapshot(self, connection: sqlite3.Connection, material_id: str) -> None:
@@ -1187,10 +1456,11 @@ class ProcurementStore:
         rows.sort(key=lambda item: (item["effective_date"], item["created_at"]))
         latest = rows[-1] if rows else None
         previous = rows[-2] if len(rows) > 1 else None
+        baseline = connection.execute("SELECT latest_price FROM procurement_price_batch_items WHERE batch_id=? AND material_id=?", (self._latest_batch_id(connection), material_id)).fetchone()
         connection.execute(
             """UPDATE procurement_materials SET latest_price = ?, inventory_price = ?, in_transit_price = ?,
                previous_latest_price = ?, last_import_id = ?, updated_at = ? WHERE id = ?""",
-            (latest["latest_price"] if latest else None, latest["inventory_price"] if latest else None, latest["in_transit_price"] if latest else None, previous["latest_price"] if previous else None, self._history_import_id(connection, latest["id"]) if latest else None, datetime.now(UTC).isoformat(), material_id),
+            (latest["latest_price"] if latest else baseline[0] if baseline else None, latest["inventory_price"] if latest else None, latest["in_transit_price"] if latest else None, previous["latest_price"] if previous else None, self._history_import_id(connection, latest["id"]) if latest else None, datetime.now(UTC).isoformat(), material_id),
         )
 
     @staticmethod
@@ -1225,10 +1495,12 @@ class ProcurementStore:
                WHERE i.update_id = ? AND i.archived_at IS NULL AND m.archived_at IS NULL AND a.id IS NULL
                ORDER BY i.created_at, i.rowid, h.rowid""", (update_id,),
         ).fetchall()
-        for row in history + self._frozen_snapshot(connection, update_id):
+        own_rows = history + self._frozen_snapshot(connection, update_id)
+        involved = {row[0] for row in own_rows}
+        for row in own_rows:
             if row[0] in rows:
                 rows[row[0]] = (*rows[row[0]][:4], *row[4:])
-        return sorted(rows.values(), key=lambda row: row[1])
+        return sorted((row for row in rows.values() if row[4] is not None or row[0] in involved), key=lambda row: row[1])
 
     @staticmethod
     def _save_candidate(connection: sqlite3.Connection, update_id: str, material_id: str, history_id: str | None = None) -> None:
@@ -1310,6 +1582,7 @@ class ProcurementStore:
 
     def _freeze_update(self, connection: sqlite3.Connection, update_id: str) -> list[tuple[Any, ...]]:
         rows = self._candidate_snapshot(connection, update_id)
+        collaboration.freeze_sources(connection, update_id, update_id, self._latest_batch_id(connection))
         connection.execute("DELETE FROM procurement_update_items WHERE update_id = ?", (update_id,))
         connection.executemany(
             """INSERT INTO procurement_update_items (
@@ -1362,6 +1635,8 @@ class ProcurementStore:
                 for row in rows
             ],
         )
+        previous_id = connection.execute("SELECT id FROM procurement_price_batches WHERE version<? ORDER BY version DESC LIMIT 1", (version,)).fetchone()
+        collaboration.freeze_sources(connection, batch_id, update_id, previous_id[0] if previous_id else None)
         connection.execute(
             """UPDATE procurement_updates SET status = 'published', published_batch_id = ?,
                updated_at = ? WHERE id = ?""",
@@ -1393,11 +1668,17 @@ class ProcurementStore:
         actor_user_id: str,
         mode: str,
         activate_at: datetime | None = None,
+        revision: tuple | None = None,
     ) -> dict[str, Any]:
         now_dt = datetime.now(UTC)
         now = now_dt.isoformat()
         with sqlite3.connect(self.path) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            collaboration.require_current(self.path, actor_user_id, "can_activate")
+            if revision is not None:
+                row = connection.execute("SELECT updated_at FROM procurement_updates WHERE id=?", (update_id,)).fetchone()
+                if not row or (row[0], self._latest_batch_id(connection)) != revision:
+                    raise RuntimeError("启用概况已变化，请刷新核对后重新确认")
             update = connection.execute(
                 "SELECT status, submitted_by FROM procurement_updates WHERE id = ?",
                 (update_id,),
@@ -1456,13 +1737,14 @@ class ProcurementStore:
             ).fetchall()
             for row in rows:
                 update_id = str(row[0])
-                if row[1] != self._latest_batch_id(connection):
+                approver = connection.execute("SELECT actor_user_id FROM procurement_update_events WHERE update_id=? AND event='scheduled' ORDER BY created_at DESC,rowid DESC LIMIT 1", (update_id,)).fetchone()
+                if row[1] != self._latest_batch_id(connection) or not approver or not collaboration.can_activate(self.path, str(approver[0])):
                     connection.execute(
                         "UPDATE procurement_updates SET status = 'revalidation_required', updated_at = ? WHERE id = ? AND status = 'scheduled'",
                         (now_dt.isoformat(), update_id),
                     )
                     self._refresh_revalidation_issues(connection, update_id, now_dt.isoformat())
-                    self._event(connection, update_id, "revalidation_required", None, "正式基线已更新")
+                    self._event(connection, update_id, "revalidation_required", None, "正式基线或启用授权已变化")
                 else:
                     approver = connection.execute("SELECT actor_user_id FROM procurement_update_events WHERE update_id=? AND event='scheduled' ORDER BY created_at DESC, rowid DESC LIMIT 1", (update_id,)).fetchone()
                     self._activate_update(connection, update_id, str(approver[0]) if approver else "system-scheduler", now_dt.isoformat())
@@ -1475,6 +1757,7 @@ class ProcurementStore:
         copied_id: str | None = None
         with sqlite3.connect(self.path) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            collaboration.require_current(self.path, actor_user_id, "can_activate")
             update = connection.execute(
                 "SELECT price_date, source_name FROM procurement_updates WHERE id = ? AND status IN ('scheduled', 'revalidation_required')",
                 (update_id,),
@@ -1493,6 +1776,8 @@ class ProcurementStore:
                 (update_id,),
             )
             self._event(connection, update_id, "schedule_cancelled", actor_user_id, reason.strip())
+            for (material_id,) in connection.execute("SELECT material_id FROM procurement_update_items WHERE update_id=?", (update_id,)).fetchall():
+                self._refresh_material_snapshot(connection, material_id)
             if copy_to_draft:
                 copied_id = str(uuid4())
                 connection.execute(
@@ -1506,11 +1791,34 @@ class ProcurementStore:
                        latest_price, inventory_price, in_transit_price, recommended_price
                        FROM procurement_update_items WHERE update_id=?""", (copied_id, update_id),
                 )
+                collaboration.freeze_sources(connection, copied_id, update_id, self._latest_batch_id(connection))
                 self._refresh_update_issues(connection, copied_id, now)
-                self._event(connection, copied_id, "copied_from_schedule", actor_user_id, update_id)
+                event_id = self._event(connection, copied_id, "copied_from_schedule", actor_user_id, f"从排期 {update_id} 复制：{reason}")
+                changes = connection.execute("""SELECT c.material_id,b.latest_price,c.after_price,c.price_date FROM procurement_saved_changes c
+                    LEFT JOIN procurement_price_batch_items b ON b.material_id=c.material_id AND b.batch_id=?
+                    WHERE c.update_id=? AND c.rowid=(SELECT MAX(s.rowid) FROM procurement_saved_changes s WHERE s.update_id=c.update_id AND s.material_id=c.material_id)""", (self._latest_batch_id(connection),update_id)).fetchall()
+                for material_id,before,after,price_date in changes:
+                    collaboration.record_changes(connection,event_id,copied_id,actor_user_id,price_date,[(material_id,before,after)])
         result = self.get_update(update_id) or {"id": update_id, "status": "cancelled"}
         result["copied_update"] = self.get_update(copied_id) if copied_id else None
         return result
+
+    def batch_comparison(self, batch_id: str) -> dict[str, Any]:
+        with sqlite3.connect(self.path) as connection:
+            previous = connection.execute("SELECT id, version FROM procurement_price_batches WHERE version < (SELECT version FROM procurement_price_batches WHERE id=?) ORDER BY version DESC LIMIT 1", (batch_id,)).fetchone()
+            old = dict(connection.execute("SELECT material_id, latest_price FROM procurement_price_batch_items WHERE batch_id=?", (previous[0] if previous else None,)).fetchall())
+            current = connection.execute("SELECT material_id, latest_price FROM procurement_price_batch_items WHERE batch_id=?", (batch_id,)).fetchall()
+        current_sources = collaboration.snapshot_sources(self.path, batch_id)
+        old_sources = collaboration.snapshot_sources(self.path, previous[0] if previous else None)
+        counts = dict(up=0, down=0, unchanged=0, first=0, missing=0, incomparable=0)
+        items = {}
+        for material_id, value in current:
+            before = old.get(material_id)
+            unusual = current_sources.get(material_id, {}).get('price_kind') in ('range','invalid') or old_sources.get(material_id, {}).get('price_kind') in ('range','invalid')
+            kind = 'incomparable' if unusual else 'missing' if value is None else 'first' if before is None else 'up' if Decimal(value) > Decimal(before) else 'down' if Decimal(value) < Decimal(before) else 'unchanged'
+            counts[kind] += 1
+            items[material_id] = {"previous": before, "previous_raw": old_sources.get(material_id, {}).get("raw_price"), "change": None if unusual else _change(value, before), "kind": kind}
+        return {"previous_version": previous[1] if previous else None, **counts, "items": items}
 
     def get_batch(self, batch_id: str) -> dict[str, Any] | None:
         with sqlite3.connect(self.path) as connection:
@@ -1550,6 +1858,10 @@ class ProcurementStore:
             "source_name": batch[6],
             "submitted_by_name": batch[7],
             "published_by_name": batch[8],
+            "changes": collaboration.saved_events(self.path, update_id=self._batch_update_id(batch_id)) if self._batch_update_id(batch_id) else [],
+            "provenance": collaboration.provenance(self.path, batch_id),
+            "snapshot_sources": collaboration.snapshot_sources(self.path, batch_id),
+            "comparison": self.batch_comparison(batch_id),
             "activation_mode": "scheduled" if scheduled_activation else "immediate",
             "status": str(batch[9]),
             "items": [
@@ -1585,7 +1897,7 @@ class ProcurementStore:
     @staticmethod
     def _material_for_code(connection: sqlite3.Connection, code: str) -> tuple[Any, ...] | None:
         return connection.execute(
-            """SELECT materials.id, materials.code, materials.latest_price
+            """SELECT materials.id, materials.code, materials.latest_price, materials.unit
                FROM procurement_materials AS materials
                LEFT JOIN procurement_material_aliases AS aliases ON aliases.material_id = materials.id
                WHERE materials.archived_at IS NULL AND (materials.code = ? OR aliases.alias_code = ?)
@@ -1652,28 +1964,48 @@ def create_procurement_router(
         if not authorization.can_write_field(PRICE_FIELD_ID, user["is_system_admin"], user["scope_levels"]):
             raise HTTPException(status_code=403, detail="Price field write permission required")
 
+    def require_activation(user, *, manage=False):
+        key = "can_manage_grants" if manage else "can_activate"
+        if not collaboration.capabilities(store.path, user)[key]:
+            raise HTTPException(status_code=403, detail="需要启用授权管理权限" if manage else "尚未获得价格启用授权")
+
+    def require_admin(user):
+        if not user["is_system_admin"]:
+            raise HTTPException(status_code=403, detail="仅管理员可维护原料目录与分组")
+
     def permit_archived(user: dict[str, Any], include_archived: bool) -> None:
         if include_archived and not user["is_system_admin"] and user["scope_levels"].get("procurement", 0) < 4:
             raise HTTPException(status_code=403, detail="Manager permission required")
 
     def visible_payload(payload: dict[str, Any], user: dict[str, Any], fields: dict[str, str] = PRICE_KEYS) -> dict[str, Any]:
-        filtered = authorization.filter_readable_fields(
-            payload,
-            fields,
-            user["is_system_admin"],
-            user["scope_levels"],
-        )
-        return {key: visible_payload(value, user, fields) if isinstance(value, dict) else
-                [visible_payload(item, user, fields) if isinstance(item, dict) else item for item in value] if isinstance(value, list) else value
-                for key, value in filtered.items()}
+        readable = authorization.filter_readable_fields(dict.fromkeys(fields, True), fields, user["is_system_admin"], user["scope_levels"])
+        denied = fields.keys() - readable.keys()
+        def clean(value):
+            if isinstance(value, dict):
+                return {key: clean(item) for key,item in value.items() if key not in denied}
+            if isinstance(value, list):
+                return [clean(item) for item in value]
+            return value
+        return clean(payload)
 
     history_fields = {key: "procurement.supplier_quote" for key in PRICE_KEYS}
 
     @router.get("/overview")
-    def overview(request: Request) -> dict[str, Any]:
+    def overview(request: Request, editor_id: str | None = None, editor_scope: str = "round") -> dict[str, Any]:
         user = actor(request, 2)
         result = store.overview()
-        result["materials"] = [visible_payload(material, user) for material in result["materials"]]
+        result["capabilities"] = collaboration.capabilities(store.path, user)
+        result["environment"] = settings.environment
+        result["departments"] = collaboration.departments(store.path, result)
+        result["editors"] = [{"id": person["id"], "name": person["display_name"]} for person in IdentityStore(store.path).list_users()
+                             if person["is_active"] and not person["is_system_admin"] and person["scope_levels"].get("procurement", 0) >= 3]
+        if editor_id:
+            if editor_scope not in {"round", "all"}:
+                raise HTTPException(status_code=422, detail="筛选范围无效")
+            key = "round_participants" if editor_scope == "round" else "participants"
+            selected_editor = next((person for person in result["editors"] if person["id"] == editor_id), None)
+            result["materials"] = [m for m in result["materials"] if any(p["id"] == editor_id for p in m[key]) or
+                                   (editor_scope == "all" and selected_editor and selected_editor["name"] in m["source_purchasers"])]
         level = 5 if user["is_system_admin"] else user["scope_levels"].get("procurement", 0)
         current = result.get("current_update")
         scheduled = result.get("scheduled_update")
@@ -1683,18 +2015,63 @@ def create_procurement_router(
                 if current["summary"]["error_count"]:
                     result["next_action"] = "补齐缺价并确认价格波动" if level >= 3 else "等待采购员处理价格"
                 elif current["summary"]["risk_count"]:
-                    result["next_action"] = "确认价格波动" if level >= 3 else "等待采购员确认价格波动"
+                    result["next_action"] = "确认价格波动" if result["capabilities"]["can_activate"] else "等待有启用权的人员确认价格波动"
                 else:
-                    result["next_action"] = "选择正式启用方式" if level >= 3 else "等待采购员启用价格"
+                    result["next_action"] = "选择正式启用方式" if result["capabilities"]["can_activate"] else "等待有启用权的人员启用价格"
             elif status_value == "submitted":
-                result["next_action"] = "选择正式启用方式" if level >= 3 else "等待采购员启用价格"
+                result["next_action"] = "选择正式启用方式" if result["capabilities"]["can_activate"] else "等待有启用权的人员启用价格"
             else:
-                result["next_action"] = "重新确认价格波动并选择启用方式" if level >= 3 else "等待采购员重新确认"
+                result["next_action"] = "重新确认价格波动并选择启用方式" if result["capabilities"]["can_activate"] else "等待有启用权的人员重新确认"
         elif scheduled:
             result["next_action"] = f"已安排 {scheduled['activate_at']} 自动启用"
         else:
             result["next_action"] = "录入下一轮采购价格" if level >= 3 else "当前没有待处理更新"
         return visible_payload(result, user)
+
+    @router.get("/activation-grants")
+    def list_activation_grants(request: Request):
+        user = actor(request, 3)
+        require_activation(user, manage=True)
+        return collaboration.grants(store.path)
+
+    @router.put("/activation-grants/{user_id}")
+    def set_activation_grant(user_id: str, payload: ActivationGrantRequest, request: Request):
+        user = actor(request, 3)
+        require_activation(user, manage=True)
+        try:
+            collaboration.set_grant(store.path, user, user_id, payload.enabled, payload.manager)
+        except PermissionError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return collaboration.grants(store.path)
+
+    @router.put("/departments/{department_id}/materials")
+    def set_department_materials(department_id: str, payload: DepartmentMaterialsRequest, request: Request):
+        user = actor(request, 3)
+        require_admin(user)
+        try:
+            collaboration.set_department(store.path, department_id, payload.material_ids, user["id"])
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return overview(request)
+
+    @router.post("/excel-preview")
+    async def excel_preview(request: Request, file: UploadFile = File(), sheet: str | None = Form(None), price_date: str | None = Form(None)):
+        user = actor(request, 3)
+        require_price_write(user)
+        from api.procurement_excel import MAX_FILE, inspect_workbook, selected_prices
+        try:
+            content = await file.read(MAX_FILE + 1)
+            if not file.filename or not file.filename.lower().endswith(".xlsx"):
+                raise ValueError("请选择xlsx文件")
+            result = inspect_workbook(content)
+            if sheet and price_date:
+                known = {m["code"]: m for m in store.overview()["materials"]}
+                result["selection"] = selected_prices(content, sheet, price_date, known)
+            return result
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @router.post("/import-preview")
     def preview(payload: DelimitedImportRequest, request: Request) -> dict[str, Any]:
@@ -1711,8 +2088,10 @@ def create_procurement_router(
     def confirm_import(payload: DelimitedImportRequest, request: Request) -> dict[str, Any]:
         user = actor(request, 3)
         require_price_write(user)
+        if payload.price_confirmation is not None:
+            require_activation(user)
         try:
-            result = store.confirm_import(payload.source_name, payload.effective_date, payload.content, user["id"])
+            result = store.confirm_import(payload.source_name, payload.effective_date, payload.content, user["id"], payload.price_confirmation, payload.reason, revision=(payload.update_id, payload.updated_at))
         except RuntimeError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except ValueError as error:
@@ -1728,9 +2107,12 @@ def create_procurement_router(
     @router.post("/issues/{issue_id}/review")
     def review_issue(issue_id: str, payload: UpdateReasonRequest, request: Request) -> dict[str, Any]:
         user = actor(request, 3)
+        require_activation(user)
         require_price_write(user)
+        if payload.updated_at is None:
+            raise HTTPException(status_code=409, detail="请刷新本轮概况后确认")
         try:
-            issue = store.review_issue(issue_id, user["id"], payload.reason)
+            issue = store.review_issue(issue_id, user["id"], payload.reason, updated_at=payload.updated_at)
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         if issue is None:
@@ -1747,10 +2129,7 @@ def create_procurement_router(
     def current_update(request: Request) -> dict[str, Any]:
         user = actor(request, 2)
         result = {"current": store.current_update(), "scheduled": store.scheduled_update()}
-        for key in ("current", "scheduled"):
-            if result[key]:
-                result[key]["items"] = [visible_payload(item, user) for item in result[key]["items"]]
-        return result
+        return visible_payload(result, user)
 
     @router.post("/updates/{update_id}/submit")
     def submit_update(update_id: str, request: Request) -> dict[str, Any]:
@@ -1778,6 +2157,7 @@ def create_procurement_router(
     @router.post("/updates/{update_id}/cancel")
     def cancel_update(update_id: str, payload: UpdateReasonRequest, request: Request) -> dict[str, Any]:
         user = actor(request, 3)
+        require_activation(user, manage=True)
         try:
             result = store.cancel_update(update_id, user["id"], payload.reason)
         except ValueError as error:
@@ -1788,9 +2168,12 @@ def create_procurement_router(
     @router.post("/updates/{update_id}/issues/{issue_id}/review")
     def review_update_issue(update_id: str, issue_id: str, payload: UpdateReasonRequest, request: Request) -> dict[str, Any]:
         user = actor(request, 3)
+        require_activation(user)
         require_price_write(user)
+        if payload.updated_at is None:
+            raise HTTPException(status_code=409, detail="请刷新本轮概况后确认")
         try:
-            issue = store.review_issue(issue_id, user["id"], payload.reason, update_id)
+            issue = store.review_issue(issue_id, user["id"], payload.reason, update_id, payload.updated_at)
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         if issue is None:
@@ -1801,9 +2184,12 @@ def create_procurement_router(
     @router.post("/updates/{update_id}/publish")
     def publish_update(update_id: str, payload: PublishUpdateRequest, request: Request) -> dict[str, Any]:
         user = actor(request, 3)
+        require_activation(user)
         require_price_write(user)
         try:
-            result = store.publish_update(update_id, user["id"], payload.mode, payload.activate_at)
+            result = store.publish_update(update_id, user["id"], payload.mode, payload.activate_at, revision=(payload.updated_at, payload.baseline_id))
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         authorization.audit(f"procurement.update.{payload.mode}", actor_user_id=user["id"], target_type="procurement_update", target_id=update_id)
@@ -1812,6 +2198,7 @@ def create_procurement_router(
     @router.post("/updates/{update_id}/cancel-schedule")
     def cancel_schedule(update_id: str, payload: ScheduleCancelRequest, request: Request) -> dict[str, Any]:
         user = actor(request, 3)
+        require_activation(user)
         if payload.copy_to_draft:
             require_price_write(user)
         try:
@@ -1866,12 +2253,14 @@ def create_procurement_router(
         if detail is None:
             raise HTTPException(status_code=404, detail="Material not found")
         result = visible_payload(detail, user)
+        result["changes"] = visible_payload({"changes": collaboration.saved_events(store.path, material_id=material_id)}, user)["changes"]
         result["history"] = [visible_payload(item, user, history_fields) for item in detail["history"]]
         return result
 
     @router.patch("/materials/{material_id}")
     def update_material(material_id: str, payload: MaterialIdentityRequest, request: Request) -> dict[str, Any]:
         user = actor(request, 3)
+        require_admin(user)
         current = store.material_detail(material_id)
         if current is None:
             raise HTTPException(status_code=404, detail="Material not found")
@@ -1891,12 +2280,29 @@ def create_procurement_router(
         filtered["history"] = [visible_payload(item, user, history_fields) for item in result["history"]]
         return filtered
 
+    @router.post("/materials", status_code=201)
+    def create_material(payload: MaterialCreateRequest, request: Request):
+        user = actor(request, 3)
+        require_admin(user)
+        if payload.price is not None:
+            require_price_write(user)
+        try:
+            return {"id": store.create_material(payload, user["id"])}
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
     @router.post("/materials/{material_id}/adjustments", status_code=status.HTTP_201_CREATED)
     def adjust_price(material_id: str, payload: PriceAdjustmentRequest, request: Request) -> dict[str, Any]:
         user = actor(request, 3)
         require_price_write(user)
+        if payload.updated_at is None:
+            raise HTTPException(status_code=409, detail="请刷新原料详情后再保存")
+        if payload.price_confirmation is not None:
+            require_activation(user)
         try:
-            result = store.adjust_price(material_id, payload.price, payload.effective_date, payload.reason, user["id"], payload.target_history_id)
+            result = store.adjust_price(material_id, payload.price, payload.effective_date, payload.reason, user["id"], payload.target_history_id, payload.price_confirmation, updated_at=payload.updated_at)
         except LookupError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except RuntimeError as error:
@@ -1905,6 +2311,32 @@ def create_procurement_router(
             raise HTTPException(status_code=422, detail=str(error)) from error
         authorization.audit("procurement.price.adjusted", actor_user_id=user["id"], target_type="procurement_material", target_id=material_id)
         return result
+
+    @router.post("/prices/preview-adjustments")
+    def preview_prices(payload: PricePreviewRequest, request: Request) -> dict[str, Any]:
+        user = actor(request, 3)
+        require_price_write(user)
+        try:
+            return store.preview_prices(payload)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @router.post("/prices/bulk-adjustments")
+    def bulk_adjust_prices(payload: BulkPriceAdjustmentRequest, request: Request) -> dict[str, Any]:
+        user = actor(request, 3)
+        require_price_write(user)
+        if payload.price_confirmation is not None:
+            require_activation(user)
+        try:
+            update_id = store.bulk_adjust_prices(payload, user["id"])
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        authorization.audit("procurement.prices.adjusted", actor_user_id=user["id"], target_type="procurement_update", target_id=update_id)
+        return overview(request)
 
     @router.get("/preferences")
     def preferences(request: Request) -> dict[str, Any]:
@@ -1921,6 +2353,7 @@ def create_procurement_router(
 
     def archive_item(kind: str, item_id: str, archived: bool, request: Request) -> dict[str, bool]:
         user = actor(request, 4)
+        require_admin(user)
         try:
             found = store.set_archive(kind, item_id, archived, user["id"])
         except ValueError as error:
@@ -1963,19 +2396,9 @@ def create_procurement_router(
 
     @router.post("/batches/publish", status_code=status.HTTP_201_CREATED)
     def publish_batch(request: Request) -> dict[str, Any]:
+        require_activation(actor(request, 3))
+        raise HTTPException(status_code=409, detail="请使用带版本核对的启用确认入口")
         user = actor(request, 4)
-        require_price_write(user)
-        try:
-            batch = store.publish_batch(user["id"])
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        authorization.audit(
-            "procurement.batch.published",
-            actor_user_id=user["id"],
-            target_type="procurement_price_batch",
-            target_id=batch["id"],
-        )
-        return batch
 
     @router.get("/batches/{batch_id}")
     def get_batch(batch_id: str, request: Request) -> dict[str, Any]:
@@ -1983,8 +2406,7 @@ def create_procurement_router(
         batch = store.get_batch(batch_id)
         if batch is None:
             raise HTTPException(status_code=404, detail="Price batch not found")
-        batch["items"] = [visible_payload(item, user) for item in batch["items"]]
-        return batch
+        return visible_payload(batch, user)
 
     return router
 
@@ -2022,16 +2444,23 @@ def _parse_delimited(content: str) -> list[dict[str, Any]]:
         code = str(raw.get(columns["code"] or "", "")).strip()
         name = str(raw.get(columns["name"] or "", "")).strip()
         unit = str(raw.get(columns["unit"] or "", "")).strip()
-        if not code or not name or not unit:
-            raise ValueError(f"第 {index} 行缺少编号、名称或单位")
+        validation_issues = [] if code and name and unit else ["invalid_identity"]
+        prices = {}
+        for key in ("latest_price", "inventory_price", "in_transit_price", "previous_latest_price"):
+            try:
+                prices[key] = _price_from_row(raw, columns[key], index)
+            except ValueError:
+                prices[key] = None
+                if "invalid_price" not in validation_issues:
+                    validation_issues.append("invalid_price")
         rows.append({
             "code": code,
             "name": name,
             "unit": unit,
-            "latest_price": _price_from_row(raw, columns["latest_price"], index),
-            "inventory_price": _price_from_row(raw, columns["inventory_price"], index),
-            "in_transit_price": _price_from_row(raw, columns["in_transit_price"], index),
-            "previous_latest_price": _price_from_row(raw, columns["previous_latest_price"], index),
+            **prices,
+            "validation_issues": validation_issues,
+            "source_row": index,
+            "raw_price": str(raw.get(columns["latest_price"] or "") or ""),
         })
     if not rows:
         raise ValueError("导入内容没有有效数据行")
@@ -2046,6 +2475,7 @@ def _price_from_row(raw: dict[str, str | None], column: str | None, line: int) -
         return None
     try:
         number = Decimal(value.replace(",", ""))
+        _decimal_text(number)
     except InvalidOperation as error:
         raise ValueError(f"第 {line} 行的 {column} 不是有效数字") from error
     if not number.is_finite() or number < 0:
@@ -2073,7 +2503,11 @@ def _decimal_text(value: Any) -> str | None:
     number = _decimal(value)
     if number is None:
         return None
-    return format(number.normalize(), "f")
+    from api.procurement_excel import price_value
+    result, kind = price_value(number)
+    if kind != "number":
+        raise ValueError("价格需为非负单值，最多18位整数和8位小数")
+    return result
 
 
 def _has_price_spike(current: Decimal | None, previous: Decimal | None) -> bool:
@@ -2086,6 +2520,8 @@ def _has_price_spike(current: Decimal | None, previous: Decimal | None) -> bool:
 
 def _serialize_import_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
+        "source_row": row.get("source_row"),
+        "raw_price": row.get("raw_price"),
         "code": row["code"],
         "name": row["name"],
         "unit": row["unit"],

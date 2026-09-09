@@ -4,6 +4,7 @@ import { createConversationSubmission, createProject, fetchConversations, fetchM
 import { ContextSidebar } from "./components/ContextSidebar";
 import { SettingsDialog, type UiFontSize } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
+import { ProfileDialog } from "./components/ProfileDialog";
 import { knowledgeItems, skills, workflows } from "./data";
 import { AutomationScreen } from "./screens/AutomationScreen";
 import { ConversationScreen } from "./screens/ConversationScreen";
@@ -15,6 +16,8 @@ import type { Conversation, ConversationMessage, ConversationView, CurrentUser, 
 type AppProps = {
   currentUser: CurrentUser;
   onLogout: () => Promise<void>;
+  onUserChanged: (user: CurrentUser) => void;
+  onPasswordChanged: (message: string) => void;
 };
 
 type SearchScope = "全部" | "会话" | "项目" | "知识" | "自动化" | "工作台" | "任务";
@@ -42,7 +45,7 @@ function loadUiFontSize(): UiFontSize {
   } catch { return 3; }
 }
 
-function App({ currentUser, onLogout }: AppProps) {
+function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppProps) {
   const [moduleStatuses, setModuleStatuses] = useState<ModuleStatus[]>([]);
   const [moduleRegistryState, setModuleRegistryState] = useState<"loading" | "ready" | "error">("loading");
   const enabledModules = useMemo(() => MODULE_IDS.reduce<ModuleVisibility>((visibility, id) => {
@@ -51,6 +54,7 @@ function App({ currentUser, onLogout }: AppProps) {
   }, { chat: false, knowledge: false, automation: false, workbench: false, tasks: false }), [moduleStatuses]);
   const [section, setSection] = useState<Section>("workbench");
   const [profileOpen, setProfileOpen] = useState(false);
+  const [personalProfileOpen, setPersonalProfileOpen] = useState(false);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
@@ -343,10 +347,10 @@ function App({ currentUser, onLogout }: AppProps) {
         environment={runtimeEnvironment}
         openedWorkbenchId={openedWorkbenchId}
         procurementPage={procurementPage}
-        onProcurementPageChange={setProcurementPage}
-        onSectionChange={(nextSection) => { setSection(nextSection); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
-        onNewConversation={() => { setSection("chat"); setConversationView("new"); setSelectedConversationId(null); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
-        onConversationOpen={(conversationId) => { setSection("chat"); setConversationView("existing"); setSelectedConversationId(conversationId); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
+        onProcurementPageChange={(next) => { if (allowProcurementLeave()) setProcurementPage(next); }}
+        onSectionChange={(nextSection) => { if (!allowProcurementLeave()) return; setSection(nextSection); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
+        onNewConversation={() => { if (!allowProcurementLeave()) return; setSection("chat"); setConversationView("new"); setSelectedConversationId(null); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
+        onConversationOpen={(conversationId) => { if (!allowProcurementLeave()) return; setSection("chat"); setConversationView("existing"); setSelectedConversationId(conversationId); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
         onProjectCreate={(title) => { void createProject(title).then((created) => { setProjects((current) => [...current, created]); setCurrentProjectId(created.id); }).catch(() => setWorkbenchDataState("error")); }}
         onSearchOpen={() => { setProfileOpen(false); setMobileOpen(false); setGlobalSearchOpen(true); }}
         profileOpen={profileOpen}
@@ -354,12 +358,13 @@ function App({ currentUser, onLogout }: AppProps) {
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
         onOpenSettings={() => { setProfileOpen(false); setSettingsOpen(true); }}
-        onLogout={onLogout}
+        onOpenProfile={() => { setProfileOpen(false); setPersonalProfileOpen(true); }}
+        onLogout={async () => { if (allowProcurementLeave()) await onLogout(); }}
       />
       {section === "chat" && enabledModules.chat && <ConversationScreen {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversationId) { const update = projectUpdatePromise.current.catch(() => undefined).then(async () => { const updated = await setConversationProject(selectedConversationId, projectId); setConversations((current) => current.map((conversation) => conversation.id === updated.id ? updated : conversation)); }); projectUpdatePromise.current = update; void update.catch(() => setWorkbenchDataState("error")); } else { setCurrentProjectId(projectId); } }} messages={messages} messagesState={messagesState} onSubmit={submitMessage} />}
       {section === "knowledge" && enabledModules.knowledge && <KnowledgeScreen {...screenChrome} scopeTab={knowledgeScope} onScopeTabChange={setKnowledgeScope} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
       {section === "automation" && enabledModules.automation && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
-      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} currentUser={currentUser} statuses={workbenchStatuses} dataState={workbenchRegistryState} selectedId={selectedWorkbenchId} onSelectedIdChange={(id) => { setSelectedWorkbenchId(id); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); }} openedWorkbenchId={openedWorkbenchId} onOpenedWorkbenchIdChange={setOpenedWorkbenchId} procurementPage={procurementPage} onProcurementPageChange={setProcurementPage} />}
+      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} currentUser={currentUser} statuses={workbenchStatuses} dataState={workbenchRegistryState} selectedId={selectedWorkbenchId} onSelectedIdChange={(id) => { if (!allowProcurementLeave()) return; setSelectedWorkbenchId(id); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); }} openedWorkbenchId={openedWorkbenchId} onOpenedWorkbenchIdChange={(next) => { if (allowProcurementLeave()) setOpenedWorkbenchId(next); }} procurementPage={procurementPage} onProcurementPageChange={setProcurementPage} />}
       {section === "tasks" && enabledModules.tasks && <TaskBoardScreen {...screenChrome} tasks={tasks} projects={projects} conversations={conversations} dataState={workbenchDataState} selectedTask={selectedTask} onSelectedTaskChange={(task) => setSelectedTaskId(task.id)} />}
       <ContextSidebar
         section={section}
@@ -387,6 +392,7 @@ function App({ currentUser, onLogout }: AppProps) {
         workbenchStatuses={workbenchStatuses}
         onClose={() => setGlobalSearchOpen(false)}
         onSelect={(result) => {
+          if (!allowProcurementLeave()) return;
           setProfileOpen(false);
           setMobileOpen(false);
           closeContext();
@@ -423,7 +429,8 @@ function App({ currentUser, onLogout }: AppProps) {
           }
         }}
       />
-      {settingsOpen && <SettingsDialog currentUser={currentUser} serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} uiFontSize={uiFontSize} onUiFontSizeChange={setUiFontSize} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsDialog currentUser={currentUser} onUserChanged={onUserChanged} serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} workbenchStatuses={workbenchStatuses} workbenchRegistryState={workbenchRegistryState} uiFontSize={uiFontSize} onUiFontSizeChange={setUiFontSize} onClose={() => setSettingsOpen(false)} />}
+      {personalProfileOpen && <ProfileDialog onClose={() => setPersonalProfileOpen(false)} onUserChanged={onUserChanged} onPasswordChanged={onPasswordChanged} beforePasswordChange={allowProcurementLeave} />}
     </div>
   );
 }
@@ -558,3 +565,8 @@ function SearchResultIcon({ kind }: { kind: SearchResultKind }) {
 }
 
 export default App;
+
+
+function allowProcurementLeave() {
+  return window.dispatchEvent(new Event("procurement-before-leave", { cancelable: true }));
+}

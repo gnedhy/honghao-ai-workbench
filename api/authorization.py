@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -215,8 +216,9 @@ class AuthorizationStore:
         actor_user_id: str | None,
         target_type: str,
         target_id: str,
+        connection: sqlite3.Connection | None = None,
     ) -> None:
-        with sqlite3.connect(self.path) as connection:
+        with (nullcontext(connection) if connection is not None else sqlite3.connect(self.path)) as connection:
             connection.execute(
                 "INSERT INTO authorization_audit_events (id, actor_user_id, action, target_type, target_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (str(uuid4()), actor_user_id, action, target_type, target_id, datetime.now(UTC).isoformat()),

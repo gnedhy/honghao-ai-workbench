@@ -24,6 +24,10 @@ export type CurrentUser = {
   scope_levels: Partial<Record<AccessScope, AccessLevel>>;
 };
 
+export type PersonalProfile = CurrentUser & {
+  procurement_capabilities: { can_edit: boolean; can_activate: boolean; can_manage_grants: boolean };
+};
+
 export type AdminModuleSetting = {
   id: Section;
   current_mode: ModuleMode;
@@ -70,14 +74,15 @@ export type AuditEvent = {
 
 export type WorkbenchId = "management" | "procurement" | "research" | "sales";
 
-export type ProcurementPage = "dashboard" | "updates" | "materials" | "history" | "batches";
+export type ProcurementPage = "dashboard" | "updates" | "materials" | "distribution" | "history" | "batches";
 
 export const PROCUREMENT_PAGE_LABELS: Record<ProcurementPage, string> = {
   dashboard: "采购看板",
-  updates: "本轮更新",
+  updates: "原料台账",
   materials: "原料台账",
-  history: "询价历史",
-  batches: "价格批次",
+  distribution: "数据分流",
+  history: "价格历史",
+  batches: "价格历史",
 };
 
 export type WorkbenchMode = "prototype" | "active" | "off";
@@ -87,7 +92,14 @@ export type WorkbenchStatus = {
   mode: WorkbenchMode;
 };
 
+export type PriceModifier = { kind: "system" | "source" | "unknown"; name: string; id: string | null };
+
 export type ProcurementMaterial = {
+  price_modifier?: PriceModifier | null;
+  source_purchasers?: string[];
+  participants?: Array<{ id: string; name: string }>;
+  round_participants?: Array<{ id: string; name: string }>;
+  reported?: boolean;
   id: string;
   code: string;
   name: string;
@@ -121,6 +133,9 @@ export type ProcurementIssue = {
 };
 
 export type ProcurementBatch = {
+  provenance?: { origin: string; filename: string; imported_at: string; imported_by: string; reported_count: number };
+  published_by_name?: string | null;
+  comparison?: { previous_version: number | null; up: number; down: number; unchanged: number; first: number; missing: number; incomparable?: number; items: Record<string, { previous: string | null; previous_raw?: string | null; change: number | null; kind: string }> };
   id: string;
   version: number;
   published_at: string;
@@ -132,6 +147,8 @@ export type ProcurementBatch = {
 };
 
 export type ProcurementBatchDetail = ProcurementBatch & {
+  snapshot_sources?: Record<string, { price_date: string; raw_price: string | null; price_kind: string; sheet: string | null; cell: string | null }>;
+  changes?: Array<{ id: string; status?: string; event: string; reason: string | null; created_at: string; actor: string; items?: Array<{ id: string; code: string; name: string; unit: string; before: string | null; after: string | null; before_recorded: boolean; before_basis?: "saved" | "published" | "unknown"; change: number | null }> }>;
   activation_mode?: "immediate" | "scheduled";
   submitted_by_name?: string | null;
   published_by_name?: string | null;
@@ -150,6 +167,7 @@ export type ProcurementBatchDetail = ProcurementBatch & {
 export type ProcurementUpdateStatus = "draft" | "returned" | "submitted" | "scheduled" | "revalidation_required" | "published" | "cancelled";
 
 export type ProcurementUpdate = {
+  changes?: ProcurementBatchDetail["changes"];
   id: string;
   price_date: string;
   source_name: string;
@@ -163,8 +181,9 @@ export type ProcurementUpdate = {
   submitted_by_name: string | null;
   summary: { coverage_count: number; changed_count: number; unchanged_count: number; error_count: number; risk_count: number };
   items: Array<{ material_id: string; code: string; name: string; unit: string; published_price: string | null; draft_price: string | null; change: number | null; comparison_basis: "published" | "previous_inquiry" | "none" }>;
+  input_items: ProcurementUpdate["items"];
   issues: ProcurementIssue[];
-  events: Array<{ event: string; actor_name: string; reason: string | null; created_at: string }>;
+  events: Array<{ id: string; event: string; actor_name: string; reason: string | null; created_at: string }>;
 };
 
 export type ProcurementPriceHistory = {
@@ -215,7 +234,10 @@ export type ProcurementHistoryBatchDetail = ProcurementHistoryBatch & {
 };
 
 export type ProcurementMaterialDetail = {
-  material: { id: string; code: string; name: string; unit: string; archived: boolean };
+  official_history: Array<{id: string; version: number; version_date: string; latest_price?: string | null; price_date: string | null; raw_price?: string | null; price_kind: string; sheet: string | null; cell: string | null; modifier?: PriceModifier | null}>;
+  sources: Array<{sheet: string; row: number; purchaser: string | null; filename: string}>;
+  changes?: ProcurementBatchDetail["changes"];
+  material: { id: string; code: string; name: string; unit: string; archived: boolean; updated_at: string };
   latest_price?: string | null;
   previous_price?: string | null;
   change?: number | null;
@@ -233,6 +255,10 @@ export type ProcurementPreferences = {
 };
 
 export type ProcurementOverview = {
+  editors?: Array<{ id: string; name: string }>;
+  environment?: string;
+  capabilities?: { can_edit: boolean; can_activate: boolean; can_manage_grants: boolean; can_cancel_round: boolean; can_manage_catalog: boolean };
+  departments?: Array<{ id: string; name: string; material_ids: string[]; priced: number }>;
   metrics: {
     material_count: number;
     open_issue_count: number;
@@ -262,6 +288,7 @@ export type ProcurementOverview = {
 };
 
 export type ProcurementImportPreview = {
+  baseline_id: string | null;
   received_count: number;
   importable_count: number;
   skipped_count: number;
@@ -273,6 +300,8 @@ export type ProcurementImportPreview = {
     inventory_price: string | null;
     in_transit_price: string | null;
     suggested_price: string | null;
+    reference_price: string | null;
+    change: number | null;
     issues: string[];
     importable: boolean;
   }>;

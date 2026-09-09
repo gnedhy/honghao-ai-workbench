@@ -8,6 +8,7 @@ import type { CurrentUser, RuntimeEnvironment } from "./types";
 
 function Root() {
   const [user, setUser] = useState<CurrentUser | null>();
+  const [loginNotice, setLoginNotice] = useState("");
   const [environment, setEnvironment] = useState<RuntimeEnvironment | null>();
 
   useEffect(() => {
@@ -19,16 +20,17 @@ function Root() {
 
   if (user === undefined || environment === undefined) return <main className="auth-loading" aria-label="正在验证登录状态"><span /></main>;
   if (user === null) {
-    return <LoginScreen environment={environment} onLogin={async (username, password) => {
+    return <LoginScreen environment={environment} notice={loginNotice} onLogin={async (username, password) => {
       try {
         setUser(await login(username, password));
+        setLoginNotice("");
         return true;
       } catch {
         return false;
       }
     }} />;
   }
-  return <App currentUser={user} onLogout={async () => { try { await logout(); } finally { setUser(null); } }} />;
+  return <App currentUser={user} onUserChanged={setUser} onPasswordChanged={(message) => { setLoginNotice(message); setUser(null); }} onLogout={async () => { try { await logout(); } finally { setUser(null); } }} />;
 }
 
 createRoot(document.getElementById("root")!).render(

@@ -10,7 +10,7 @@ from tests.test_procurement_workbench import procurement_settings
 
 
 def import_prices(client, day, rows):
-    response = client.post('/api/workbenches/procurement/imports', json={
+    response = procurement_post(client,'/api/workbenches/procurement/imports', json={
         'source_name': '隔离回归', 'effective_date': day,
         'content': '编号,名称,单位,最新价\n' + ''.join(f'{code},{code},kg,{value}\n' for code, value in rows),
     })
@@ -19,13 +19,13 @@ def import_prices(client, day, rows):
 
 
 def publish(client, update, **kwargs):
-    return client.post(f"/api/workbenches/procurement/updates/{update['id']}/publish", json={'mode': 'immediate', **kwargs})
+    return procurement_post(client,f"/api/workbenches/procurement/updates/{update['id']}/publish", json={'mode': 'immediate', **kwargs})
 
 
 def confirm_risks(client, update):
     for issue in update['issues']:
         if issue['kind'] == 'price_spike' and issue['status'] == 'open':
-            assert client.post(f"/api/workbenches/procurement/updates/{update['id']}/issues/{issue['id']}/review", json={'reason': '供应商报价已核对'}).status_code == 200
+            assert procurement_post(client,f"/api/workbenches/procurement/updates/{update['id']}/issues/{issue['id']}/review", json={'reason': '供应商报价已核对'}).status_code == 200
 
 
 def test_scheduled_prices_are_not_used_by_another_immediate_update(tmp_path: Path):
@@ -44,8 +44,8 @@ def test_scheduled_prices_are_not_used_by_another_immediate_update(tmp_path: Pat
 def test_cancelled_missing_price_does_not_contaminate_next_baseline(tmp_path: Path):
     with authenticated_client(procurement_settings(tmp_path)) as client:
         assert publish(client, import_prices(client, '2026-08-01', [('A', 10), ('B', 10)])).status_code == 200
-        cancelled = import_prices(client, '2026-08-02', [('A', '')])
-        assert client.post(f"/api/workbenches/procurement/updates/{cancelled['id']}/cancel", json={'reason': '本轮报价作废'}).status_code == 200
+        cancelled = import_prices(client, '2026-08-02', [('A', 12)])
+        assert procurement_post(client,f"/api/workbenches/procurement/updates/{cancelled['id']}/cancel", json={'reason': '本轮报价作废'}).status_code == 200
         current = import_prices(client, '2026-08-03', [('B', 11)])
         result = publish(client, current)
         assert result.status_code == 200, result.text
@@ -73,7 +73,7 @@ def test_copy_of_invalidated_schedule_requires_fresh_confirmation(tmp_path: Path
         current = import_prices(client, '2026-08-03', [('A', 10)])
         confirm_risks(client, current)
         assert publish(client, current).status_code == 200
-        copied = client.post(f"/api/workbenches/procurement/updates/{scheduled['id']}/cancel-schedule", json={'reason': '重新检查原排期', 'copy_to_draft': True}).json()['copied_update']
+        copied = procurement_post(client,f"/api/workbenches/procurement/updates/{scheduled['id']}/cancel-schedule", json={'reason': '重新检查原排期', 'copy_to_draft': True}).json()['copied_update']
         assert copied['summary']['risk_count'] == 1
         assert publish(client, copied).status_code == 409
 
@@ -88,13 +88,40 @@ def test_restricted_reader_cannot_read_prices_in_nested_responses(tmp_path: Path
             'read_scope_ids': ['procurement'], 'write_scope_ids': ['procurement'],
         }).status_code == 200
         IdentityStore(settings.database_path).create_user(username='restricted', display_name='查看账号', department='采购', password='Isolated-Test-Password-2026', scope_levels={'procurement': 2})
-        client.post('/api/logout')
-        assert client.post('/api/login', json={'username': 'restricted', 'password': 'Isolated-Test-Password-2026'}).status_code == 200
+        procurement_post(client,'/api/logout')
+        assert procurement_post(client,'/api/login', json={'username': 'restricted', 'password': 'Isolated-Test-Password-2026'}).status_code == 200
         overview = client.get('/api/workbenches/procurement/overview').json()
         current = client.get('/api/workbenches/procurement/updates/current').json()['current']
         forbidden = {'latest_price', 'published_price', 'draft_price', 'draft_change', 'change'}
-        for item in overview['materials'] + overview['current_update']['items'] + current['items']:
+        for item in overview['materials'] + overview['current_update']['items'] + current['items'] + overview['current_update']['input_items'] + current['input_items']:
             assert not forbidden.intersection(item)
+
+
+def test_input_items_include_unchanged_zero_and_missing_but_not_untouched_materials(tmp_path: Path):
+    settings = procurement_settings(tmp_path)
+    with authenticated_client(settings) as client:
+        assert publish(client, import_prices(client, '2026-08-01', [(code, 10) for code in ['A', 'B', 'C', 'D', 'E']])).status_code == 200
+        current = import_prices(client, '2026-08-02', [('A', 10), ('B', ''), ('C', 13), ('D', 0)])
+        assert {item['code']: item['draft_price'] for item in current['input_items']} == {'A': '10', 'C': '13', 'D': '0'}
+        assert {item['code'] for item in current['items']} == {'C', 'D'}
+        with sqlite3.connect(settings.database_path) as connection:
+            connection.execute('DELETE FROM procurement_update_items WHERE update_id=?', (current['id'],))
+        recovered = client.get('/api/workbenches/procurement/updates/current').json()['current']
+        assert recovered['input_items'] == current['input_items']
+
+
+def test_input_items_keep_first_missing_price_and_isolate_scheduled_prices(tmp_path: Path):
+    with authenticated_client(procurement_settings(tmp_path)) as client:
+        blank = procurement_post(client, '/api/workbenches/procurement/imports', json={'source_name': '空白不录价', 'effective_date': '2026-08-01', 'content': '编号,名称,单位,最新价\nA,A,kg,\n'})
+        assert blank.status_code == 422
+        assert client.get('/api/workbenches/procurement/updates/current').json()['current'] is None
+        current = import_prices(client, '2026-08-01', [('A', 10), ('B', 10)])
+        assert publish(client, current).status_code == 200
+        scheduled = import_prices(client, '2026-08-02', [('B', 11)])
+        assert publish(client, scheduled, mode='scheduled', activate_at=(datetime.now(UTC) + timedelta(days=1)).isoformat()).status_code == 200
+        current = import_prices(client, '2026-08-03', [('A', 10)])
+        assert {item['code'] for item in current['input_items']} == {'A'}
+        assert current['input_items'][0]['draft_price'] == '10'
 
 
 def test_scheduled_baseline_keeps_approver_identity(tmp_path: Path):
@@ -124,9 +151,10 @@ def test_changed_candidate_invalidates_confirmation_but_unrelated_edit_does_not(
 def test_full_snapshot_validation_rejects_missing_price_without_issue(tmp_path: Path):
     settings = procurement_settings(tmp_path)
     with authenticated_client(settings) as client:
-        current = import_prices(client, '2026-08-01', [('A', '')])
+        current = import_prices(client, '2026-08-01', [('A', 10)])
         with sqlite3.connect(settings.database_path) as connection:
             connection.execute("DELETE FROM procurement_issues WHERE update_id=?", (current['id'],))
+            connection.execute("UPDATE procurement_update_items SET latest_price=NULL WHERE update_id=?", (current['id'],))
         assert publish(client, current).status_code == 409
         assert publish(client, current, mode='scheduled', activate_at=(datetime.now(UTC) + timedelta(days=1)).isoformat()).status_code == 409
         assert client.get('/api/workbenches/procurement/overview').json()['batches'] == []
@@ -166,10 +194,10 @@ def test_manual_correction_and_preview_use_official_risk_reference(tmp_path: Pat
     with authenticated_client(procurement_settings(tmp_path)) as client:
         assert publish(client, import_prices(client, '2026-08-01', [('A', 10)])).status_code == 200
         current = import_prices(client, '2026-08-02', [('A', 11)])
-        preview = client.post('/api/workbenches/procurement/import-preview', json={'source_name': '复核', 'effective_date': '2026-08-02', 'content': '编号,名称,单位,最新价\nA,A,kg,12\n'}).json()
+        preview = procurement_post(client,'/api/workbenches/procurement/import-preview', json={'source_name': '复核', 'effective_date': '2026-08-02', 'content': '编号,名称,单位,最新价\nA,A,kg,12\n'}).json()
         assert 'price_spike' in preview['rows'][0]['issues']
         material_id = current['items'][0]['material_id']
-        assert client.post(f'/api/workbenches/procurement/materials/{material_id}/adjustments', json={'price': '12', 'effective_date': '2026-08-02', 'reason': '修改供应商报价'}).status_code == 201
+        assert procurement_post(client,f'/api/workbenches/procurement/materials/{material_id}/adjustments', json={'price': '12', 'effective_date': '2026-08-02', 'reason': '修改供应商报价'}).status_code == 201
         current = client.get('/api/workbenches/procurement/updates/current').json()['current']
         assert current['summary']['risk_count'] == 1
         assert publish(client, current).status_code == 409
@@ -181,9 +209,9 @@ def test_active_import_cannot_be_archived(tmp_path: Path):
         current = import_prices(client, '2026-08-01', [('A', 10)])
         with sqlite3.connect(settings.database_path) as connection:
             import_id = connection.execute('SELECT id FROM procurement_imports WHERE update_id=?', (current['id'],)).fetchone()[0]
-        assert client.post(f'/api/workbenches/procurement/imports/{import_id}/archive').status_code == 409
-        assert client.post(f"/api/workbenches/procurement/updates/{current['id']}/cancel", json={'reason': '本轮报价取消'}).status_code == 200
-        assert client.post(f'/api/workbenches/procurement/imports/{import_id}/archive').status_code == 200
+        assert procurement_post(client,f'/api/workbenches/procurement/imports/{import_id}/archive').status_code == 409
+        assert procurement_post(client,f"/api/workbenches/procurement/updates/{current['id']}/cancel", json={'reason': '本轮报价取消'}).status_code == 200
+        assert procurement_post(client,f'/api/workbenches/procurement/imports/{import_id}/archive').status_code == 200
 
 
 def test_history_uses_its_own_field_policy(tmp_path: Path):
@@ -197,12 +225,12 @@ def test_history_uses_its_own_field_policy(tmp_path: Path):
                 'read_scope_ids': ['procurement'], 'write_scope_ids': ['procurement'],
             }).status_code == 200
         IdentityStore(settings.database_path).create_user(username='editor', display_name='采购', department='采购', password='Isolated-Test-Password-2026', scope_levels={'procurement': 3})
-        client.post('/api/logout')
-        assert client.post('/api/login', json={'username': 'editor', 'password': 'Isolated-Test-Password-2026'}).status_code == 200
+        procurement_post(client,'/api/logout')
+        assert procurement_post(client,'/api/login', json={'username': 'editor', 'password': 'Isolated-Test-Password-2026'}).status_code == 200
         detail = client.get(f'/api/workbenches/procurement/materials/{material_id}').json()
         assert 'latest_price' not in detail['material']
         assert detail['history'][0]['latest_price'] == '10'
-        edited = client.patch(f'/api/workbenches/procurement/materials/{material_id}', json={'code': 'A', 'name': '原料A'}).json()
-        assert 'latest_price' not in edited['material']
-        assert edited['history'][0]['latest_price'] == '10'
+        edited = client.patch(f'/api/workbenches/procurement/materials/{material_id}', json={'code': 'A', 'name': '原料A'})
+        assert edited.status_code == 403
         assert publish(client, current).status_code == 403
+from tests.procurement_helpers import procurement_post

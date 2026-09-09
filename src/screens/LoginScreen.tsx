@@ -5,10 +5,11 @@ import type { RuntimeEnvironment } from "../types";
 
 type LoginScreenProps = {
   environment: RuntimeEnvironment | null;
+  notice?: string;
   onLogin: (username: string, password: string) => Promise<boolean>;
 };
 
-export function LoginScreen({ environment, onLogin }: LoginScreenProps) {
+export function LoginScreen({ environment, notice, onLogin }: LoginScreenProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -32,6 +33,7 @@ export function LoginScreen({ environment, onLogin }: LoginScreenProps) {
           <span className="login-heading__icon"><LockKeyhole size={18} /></span>
           <div><h1 id="login-title">登录工作台</h1><p>{environment === null ? "本地服务尚未就绪。" : "使用企业内部账号继续。"}</p></div>
         </div>
+        {notice && <p className="login-help" role="status">{notice}</p>}
         <form onSubmit={submit}>
           <label><span>用户名</span><input name="username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} disabled={environment === null} autoFocus /></label>
           <label><span>密码</span><input name="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} disabled={environment === null} /></label>
