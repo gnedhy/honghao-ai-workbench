@@ -1,4 +1,5 @@
 import io
+import json
 import sqlite3
 import zipfile
 from datetime import UTC, datetime, timedelta
@@ -103,6 +104,16 @@ def test_real_migration_counts_dates_provenance_and_no_invented_events(real_data
     with pytest.raises(ValueError,match='已迁入'):
         source=settings.data_dir.parent / SOURCE_NAME
         import_history(settings.database_path,source,IdentityStore(settings.database_path).list_users()[0]['id'],expected_sha256=history_preview(source.read_bytes())['sha256'])
+
+
+def test_import_audit_keeps_only_hash_and_counts_without_losing_source_values(real_data):
+    settings, _, _ = real_data
+    with sqlite3.connect(settings.database_path) as db:
+        detail = json.loads(db.execute("SELECT detail FROM procurement_admin_events WHERE action='history.imported'").fetchone()[0])
+        sha = db.execute('SELECT sha256 FROM procurement_source_imports').fetchone()[0]
+        assert detail == {'sha256': sha, 'material_count': 460, 'history_material_count': 138, 'version_count': 20, 'anomaly_count': 11}
+        assert db.execute("SELECT count(*) FROM procurement_snapshot_sources WHERE raw_price='4..5'").fetchone()[0] > 0
+        assert db.execute("SELECT count(*) FROM procurement_snapshot_sources WHERE raw_price='10-11'").fetchone()[0] > 0
 
 
 def test_shared_edit_conflicts_attribution_and_official_distribution(real_data):

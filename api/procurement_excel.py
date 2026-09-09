@@ -208,7 +208,13 @@ def import_history(path: Path, source: Path, actor_id: str, *, expected_sha256: 
                 db.execute("UPDATE procurement_materials SET latest_price=? WHERE id=?", (value,ids[code]))
             # Only source-attributed values are stored; no invented historical user actions.
             from api.procurement_collaboration import admin_event
-            admin_event(db,actor_id,"history.imported",digest,preview)
+            admin_event(db,actor_id,"history.imported",digest,{
+                "sha256": digest,
+                "material_count": preview["material_count"],
+                "history_material_count": preview["history_material_count"],
+                "version_count": len(preview["dates"]),
+                "anomaly_count": len(preview["anomalies"]),
+            })
     except Exception:
         if created_archive and stored.is_file():
             stored.unlink()
