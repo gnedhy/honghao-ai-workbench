@@ -20,6 +20,7 @@ from api.database import SCHEMA_VERSION, Database
 from api.identity import IDENTITY_SCHEMA_VERSION, IdentityStore
 from api.knowledge import KNOWLEDGE_SCHEMA_VERSION, KnowledgeStore
 from api.modules import load_persisted_module_modes
+from api.procurement import PROCUREMENT_SCHEMA_VERSION, ProcurementStore
 from api.settings import Settings
 from api.workbenches import load_persisted_workbench_modes
 from scripts.backup_database import backup_database
@@ -31,8 +32,9 @@ _ACTIVE_MARKERS: dict[Path, tuple[str, int]] = {}
 _ACTIVE_MARKERS_LOCK = threading.Lock()
 
 
-def migrate_data(settings: Settings) -> dict[str, int]:
+def migrate_data(settings: Settings, *, include_workbenches: bool = True) -> dict[str, int]:
     settings.ensure_directories()
+    database_preexisted = settings.database_path.is_file()
     database = Database(settings.database_path)
     database.initialize()
     _backup_before_access_migration(settings)
@@ -42,12 +44,31 @@ def migrate_data(settings: Settings) -> dict[str, int]:
     identities.initialize()
     authorization.initialize()
     knowledge.initialize()
-    return {
+    versions = {
         "core": database.schema_version(),
         "identity": IDENTITY_SCHEMA_VERSION,
         "authorization": AUTHORIZATION_SCHEMA_VERSION,
         "knowledge": knowledge.schema_version(),
     }
+    if include_workbenches and settings.workbench_modes["procurement"] == "active":
+        versions["procurement"] = migrate_procurement_data(
+            settings,
+            backup_before_migration=database_preexisted,
+        )
+    return versions
+
+
+def migrate_procurement_data(settings: Settings, *, backup_before_migration: bool = True) -> int:
+    procurement = ProcurementStore(settings.database_path)
+    current = _schema_versions(settings.database_path).get("workbench_procurement_schema_version")
+    if backup_before_migration and current != PROCUREMENT_SCHEMA_VERSION:
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        backup_database(
+            settings.database_path,
+            settings.data_dir / "backups" / f"pre-procurement-migration-{timestamp}.db",
+        )
+    procurement.initialize()
+    return procurement.schema_version()
 
 
 def create_snapshot(settings: Settings, destination_root: Path) -> Path:
@@ -184,15 +205,19 @@ def restore_snapshot(settings: Settings, snapshot: Path) -> Path | None:
 
 def doctor(settings: Settings) -> list[tuple[str, str, bool | None]]:
     checks: list[tuple[str, str, bool | None]] = []
+    versions: dict[str, int] = {}
     directory_detail, directory_ready = _data_directory_status(settings)
     checks.append(("数据目录", directory_detail, directory_ready))
     try:
         versions = _schema_versions(settings.database_path)
-        valid = versions == _expected_schema_versions()
+        valid = _core_schema_versions_valid(versions)
         checks.append(("数据库", json.dumps(versions, ensure_ascii=False), valid))
     except (OSError, sqlite3.Error, RuntimeError) as error:
         checks.append(("数据库", str(error), False))
     checks.append(("模块配置", f"{settings.environment} / 已验证", True))
+    if settings.workbench_modes["procurement"] == "active":
+        procurement_version = versions.get("workbench_procurement_schema_version")
+        checks.append(("采购工作台", f"schema {procurement_version or '未初始化'}", procurement_version == PROCUREMENT_SCHEMA_VERSION))
     try:
         from pypdf import PdfReader  # noqa: F401
 
@@ -221,7 +246,7 @@ def readiness_checks(settings: Settings) -> dict[str, str]:
         checks["database"] = "ok"
         try:
             versions = _schema_versions(settings.database_path)
-            if versions == _expected_schema_versions():
+            if _core_schema_versions_valid(versions):
                 checks["schema_versions"] = "ok"
         except (OSError, sqlite3.Error, RuntimeError):
             pass
@@ -264,6 +289,10 @@ def _expected_schema_versions() -> dict[str, int]:
     }
 
 
+def _core_schema_versions_valid(versions: dict[str, int]) -> bool:
+    return all(versions.get(key) == value for key, value in _expected_schema_versions().items())
+
+
 @contextmanager
 def service_marker(settings: Settings) -> Iterator[None]:
     with _runtime_marker(settings, "service"):
@@ -276,18 +305,44 @@ def service_is_running(settings: Settings) -> bool:
         return False
     try:
         pid = int(marker.read_text(encoding="ascii").strip().split(":", 1)[-1])
+        if pid <= 0:
+            return True
         if pid == os.getpid():
             return True
+        if os.name == "nt":
+            # Windows os.kill(pid, 0) is not a portable liveness probe.
+            import ctypes
+            from ctypes import wintypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+            kernel.WaitForSingleObject.restype = wintypes.DWORD
+            kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+            handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE only
+            if not handle:
+                if ctypes.get_last_error() == 87:  # PID no longer exists
+                    marker.unlink(missing_ok=True)
+                    return False
+                return True  # Cannot inspect: keep the directory locked.
+            try:
+                if kernel.WaitForSingleObject(handle, 0) != 0:
+                    return True
+                marker.unlink(missing_ok=True)
+                return False
+            finally:
+                kernel.CloseHandle(handle)
         os.kill(pid, 0)
         return True
-    except (ValueError, ProcessLookupError):
+    except ValueError:
+        return True  # Another owner may have created but not finished writing it.
+    except ProcessLookupError:
         marker.unlink(missing_ok=True)
         return False
     except PermissionError:
         return True
     except OSError:
-        marker.unlink(missing_ok=True)
-        return False
+        return True  # Unknown query/read failure must not unlock a live service.
 
 
 @contextmanager
@@ -347,12 +402,13 @@ def _schema_versions(database_path: Path) -> dict[str, int]:
         "identity_schema_version",
         "authorization_schema_version",
         "knowledge_schema_version",
+        "workbench_procurement_schema_version",
     )
     with closing(sqlite3.connect(database_path)) as connection:
         return {
             str(key): int(value)
             for key, value in connection.execute(
-                "SELECT key, value FROM schema_metadata WHERE key IN (?, ?, ?, ?)",
+                "SELECT key, value FROM schema_metadata WHERE key IN (?, ?, ?, ?, ?)",
                 keys,
             )
         }

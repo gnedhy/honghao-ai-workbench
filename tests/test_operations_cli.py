@@ -207,3 +207,45 @@ def test_running_service_blocks_an_applied_restore(tmp_path: Path, capsys) -> No
         )
 
     assert result == 1
+def test_service_probe_preserves_live_process_and_clears_exited_marker(tmp_path):
+    import subprocess
+    import sys
+    from api.operations import SERVICE_PID_NAME, service_is_running
+    from api.settings import Settings
+
+    settings = Settings.from_data_dir(tmp_path)
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    marker = tmp_path / SERVICE_PID_NAME
+    marker.write_text(f"service:{process.pid}", encoding="ascii")
+    try:
+        assert service_is_running(settings)
+        assert process.poll() is None
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
+    assert not service_is_running(settings)
+    assert not marker.exists()
+
+
+def test_service_probe_keeps_lock_when_marker_cannot_be_read(tmp_path, monkeypatch):
+    from pathlib import Path
+    from api.operations import SERVICE_PID_NAME, service_is_running
+    from api.settings import Settings
+
+    marker = tmp_path / SERVICE_PID_NAME
+    marker.write_text("service:999999", encoding="ascii")
+    def failed_read(*args, **kwargs):
+        raise OSError("temporary I/O failure")
+    monkeypatch.setattr(Path, "read_text", failed_read)
+    assert service_is_running(Settings.from_data_dir(tmp_path))
+    assert marker.exists()
+
+
+def test_service_probe_does_not_remove_incomplete_marker(tmp_path):
+    from api.operations import SERVICE_PID_NAME, service_is_running
+    from api.settings import Settings
+    marker = tmp_path / SERVICE_PID_NAME
+    for content in ("", "service:", "service:0", "service:-1"):
+        marker.write_text(content, encoding="ascii")
+        assert service_is_running(Settings.from_data_dir(tmp_path))
+        assert marker.exists()

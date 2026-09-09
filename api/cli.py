@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import getpass
 import re
 import sys
@@ -27,6 +28,11 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
     restore.add_argument("--apply", action="store_true")
     restore.add_argument("--confirm")
     subcommands.add_parser("doctor", help="检查本地运行环境")
+    history = subcommands.add_parser("procurement-history", help="管理员首次历史迁入；默认只预检")
+    history.add_argument("source", type=Path)
+    history.add_argument("--apply", action="store_true")
+    history.add_argument("--actor-id")
+    history.add_argument("--sha256")
     serve = subcommands.add_parser("serve", help="启动正式单机服务")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", default=8000, type=int)
@@ -72,6 +78,15 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
             return 0
 
         runtime_settings = settings or Settings.from_environment()
+        if args.command == "procurement-history":
+            from api.procurement_excel import history_preview, import_history
+            result = history_preview(args.source.read_bytes())
+            if args.apply:
+                if not args.actor_id or not args.sha256:
+                    raise ValueError("执行迁入须提供有效管理员ID及预检SHA256")
+                result = import_history(runtime_settings.database_path, args.source, args.actor_id, expected_sha256=args.sha256)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         if args.command == "migrate":
             versions = migrate_data(runtime_settings)
             print("迁移完成：" + ", ".join(f"{key}={value}" for key, value in versions.items()))

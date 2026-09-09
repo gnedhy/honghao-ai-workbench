@@ -207,7 +207,7 @@ def test_identity_schema_is_additive_to_core_schema_v5(tmp_path: Path) -> None:
 
     assert health.status_code == 200
     assert Database(settings.database_path).schema_version() == 5
-    assert identity_version == (4,)
+    assert identity_version == (5,)
 
 
 def test_non_admin_cannot_manage_users(tmp_path: Path) -> None:
@@ -235,7 +235,7 @@ def test_newer_identity_schema_is_not_silently_downgraded(tmp_path: Path) -> Non
     Database(settings.database_path).initialize()
     with sqlite3.connect(settings.database_path) as connection:
         connection.execute(
-            "INSERT INTO schema_metadata (key, value) VALUES ('identity_schema_version', 5)"
+            "INSERT INTO schema_metadata (key, value) VALUES ('identity_schema_version', 6)"
         )
 
     with TestClient(create_app(settings)) as client:
@@ -246,4 +246,4 @@ def test_newer_identity_schema_is_not_silently_downgraded(tmp_path: Path) -> Non
         version = connection.execute(
             "SELECT value FROM schema_metadata WHERE key = 'identity_schema_version'"
         ).fetchone()
-    assert version == (5,)
+    assert version == (6,)

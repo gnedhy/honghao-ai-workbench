@@ -11,14 +11,16 @@ import {
   PenLine,
   Plus,
   ShieldCheck,
+  Server,
   WandSparkles,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   createSensitiveField,
   createUser,
   fetchAdminModuleSettings,
+  fetchProcurementOverview,
   fetchAuditEvents,
   fetchSensitiveFields,
   fetchUsers,
@@ -26,6 +28,7 @@ import {
   updateAdminWorkbenchSetting,
   updateSensitiveField,
   updateUser,
+  updateUserProfile,
   type ServiceConnection,
 } from "../api";
 import type {
@@ -42,10 +45,21 @@ import type {
   Section,
   SensitiveFieldPolicy,
   WorkbenchId,
+  WorkbenchStatus,
 } from "../types";
+import { ProcurementActivationGrants } from "../workbenches/ProcurementDistribution";
 
 type SettingsTab = "general" | "accounts" | "permissions" | "audit";
 type FieldScopeKey = "read_scope_ids" | "write_scope_ids";
+export type UiFontSize = 1 | 2 | 3 | 4 | 5;
+
+const UI_FONT_SIZES: { id: UiFontSize; label: string }[] = [
+  { id: 1, label: "小" },
+  { id: 2, label: "较小" },
+  { id: 3, label: "标准" },
+  { id: 4, label: "较大" },
+  { id: 5, label: "大" },
+];
 
 const MODULE_OPTIONS = [
   { id: "chat", label: "新聊天", description: "对话、工作模式及会话侧栏", icon: PenLine },
@@ -83,6 +97,11 @@ const AUDIT_LABELS: Record<string, string> = {
   "field.created": "新增敏感字段",
   "user.created": "创建账号",
   "user.updated": "修改账号",
+  "user.profile.updated": "修改用户资料",
+  "password.changed": "本人修改密码并退出全部会话",
+  "password.wrong": "修改密码：当前密码校验失败",
+  "password.limited": "修改密码：触发尝试限制",
+  "password.same": "修改密码：新旧密码相同",
   "module.mode.off": "关闭功能模块",
   "module.mode.prototype": "切换功能模块为原型",
   "module.mode.active": "启用功能模块",
@@ -103,13 +122,18 @@ const EMPTY_FIELD = {
 
 type SettingsDialogProps = {
   currentUser: CurrentUser;
+  onUserChanged: (user: CurrentUser) => void;
   serviceConnection: ServiceConnection;
   moduleStatuses: ModuleStatus[];
   moduleRegistryState: "loading" | "ready" | "error";
+  workbenchStatuses: WorkbenchStatus[];
+  workbenchRegistryState: "loading" | "ready" | "error";
+  uiFontSize: UiFontSize;
+  onUiFontSizeChange: (size: UiFontSize) => void;
   onClose: () => void;
 };
 
-export function SettingsDialog({ currentUser, serviceConnection, moduleStatuses, moduleRegistryState, onClose }: SettingsDialogProps) {
+export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, moduleStatuses, moduleRegistryState, workbenchStatuses, workbenchRegistryState, uiFontSize, onUiFontSizeChange, onClose }: SettingsDialogProps) {
   const isAdmin = currentUser.is_system_admin;
   const [tab, setTab] = useState<SettingsTab>("general");
   const [loadState, setLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -118,6 +142,20 @@ export function SettingsDialog({ currentUser, serviceConnection, moduleStatuses,
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [adminModuleSettings, setAdminModuleSettings] = useState<AdminModuleSettings | null>(null);
   const [notice, setNotice] = useState("");
+  const [canManageGrants, setCanManageGrants] = useState(false);
+  const procurementEnabled = moduleRegistryState === "ready" && workbenchRegistryState === "ready"
+    && moduleStatuses.some((item) => item.id === "workbench" && item.mode === "active")
+    && workbenchStatuses.some((item) => item.id === "procurement" && item.mode === "active");
+
+  useEffect(() => {
+    setCanManageGrants(false);
+    if (!procurementEnabled) return;
+    const controller = new AbortController();
+    void fetchProcurementOverview(controller.signal)
+      .then((data) => { if (!controller.signal.aborted) setCanManageGrants(Boolean(data.capabilities?.can_manage_grants)); })
+      .catch(() => { if (!controller.signal.aborted) setCanManageGrants(false); });
+    return () => controller.abort();
+  }, [procurementEnabled, currentUser.id]);
   const [newUserOpen, setNewUserOpen] = useState(false);
   const [newUser, setNewUser] = useState({ username: "", display_name: "", department: "", password: "", is_system_admin: false, scope_levels: {} as Partial<Record<AccessScope, AccessLevel>> });
   const [selectedUserId, setSelectedUserId] = useState("");
@@ -145,7 +183,7 @@ export function SettingsDialog({ currentUser, serviceConnection, moduleStatuses,
 
   useEffect(() => {
     if (!isAdmin || tab !== "audit" || loadState !== "ready") return;
-    void fetchAuditEvents().then(setAuditEvents).catch(() => showNotice("审计记录刷新失败"));
+    void fetchAuditEvents().then(setAuditEvents).catch(() => showNotice("审计日志刷新失败"));
   }, [isAdmin, loadState, tab]);
 
   const selectedUser = users.find((user) => user.id === selectedUserId) ?? null;
@@ -154,15 +192,14 @@ export function SettingsDialog({ currentUser, serviceConnection, moduleStatuses,
   useEffect(() => {
     setUserAdminDraft(selectedUser?.is_system_admin ?? false);
     setUserScopeDraft(selectedUser?.scope_levels ?? {});
-  }, [selectedUser]);
+  }, [selectedUserId]);
 
   const serviceCopy = serviceConnection.state === "online"
     ? { label: "已连接", detail: `API ${serviceConnection.health.api_version} · 运行状态正常` }
     : serviceConnection.state === "checking"
       ? { label: "连接中", detail: "正在检查本地 API 与数据库。" }
       : { label: "未连接", detail: "请启动本地 API 后刷新页面。" };
-  const enabledCount = moduleStatuses.filter((module) => module.mode !== "off").length;
-  const runtimeEnvironment = adminModuleSettings?.environment ?? null;
+  const runtimeEnvironment = adminModuleSettings?.environment ?? (serviceConnection.state === "online" ? serviceConnection.health.environment : null);
 
   const showNotice = (message: string) => {
     setNotice(message);
@@ -264,11 +301,11 @@ export function SettingsDialog({ currentUser, serviceConnection, moduleStatuses,
   };
 
   const navItems: { id: SettingsTab; label: string; icon: typeof CircleUserRound }[] = [
-    { id: "general", label: "常规", icon: PanelsTopLeft },
+    { id: "general", label: "常规设置", icon: PanelsTopLeft },
     ...(isAdmin ? [
-      { id: "accounts" as const, label: "账号与权限", icon: CircleUserRound },
-      { id: "permissions" as const, label: "敏感字段", icon: KeyRound },
-      { id: "audit" as const, label: "审计记录", icon: ClipboardList },
+      { id: "accounts" as const, label: "用户管理", icon: CircleUserRound },
+      { id: "permissions" as const, label: "权限管理", icon: KeyRound },
+      { id: "audit" as const, label: "审计日志", icon: ClipboardList },
     ] : []),
   ];
 
@@ -280,21 +317,44 @@ export function SettingsDialog({ currentUser, serviceConnection, moduleStatuses,
           <nav aria-label="设置分类">{navItems.map(({ id, label, icon: Icon }) => <button className={tab === id ? "is-active" : ""} key={id} type="button" onClick={() => setTab(id)}><span><Icon size={15} />{label}</span><ChevronRight size={15} /></button>)}</nav>
           <article>
             {notice && <div className="settings-notice" role="status"><Check size={14} />{notice}</div>}
-            {tab === "general" && <GeneralSettings serviceCopy={serviceCopy} environment={runtimeEnvironment} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} enabledCount={enabledCount} isAdmin={isAdmin} adminModuleSettings={adminModuleSettings} onModeChange={saveModuleMode} onWorkbenchModeChange={saveWorkbenchMode} />}
+            {tab === "general" && <><FontSizeSetting value={uiFontSize} onChange={onUiFontSizeChange} /><GeneralSettings serviceCopy={serviceCopy} environment={runtimeEnvironment} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} workbenchStatuses={workbenchStatuses} workbenchRegistryState={workbenchRegistryState} isAdmin={isAdmin} adminModuleSettings={adminModuleSettings} onModeChange={saveModuleMode} onWorkbenchModeChange={saveWorkbenchMode} canManageGrants={canManageGrants} onGrantsChanged={() => showNotice("授权已更新")} /></>}
             {tab !== "general" && loadState === "loading" && <SettingsState copy="正在读取管理数据…" />}
             {tab !== "general" && loadState === "error" && <SettingsState copy="管理数据暂时无法读取，请稍后重试。" error />}
             {tab === "accounts" && loadState === "ready" && <section className="admin-settings-section">
-              <div className="admin-section-heading"><div><h2>账号与权限</h2><p>权限由“能进哪里”和“能做到哪一步”组成；每个授权范围可以独立设置。</p></div><button className="secondary-button" type="button" onClick={() => setNewUserOpen((open) => !open)}><Plus size={14} />新建账号</button></div>
+              <div className="admin-section-heading"><div><h2>用户管理</h2><p>权限由“能进哪里”和“能做到哪一步”组成；每个授权范围可以独立设置。</p></div><button className="secondary-button" type="button" onClick={() => setNewUserOpen((open) => !open)}><Plus size={14} />新建账号</button></div>
               {newUserOpen && <form className="admin-create-form" onSubmit={submitUser}><div className="admin-form-grid"><label>姓名<input required maxLength={100} value={newUser.display_name} onChange={(event) => setNewUser({ ...newUser, display_name: event.target.value })} /></label><label>账号名<input required maxLength={100} pattern="[A-Za-z0-9._-]+" autoComplete="off" value={newUser.username} onChange={(event) => setNewUser({ ...newUser, username: event.target.value })} /></label><label>部门<input maxLength={100} value={newUser.department} onChange={(event) => setNewUser({ ...newUser, department: event.target.value })} /></label><label>初始密码<input required minLength={12} maxLength={1000} type="password" autoComplete="new-password" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} /></label></div><AccountAccessEditor isSystemAdmin={newUser.is_system_admin} scopeLevels={newUser.scope_levels} onAdminChange={(is_system_admin) => setNewUser({ ...newUser, is_system_admin, scope_levels: is_system_admin ? {} : newUser.scope_levels })} onScopeLevelChange={(scopeId, level) => setNewUser({ ...newUser, scope_levels: setScopeLevel(newUser.scope_levels, scopeId, level) })} /><AccessPreview isSystemAdmin={newUser.is_system_admin} scopeLevels={newUser.scope_levels} /><div className="admin-form-actions"><button type="button" className="secondary-button" onClick={() => setNewUserOpen(false)}>取消</button><button type="submit" className="primary-button">创建账号</button></div></form>}
-              <div className="admin-split"><div className="admin-list-panel"><p className="admin-list-label">账号 · {users.length}</p>{users.map((user) => <button className={selectedUserId === user.id ? "admin-list-row is-active" : "admin-list-row"} type="button" key={user.id} onClick={() => setSelectedUserId(user.id)}><span className="admin-user-mark">{user.display_name.slice(0, 1)}</span><span><strong>{user.display_name}</strong><small>{user.department || user.username}</small></span><i data-active={user.is_active}>{user.is_system_admin ? "系统" : Object.keys(user.scope_levels).length > 0 ? `${Object.keys(user.scope_levels).length} 项授权` : "未授权"}</i></button>)}</div><div className="admin-detail-panel">{selectedUser ? <><div className="admin-detail-heading"><div><h3>{selectedUser.display_name}</h3><p>@{selectedUser.username} · {selectedUser.department || "未填写部门"}</p></div><span className="status-chip" data-active={selectedUser.is_active}>{selectedUser.is_active ? "使用中" : "已停用"}</span></div><AccountAccessEditor isSystemAdmin={userAdminDraft} scopeLevels={userScopeDraft} onAdminChange={(isSystemAdmin) => { setUserAdminDraft(isSystemAdmin); if (isSystemAdmin) setUserScopeDraft({}); }} onScopeLevelChange={(scopeId, level) => setUserScopeDraft((current) => setScopeLevel(current, scopeId, level))} disabledAdmin={selectedUser.id === currentUser.id} /><AccessPreview isSystemAdmin={userAdminDraft} scopeLevels={userScopeDraft} /><div className="admin-form-actions"><button className="secondary-button" type="button" disabled={selectedUser.id === currentUser.id} onClick={toggleUserActive}>{selectedUser.is_active ? "停用账号" : "启用账号"}</button><button className="primary-button" type="button" disabled={selectedUser.id === currentUser.id} onClick={saveUserAccess}>保存授权</button></div></> : <SettingsState copy="请选择一个账号。" />}</div></div>
+              <div className="admin-split"><div className="admin-list-panel"><p className="admin-list-label">账号 · {users.length}</p>{users.map((user) => <button className={selectedUserId === user.id ? "admin-list-row is-active" : "admin-list-row"} type="button" key={user.id} onClick={() => setSelectedUserId(user.id)}><span className="admin-user-mark">{user.display_name.slice(0, 1)}</span><span><strong>{user.display_name}</strong><small>{user.department || user.username}</small></span><i data-active={user.is_active}>{user.is_system_admin ? "系统" : Object.keys(user.scope_levels).length > 0 ? `${Object.keys(user.scope_levels).length} 项授权` : "未授权"}</i></button>)}</div><div className="admin-detail-panel">{selectedUser ? <><div className="admin-detail-heading"><div><h3>{selectedUser.display_name}</h3><p>@{selectedUser.username} · {selectedUser.department || "未填写部门"}</p></div><span className="status-chip" data-active={selectedUser.is_active}>{selectedUser.is_active ? "使用中" : "已停用"}</span></div><UserProfileEditor key={selectedUser.id} user={selectedUser} onSaved={(updated) => { setUsers((current) => current.map((user) => user.id === updated.id ? updated : user)); if (updated.id === currentUser.id) onUserChanged(updated); showNotice("资料已保存"); }} /><AccountAccessEditor isSystemAdmin={userAdminDraft} scopeLevels={userScopeDraft} onAdminChange={(isSystemAdmin) => { setUserAdminDraft(isSystemAdmin); if (isSystemAdmin) setUserScopeDraft({}); }} onScopeLevelChange={(scopeId, level) => setUserScopeDraft((current) => setScopeLevel(current, scopeId, level))} disabledAdmin={selectedUser.id === currentUser.id} /><AccessPreview isSystemAdmin={userAdminDraft} scopeLevels={userScopeDraft} /><div className="admin-form-actions"><button className="secondary-button" type="button" disabled={selectedUser.id === currentUser.id} onClick={toggleUserActive}>{selectedUser.is_active ? "停用账号" : "启用账号"}</button><button className="primary-button" type="button" disabled={selectedUser.id === currentUser.id} onClick={saveUserAccess}>保存授权</button></div></> : <SettingsState copy="请选择一个账号。" />}</div></div>
             </section>}
-            {tab === "permissions" && loadState === "ready" && <section className="admin-settings-section"><div className="admin-section-heading"><div><h2>敏感字段</h2><p>为重要数据指定谁能查看、谁能编辑；未开放时仅系统管理员可以访问。</p></div><button className="secondary-button" type="button" onClick={() => setNewFieldOpen(true)}><Plus size={14} />新增字段</button></div><div className="admin-split"><div className="admin-list-panel"><p className="admin-list-label">字段目录 · {fields.length}</p>{fields.map((field) => <button className={selectedFieldId === field.id ? "admin-list-row is-active" : "admin-list-row"} type="button" key={field.id} onClick={() => { setSelectedFieldId(field.id); setNewFieldOpen(false); }}><span className="admin-user-mark"><KeyRound size={14} /></span><span><strong>{field.name}</strong><small>{field.area}</small></span><i>{field.read_scope_ids.length > 0 ? `${field.read_scope_ids.length} 个范围` : "仅系统"}</i></button>)}</div><div className="admin-detail-panel">{newFieldOpen ? <FieldEditor field={newField} heading="新增敏感字段" onChange={setNewField} onSubmit={submitField} onCancel={() => setNewFieldOpen(false)} /> : selectedField ? <><div className="admin-detail-heading"><div><h3>{selectedField.name}</h3><p>{selectedField.description}</p></div><span className="status-chip">{selectedField.area}</span></div><FieldPolicyControls field={selectedField} onLevelChange={(key, value) => setFields((current) => current.map((field) => field.id === selectedField.id ? { ...field, [key]: value } : field))} onScopeToggle={toggleFieldScope} /><div className="admin-form-actions"><button className="primary-button" type="button" onClick={saveField}>保存设置</button></div></> : <SettingsState copy="请选择一个字段。" />}</div></div></section>}
-            {tab === "audit" && loadState === "ready" && <section className="admin-settings-section"><div className="admin-section-heading"><div><h2>审计记录</h2><p>仅记录操作主体、对象和时间，不保存正文及字段值。</p></div><span className="admin-count">最近 {auditEvents.length} 条</span></div><div className="audit-list">{auditEvents.length === 0 ? <SettingsState copy="暂无审计记录。" /> : auditEvents.map((event) => <div className="audit-row" key={event.id}><span className="audit-row__icon"><ClipboardList size={14} /></span><div><strong>{AUDIT_LABELS[event.action] ?? event.action}</strong><p>{event.actor_name ?? "未知账号"} · {event.target_type}</p></div><time dateTime={event.created_at}>{formatDate(event.created_at)}</time></div>)}</div></section>}
+            {tab === "permissions" && loadState === "ready" && <section className="admin-settings-section"><div className="admin-section-heading"><div><h2>权限管理</h2><p>为重要数据指定谁能查看、谁能编辑；未开放时仅系统管理员可以访问。</p></div><button className="secondary-button" type="button" onClick={() => setNewFieldOpen(true)}><Plus size={14} />新增字段</button></div><div className="admin-split"><div className="admin-list-panel"><p className="admin-list-label">字段目录 · {fields.length}</p>{fields.map((field) => <button className={selectedFieldId === field.id ? "admin-list-row is-active" : "admin-list-row"} type="button" key={field.id} onClick={() => { setSelectedFieldId(field.id); setNewFieldOpen(false); }}><span className="admin-user-mark"><KeyRound size={14} /></span><span><strong>{field.name}</strong><small>{field.area}</small></span><i>{field.read_scope_ids.length > 0 ? `${field.read_scope_ids.length} 个范围` : "仅系统"}</i></button>)}</div><div className="admin-detail-panel">{newFieldOpen ? <FieldEditor field={newField} heading="新增敏感字段" onChange={setNewField} onSubmit={submitField} onCancel={() => setNewFieldOpen(false)} /> : selectedField ? <><div className="admin-detail-heading"><div><h3>{selectedField.name}</h3><p>{selectedField.description}</p></div><span className="status-chip">{selectedField.area}</span></div><FieldPolicyControls field={selectedField} onLevelChange={(key, value) => setFields((current) => current.map((field) => field.id === selectedField.id ? { ...field, [key]: value } : field))} onScopeToggle={toggleFieldScope} /><div className="admin-form-actions"><button className="primary-button" type="button" onClick={saveField}>保存设置</button></div></> : <SettingsState copy="请选择一个字段。" />}</div></div></section>}
+            {tab === "audit" && loadState === "ready" && <section className="admin-settings-section"><div className="admin-section-heading"><div><h2>审计日志</h2><p>仅记录操作主体、对象和时间，不保存正文及字段值。</p></div><span className="admin-count">最近 {auditEvents.length} 条</span></div><div className="audit-list">{auditEvents.length === 0 ? <SettingsState copy="暂无审计日志。" /> : auditEvents.map((event) => <div className="audit-row" key={event.id}><span className="audit-row__icon"><ClipboardList size={14} /></span><div><strong>{AUDIT_LABELS[event.action] ?? event.action}</strong><p>{event.actor_name ?? "未知账号"} · {event.target_type}</p></div><time dateTime={event.created_at}>{formatDate(event.created_at)}</time></div>)}</div></section>}
           </article>
         </div>
       </section>
     </div>
   );
+}
+
+function UserProfileEditor({ user, onSaved }: { user: ManagedUser; onSaved: (user: ManagedUser) => void }) {
+  const [name, setName] = useState(user.display_name);
+  const [department, setDepartment] = useState(user.department || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const busy = useRef(false);
+  return <form className="admin-profile-form" onSubmit={async (event) => {
+    event.preventDefault();
+    if (busy.current) return;
+    if (!name.trim()) { setError("姓名不能为空。"); return; }
+    busy.current = true; setSaving(true); setError("");
+    try {
+      const updated = await updateUserProfile(user.id, { display_name: name.trim(), department: department.trim() || null });
+      setName(updated.display_name); setDepartment(updated.department || ""); onSaved(updated);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "资料保存失败，请重试。"); }
+    finally { busy.current = false; setSaving(false); }
+  }}><div className="admin-form-grid"><label>姓名<input required maxLength={100} disabled={saving} value={name} onChange={(event) => setName(event.target.value)} /></label><label>部门<input maxLength={100} disabled={saving} value={department} onChange={(event) => setDepartment(event.target.value)} /></label></div>
+    <p className="personal-profile__hint">仅修改基本资料，不影响账号、权限和历史姓名快照。</p>
+    {error && <p className="login-error" role="alert">{error}</p>}
+    <div className="admin-form-actions"><button className="secondary-button" type="submit" disabled={saving}>{saving ? "正在保存…" : "保存资料"}</button></div>
+  </form>;
 }
 
 function AccountAccessEditor({ isSystemAdmin, scopeLevels, onAdminChange, onScopeLevelChange, disabledAdmin = false }: { isSystemAdmin: boolean; scopeLevels: Partial<Record<AccessScope, AccessLevel>>; onAdminChange: (value: boolean) => void; onScopeLevelChange: (scopeId: AccessScope, level: AccessLevel | null) => void; disabledAdmin?: boolean }) {
@@ -326,13 +386,75 @@ function LevelButtons({ label, value, levels, onChange }: { label: string; value
   return <fieldset className="field-policy-levels"><legend>{label}</legend><div className="policy-switch">{levels.map((level) => <button className={value === level.id ? "is-active" : ""} type="button" key={level.id} aria-pressed={value === level.id} onClick={() => onChange(level.id)}>{level.label}</button>)}</div></fieldset>;
 }
 
-function GeneralSettings({ serviceCopy, environment: serviceEnvironment, moduleStatuses, moduleRegistryState, enabledCount, isAdmin, adminModuleSettings, onModeChange, onWorkbenchModeChange }: { serviceCopy: { label: string; detail: string }; environment: RuntimeEnvironment | null; moduleStatuses: ModuleStatus[]; moduleRegistryState: "loading" | "ready" | "error"; enabledCount: number; isAdmin: boolean; adminModuleSettings: AdminModuleSettings | null; onModeChange: (moduleId: Section, mode: ModuleMode, reviews?: ActivationReview[], issueUrl?: string, pullRequestUrl?: string) => Promise<void>; onWorkbenchModeChange: (workbenchId: WorkbenchId, mode: ModuleMode, reviews?: ActivationReview[], issueUrl?: string, pullRequestUrl?: string) => Promise<void>; }) {
+function FontSizeSetting({ value, onChange }: { value: UiFontSize; onChange: (size: UiFontSize) => void }) {
+  const selected = UI_FONT_SIZES[value - 1];
+  const sliderStyle = { "--ui-font-progress": `${(value - 1) * 25}%` } as CSSProperties;
+  return <section className="ui-preferences"><h2>常规设置</h2><div className="ui-font-setting"><div><strong id="ui-font-size-title">界面字号</strong><p>调整导航、正文、表格和表单文字大小。</p></div><div className="ui-font-control"><div className="ui-font-current" aria-live="polite"><span>当前</span><strong>{selected.label}</strong></div><input className="ui-font-range" type="range" min="1" max="5" step="1" value={value} aria-labelledby="ui-font-size-title" aria-valuetext={selected.label} style={sliderStyle} onChange={(event) => onChange(Number(event.currentTarget.value) as UiFontSize)} /><div className="ui-font-ticks" role="group" aria-label="字号档位">{UI_FONT_SIZES.map((option) => <button key={option.id} type="button" aria-pressed={value === option.id} onClick={() => onChange(option.id)}>{option.label}</button>)}</div></div></div></section>;
+}
+
+function SettingsGroup({ id, title, description, summary, children }: { id: string; title: string; description: string; summary: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const [instant, setInstant] = useState(false);
+  const [height, setHeight] = useState(0);
+  const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const measure = () => setHeight(content.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
+  return <section className="module-settings settings-group" data-open={open} data-instant={instant} aria-labelledby={id + "-title"}>
+    <button type="button" id={id + "-title"} className="module-settings__heading settings-group-trigger" aria-label={title} aria-expanded={open} aria-controls={id + "-content"} onClick={event => { setInstant(event.detail === 0); setOpen(value => !value); }}>
+      <span className="settings-group-copy"><strong>{title}</strong><span>{description}</span></span>
+      <span className="settings-group-summary">{summary}<ChevronRight size={15} /></span>
+    </button>
+    <div id={id + "-content"} className="settings-group-collapse" style={{ height: open ? height : 0 }} aria-hidden={!open} inert={!open}>
+      <div ref={contentRef}>{children}</div>
+    </div>
+  </section>;
+}
+
+function GeneralSettings({ serviceCopy, environment: serviceEnvironment, moduleStatuses, moduleRegistryState, workbenchStatuses, workbenchRegistryState, isAdmin, adminModuleSettings, onModeChange, onWorkbenchModeChange, canManageGrants, onGrantsChanged }: {
+  serviceCopy: { label: string; detail: string };
+  environment: RuntimeEnvironment | null;
+  moduleStatuses: ModuleStatus[];
+  moduleRegistryState: "loading" | "ready" | "error";
+  workbenchStatuses: WorkbenchStatus[];
+  workbenchRegistryState: "loading" | "ready" | "error";
+  isAdmin: boolean;
+  adminModuleSettings: AdminModuleSettings | null;
+  canManageGrants: boolean;
+  onGrantsChanged: () => void;
+  onModeChange: (moduleId: Section, mode: ModuleMode, reviews?: ActivationReview[], issueUrl?: string, pullRequestUrl?: string) => Promise<void>;
+  onWorkbenchModeChange: (workbenchId: WorkbenchId, mode: ModuleMode, reviews?: ActivationReview[], issueUrl?: string, pullRequestUrl?: string) => Promise<void>;
+}) {
   const [activationTarget, setActivationTarget] = useState<{ kind: "module"; id: Section } | { kind: "workbench"; id: WorkbenchId } | null>(null);
   const [reviews, setReviews] = useState<ActivationReview[]>([]);
   const [issueUrl, setIssueUrl] = useState("");
   const [pullRequestUrl, setPullRequestUrl] = useState("");
   const environment = serviceEnvironment ?? adminModuleSettings?.environment ?? null;
   const pendingCount = adminModuleSettings ? [...adminModuleSettings.modules, ...adminModuleSettings.workbenches].filter((item) => item.current_mode !== item.pending_mode).length : 0;
+  const visibleModules = MODULE_OPTIONS.filter((item) => isAdmin || (moduleRegistryState === "ready" && moduleStatuses.some((module) => module.id === item.id && module.mode === "active")));
+  const visibleWorkbenches = WORKBENCH_OPTIONS.filter((item) => isAdmin || (workbenchRegistryState === "ready" && visibleModules.some((module) => module.id === "workbench") && workbenchStatuses.some((workbench) => workbench.id === item.id && workbench.mode === "active")));
+  const enabledCount = moduleStatuses.filter((module) => isAdmin ? module.mode !== "off" : module.mode === "active").length;
+  const [grantsLoaded, setGrantsLoaded] = useState(false);
+  const [grantsOpen, setGrantsOpen] = useState(false);
+  const [grantsInstant, setGrantsInstant] = useState(false);
+  const [grantsHeight, setGrantsHeight] = useState(0);
+  const grantsContent = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const content = grantsContent.current;
+    if (!content || !grantsLoaded) return;
+    const measure = () => setGrantsHeight(content.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [grantsLoaded, canManageGrants]);
+  const grantsEntry = canManageGrants && <div className="settings-grants" data-open={grantsOpen} data-instant={grantsInstant}><button id="settings-grants-entry" type="button" className="settings-grants-entry" aria-expanded={grantsOpen} aria-controls="settings-grants-content" onClick={(event) => { setGrantsInstant(event.detail === 0); setGrantsLoaded(true); setGrantsOpen((open) => !open); }}><ShieldCheck size={15} /><span>价格启用授权</span><ChevronRight className="settings-grants-chevron" size={14} /></button><div id="settings-grants-content" className="settings-grants-collapse" style={{ height: grantsOpen ? grantsHeight : 0 }} aria-hidden={!grantsOpen} inert={!grantsOpen}><div ref={grantsContent} className="settings-activation">{grantsLoaded && <ProcurementActivationGrants admin={isAdmin} onChanged={onGrantsChanged} />}</div></div></div>;
   const modeLabel = (mode: ModuleMode) => mode === "active" ? "启用" : mode === "prototype" ? "原型" : "关闭";
   const clearGate = () => { setActivationTarget(null); setReviews([]); setIssueUrl(""); setPullRequestUrl(""); };
   const chooseMode = (kind: "module" | "workbench", id: Section | WorkbenchId, mode: ModuleMode) => {
@@ -347,7 +469,7 @@ function GeneralSettings({ serviceCopy, environment: serviceEnvironment, moduleS
       : onWorkbenchModeChange(activationTarget.id, "active", reviews, issueUrl.trim(), pullRequestUrl.trim());
     void update.then(clearGate).catch(() => undefined);
   };
-  return <section className="admin-settings-section"><h2>常规</h2><div className="environment-summary" data-environment={environment ?? "unknown"}><div><strong>{environment === "test" ? "测试环境" : environment === "production" ? "正式环境" : "环境状态未知"}</strong><p>{environment === "test" ? "使用独立账号与样例数据，不影响正式服务。" : environment === "production" ? "仅部署已审核的发布版本。" : "本地服务连接后显示当前环境。"}</p></div>{pendingCount > 0 && <span>{pendingCount} 项待重启</span>}</div><section className="module-settings" aria-labelledby="module-settings-title"><div className="module-settings__heading"><div><strong id="module-settings-title">功能模块</strong><p>状态只影响当前服务器；关闭时入口和业务接口同时停用。</p></div><span>{moduleRegistryState === "ready" ? `${enabledCount} 个运行中` : moduleRegistryState === "loading" ? "读取中" : "状态不可用"}</span></div><div className="module-settings__list">{MODULE_OPTIONS.map((item) => { const Icon = item.icon; const publicMode = moduleStatuses.find((module) => module.id === item.id)?.mode ?? "off"; const managed = adminModuleSettings?.modules.find((module) => module.id === item.id); const currentMode = managed?.current_mode ?? publicMode; const pendingMode = managed?.pending_mode ?? currentMode; const hasPending = currentMode !== pendingMode; return <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><Icon size={16} /></span><div><strong>{item.label}</strong><p>{item.description}{hasPending ? ` · 当前${modeLabel(currentMode)}` : ""}</p></div>{isAdmin && adminModuleSettings ? <select aria-label={`${item.label}状态`} value={pendingMode} data-pending={hasPending} onChange={(event) => chooseMode("module", item.id, event.target.value as ModuleMode)}><option value="off">关闭</option><option value="prototype">原型</option><option value="active">启用</option></select> : <span className="module-mode-label" data-mode={currentMode}>{modeLabel(currentMode)}</span>}</div>; })}</div></section><section className="module-settings" aria-labelledby="workbench-settings-title"><div className="module-settings__heading"><div><strong id="workbench-settings-title">职能工作台</strong><p>每个工作台独立启用、停用和回退。</p></div><span>4 个工作台</span></div><div className="module-settings__list">{WORKBENCH_OPTIONS.map((item) => { const managed = adminModuleSettings?.workbenches.find((workbench) => workbench.id === item.id); const currentMode = managed?.current_mode ?? "prototype"; const pendingMode = managed?.pending_mode ?? currentMode; const hasPending = currentMode !== pendingMode; return <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><PanelsTopLeft size={16} /></span><div><strong>{item.label}</strong><p>{item.description}{hasPending ? ` · 当前${modeLabel(currentMode)}` : ""}</p></div>{isAdmin && adminModuleSettings ? <select aria-label={`${item.label}状态`} value={pendingMode} data-pending={hasPending} onChange={(event) => chooseMode("workbench", item.id, event.target.value as ModuleMode)}><option value="off">关闭</option><option value="prototype">原型</option><option value="active">启用</option></select> : <span className="module-mode-label" data-mode={currentMode}>{modeLabel(currentMode)}</span>}</div>; })}</div></section>{activationTarget && <div className="production-review-gate"><strong>确认正式启用</strong><p>四项检查与对应开发记录必须已经实际完成。</p><div>{([ ["business", "业务负责人确认"], ["security", "数据安全审查"], ["code", "代码审查"], ["rollback", "回退演练"] ] as const).map(([id, label]) => <label key={id}><input type="checkbox" checked={reviews.includes(id)} onChange={() => setReviews(toggleId(reviews, id) as ActivationReview[])} />{label}</label>)}</div><div className="production-review-evidence"><label>Issue 地址<input type="url" value={issueUrl} placeholder="https://github.com/…/issues/…" onChange={(event) => setIssueUrl(event.target.value)} /></label><label>PR 地址<input type="url" value={pullRequestUrl} placeholder="https://github.com/…/pull/…" onChange={(event) => setPullRequestUrl(event.target.value)} /></label></div><div className="admin-form-actions"><button className="secondary-button" type="button" onClick={clearGate}>取消</button><button className="primary-button" type="button" disabled={reviews.length !== 4 || !issueUrl.trim() || !pullRequestUrl.trim()} onClick={confirmActivation}>保存为待启用</button></div></div>}<h3 className="settings-subheading">运行与安全</h3><div className="setting-row"><div><strong>本地服务</strong><p>{serviceCopy.detail}</p></div><span className={`setting-connection setting-connection--${serviceCopy.label === "已连接" ? "online" : serviceCopy.label === "连接中" ? "checking" : "offline"}`}><i />{serviceCopy.label}</span></div><div className="setting-row"><div><strong>权限默认拒绝</strong><p>未配置开放范围时，仅系统管理员可以访问。</p></div><span className="setting-enabled"><ShieldCheck size={15} />已保护</span></div></section>;
+  return <section className="admin-settings-section settings-general"><h2>常规设置</h2><div className="environment-summary" data-environment={environment ?? "unknown"}><div><strong>{environment === "test" ? "测试环境" : environment === "production" ? "正式环境" : "环境状态未知"}</strong><p>{environment === "test" ? "使用独立账号与数据，不影响正式服务。" : environment === "production" ? "仅部署已审核的发布版本。" : "本地服务连接后显示当前环境。"}</p></div>{pendingCount > 0 && <span>{pendingCount} 项待重启</span>}</div>{isAdmin && <SettingsGroup id="module-settings" title="功能模块" description="状态只影响当前服务器；关闭时入口和业务接口同时停用。" summary={moduleRegistryState === "ready" ? `${enabledCount} 个运行中` : moduleRegistryState === "loading" ? "读取中" : "状态不可用"}><div className="module-settings__list">{visibleModules.map((item) => { const Icon = item.icon; const publicMode = moduleStatuses.find((module) => module.id === item.id)?.mode ?? "off"; const managed = adminModuleSettings?.modules.find((module) => module.id === item.id); const currentMode = managed?.current_mode ?? publicMode; const pendingMode = managed?.pending_mode ?? currentMode; const hasPending = currentMode !== pendingMode; return <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><Icon size={16} /></span><div><strong>{item.label}</strong><p>{item.description}{hasPending ? ` · 当前${modeLabel(currentMode)}` : ""}</p></div>{isAdmin && adminModuleSettings ? <select aria-label={`${item.label}状态`} value={pendingMode} data-pending={hasPending} onChange={(event) => chooseMode("module", item.id, event.target.value as ModuleMode)}><option value="off">关闭</option><option value="prototype">原型</option><option value="active">启用</option></select> : <span className="module-mode-label" data-mode={currentMode}>{modeLabel(currentMode)}</span>}</div>; })}</div></SettingsGroup>}{isAdmin && <SettingsGroup id="workbench-settings" title="职能工作台" description="每个工作台独立启用、停用和回退。" summary={workbenchRegistryState === "ready" ? `${visibleWorkbenches.length} 个工作台` : workbenchRegistryState === "loading" ? "读取中" : "状态不可用"}><div className="module-settings__list">{visibleWorkbenches.map((item) => { const managed = adminModuleSettings?.workbenches.find((workbench) => workbench.id === item.id); const currentMode = managed?.current_mode ?? workbenchStatuses.find((workbench) => workbench.id === item.id)?.mode ?? "off"; const pendingMode = managed?.pending_mode ?? currentMode; const hasPending = currentMode !== pendingMode; return <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><PanelsTopLeft size={16} /></span><div><strong>{item.label}</strong><p>{item.description}{hasPending ? ` · 当前${modeLabel(currentMode)}` : ""}</p></div>{isAdmin && adminModuleSettings ? <select aria-label={`${item.label}状态`} value={pendingMode} data-pending={hasPending} onChange={(event) => chooseMode("workbench", item.id, event.target.value as ModuleMode)}><option value="off">关闭</option><option value="prototype">原型</option><option value="active">启用</option></select> : <span className="module-mode-label" data-mode={currentMode}>{modeLabel(currentMode)}</span>}{item.id === "procurement" && grantsEntry}</div>; })}</div></SettingsGroup>}{!isAdmin && <section className="module-settings" aria-labelledby="available-settings-title"><div className="module-settings__heading"><strong id="available-settings-title">可用功能</strong></div><div className="module-settings__list">{visibleModules.filter((item) => item.id !== "workbench").map((item) => { const Icon = item.icon; return <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><Icon size={16} /></span><div><strong>{item.label}</strong><p>{item.description}</p></div><span className="module-mode-label" data-mode="active">已启用</span></div>; })}{visibleWorkbenches.map((item) => <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><PanelsTopLeft size={16} /></span><div><strong>{item.label}</strong><p>{item.description}</p></div><span className="module-mode-label" data-mode="active">已启用</span>{item.id === "procurement" && grantsEntry}</div>)}</div>{(moduleRegistryState !== "ready" || workbenchRegistryState !== "ready") ? <p className="settings-availability-note" role="status">{moduleRegistryState === "error" || workbenchRegistryState === "error" ? "可用功能暂时无法读取，请刷新重试。" : "正在读取可用功能…"}</p> : visibleModules.every((item) => item.id === "workbench") && visibleWorkbenches.length === 0 && <p className="settings-availability-note">暂无可用功能。</p>}</section>}{activationTarget && <div className="production-review-gate"><strong>确认正式启用</strong><p>四项检查与对应开发记录必须已经实际完成。</p><div>{([ ["business", "业务负责人确认"], ["security", "数据安全审查"], ["code", "代码审查"], ["rollback", "回退演练"] ] as const).map(([id, label]) => <label key={id}><input type="checkbox" checked={reviews.includes(id)} onChange={() => setReviews(toggleId(reviews, id) as ActivationReview[])} />{label}</label>)}</div><div className="production-review-evidence"><label>Issue 地址<input type="url" value={issueUrl} placeholder="https://github.com/…/issues/…" onChange={(event) => setIssueUrl(event.target.value)} /></label><label>PR 地址<input type="url" value={pullRequestUrl} placeholder="https://github.com/…/pull/…" onChange={(event) => setPullRequestUrl(event.target.value)} /></label></div><div className="admin-form-actions"><button className="secondary-button" type="button" onClick={clearGate}>取消</button><button className="primary-button" type="button" disabled={reviews.length !== 4 || !issueUrl.trim() || !pullRequestUrl.trim()} onClick={confirmActivation}>保存为待启用</button></div></div>}<section className="settings-security" aria-labelledby="settings-security-title"><h3 id="settings-security-title" className="settings-subheading">运行与安全</h3><div className="settings-security-row"><span className="settings-security-icon"><Server size={19} /></span><div><strong>本地服务</strong><p>{serviceCopy.label === "已连接" ? "工作台与本地服务连接正常" : serviceCopy.label === "连接中" ? "正在检查工作台服务连接" : "服务尚未连接，请启动服务后刷新"}</p></div><span className={`setting-connection setting-connection--${serviceCopy.label === "已连接" ? "online" : serviceCopy.label === "连接中" ? "checking" : "offline"}`}><i />{serviceCopy.label}</span></div><div className="settings-security-row"><span className="settings-security-icon"><ShieldCheck size={19} /></span><div><strong>访问保护</strong><p>按账号权限限制查看和操作</p></div><span className="setting-enabled"><Check size={14} />已启用</span></div></section></section>;
 }
 
 function SettingsState({ copy, error = false }: { copy: string; error?: boolean }) { return <div className={error ? "settings-state is-error" : "settings-state"}>{copy}</div>; }

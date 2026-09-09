@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import ExitStack, asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, suppress
 from pathlib import Path
+import sqlite3
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from api.authorization import AuthorizationStore
@@ -33,7 +37,9 @@ from api.workbenches import (
     load_persisted_workbench_modes,
     save_persisted_workbench_modes,
 )
-from api.operations import migrate_data, readiness_checks, service_marker
+from api.operations import migrate_data, migrate_procurement_data, readiness_checks, service_marker
+from api.procurement import ProcurementStore, create_procurement_router
+from api.procurement_collaboration import capabilities
 
 
 API_VERSION = "0.1.0"
@@ -130,6 +136,23 @@ class UserUpdate(BaseModel):
     is_active: bool | None = None
     is_system_admin: bool | None = None
     scope_levels: dict[AccessScope, AccessLevel] | None = None
+
+
+class ProfileResponse(CurrentUserResponse):
+    procurement_capabilities: dict[str, bool]
+
+
+class ProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    display_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    department: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)] | None = None
+
+
+class PasswordUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    current_password: Annotated[str, StringConstraints(min_length=1, max_length=1000)]
+    new_password: Annotated[str, StringConstraints(min_length=12, max_length=1000)]
+    confirm_password: Annotated[str, StringConstraints(min_length=12, max_length=1000)]
 
 
 class FieldPolicyUpdate(BaseModel):
@@ -266,24 +289,63 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     identities = IdentityStore(runtime_settings.database_path)
     authorization = AuthorizationStore(runtime_settings.database_path)
     knowledge = KnowledgeStore(runtime_settings.database_path, runtime_settings.data_dir)
+    procurement = ProcurementStore(runtime_settings.database_path)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.startup_error = None
+        app.state.procurement_error = None
+        app.state.procurement_scheduler = "ok"
+        scheduler_task: asyncio.Task[None] | None = None
+
+        async def run_procurement_scheduler() -> None:
+            while True:
+                await asyncio.sleep(30)
+                try:
+                    procurement.process_scheduled()
+                    app.state.procurement_scheduler = "ok"
+                except (OSError, RuntimeError, ValueError, sqlite3.Error):
+                    app.state.procurement_scheduler = "failed"
+
         with ExitStack() as stack:
             try:
                 runtime_settings.ensure_directories()
                 stack.enter_context(service_marker(runtime_settings))
-                migrate_data(runtime_settings)
+                database_preexisted = runtime_settings.database_path.is_file()
+                migrate_data(runtime_settings, include_workbenches=False)
                 app.state.database = database
                 app.state.identities = identities
                 app.state.authorization = authorization
                 app.state.knowledge = knowledge
+                app.state.procurement = procurement
+                if runtime_settings.workbench_modes["procurement"] == "active":
+                    try:
+                        migrate_procurement_data(
+                            runtime_settings,
+                            backup_before_migration=database_preexisted,
+                        )
+                        procurement.process_scheduled()
+                        scheduler_task = asyncio.create_task(run_procurement_scheduler())
+                    except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
+                        app.state.procurement_error = str(error)
+                        app.state.procurement_scheduler = "failed"
             except (OSError, RuntimeError, ValueError) as error:
                 app.state.startup_error = str(error)
-            yield
+            try:
+                yield
+            finally:
+                if scheduler_task is not None:
+                    scheduler_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await scheduler_task
 
     app = FastAPI(title="Honghao AI API", version=API_VERSION, lifespan=lifespan)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, error: RequestValidationError):
+        if request.url.path == "/api/me/password":
+            return JSONResponse(status_code=422, content={"detail": "请填写当前密码及两次新密码，新密码长度须为 12–1000 个字符，且不能包含其他字段"})
+        return await request_validation_exception_handler(request, error)
 
     def current_user(request: Request) -> dict:
         user = getattr(request.state, "current_user", None)
@@ -369,6 +431,8 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         checks["runtime_startup"] = (
             "failed" if app.state.startup_error is not None else "ok"
         )
+        if runtime_settings.workbench_modes["procurement"] == "active" and app.state.procurement_error is None:
+            checks["procurement_scheduler"] = app.state.procurement_scheduler
         response = ReadinessResponse(
             status="ready" if all(value == "ok" for value in checks.values()) else "not_ready",
             checks=cast(dict[str, Literal["ok", "failed"]], checks),
@@ -412,6 +476,32 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     @app.get("/api/me", response_model=CurrentUserResponse)
     def me(request: Request) -> CurrentUserResponse:
         return CurrentUserResponse(**current_user(request))
+
+    @app.get("/api/me/profile", response_model=ProfileResponse)
+    def me_profile(request: Request) -> ProfileResponse:
+        user = current_user(request)
+        return ProfileResponse(**user, procurement_capabilities=capabilities(runtime_settings.database_path, user))
+
+    @app.post("/api/me/password")
+    def me_password(update: PasswordUpdate, request: Request, response: Response) -> dict[str, str]:
+        result = identities.change_password(current_user(request)["id"], request.cookies.get(SESSION_COOKIE_NAME, ""), update.current_password, update.new_password, update.confirm_password)
+        errors = {"invalid": (422, "两次新密码须一致，长度为 12–1000 个字符"), "expired": (401, "登录状态已变化，请重新登录"), "wrong": (400, "当前密码不正确"), "same": (422, "新密码不能与当前密码相同"), "limited": (429, "当前密码错误次数过多，请在 15 分钟后重试")}
+        if result in errors:
+            status, message = errors[result]
+            raise HTTPException(status_code=status, detail=message)
+        response.delete_cookie(SESSION_COOKIE_NAME, path="/api", httponly=True, samesite="strict")
+        return {"message": "密码已修改，所有登录会话已退出，请重新登录。"}
+
+    @app.patch("/api/users/{user_id}/profile", response_model=UserResponse)
+    def update_profile(user_id: str, update: ProfileUpdate, request: Request) -> UserResponse:
+        actor = require_system_admin(request)
+        try:
+            user = identities.update_profile(user_id, actor_id=actor["id"], display_name=update.display_name, department=update.department or None)
+        except PermissionError as error:
+            raise HTTPException(status_code=403, detail="Administrator required") from error
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        return UserResponse(**user)
 
     @app.post("/api/logout", status_code=204)
     def logout(request: Request, response: Response) -> None:
@@ -931,6 +1021,8 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
         return TaskResponse(**task)
+
+    app.include_router(create_procurement_router(procurement, authorization, runtime_settings))
 
     if static_root is not None:
         _mount_static_frontend(app, static_root)

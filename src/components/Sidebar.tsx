@@ -1,15 +1,19 @@
 import {
+  ArrowLeft,
   ChevronDown,
   ChevronRight,
   Columns2,
+  Database,
   FolderClosed,
   FolderKanban,
   LibraryBig,
+  LayoutDashboard,
   LogOut,
   MessageCircle,
   PanelsTopLeft,
   PenLine,
   Plus,
+  PackageCheck,
   Search,
   Settings,
   UserRound,
@@ -17,8 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import userAvatar from "../assets/avatar-zhang-wei-v1.png";
-import type { Conversation, CurrentUser, ModuleVisibility, Project, RuntimeEnvironment, Section } from "../types";
+import { PROCUREMENT_PAGE_LABELS, type Conversation, type CurrentUser, type ModuleVisibility, type ProcurementPage, type Project, type RuntimeEnvironment, type Section, type WorkbenchId } from "../types";
 
 type SidebarProps = {
   currentUser: CurrentUser;
@@ -30,6 +33,9 @@ type SidebarProps = {
   dataState: "loading" | "ready" | "error";
   enabledModules: ModuleVisibility;
   environment: RuntimeEnvironment | null;
+  openedWorkbenchId: WorkbenchId | null;
+  procurementPage: ProcurementPage;
+  onProcurementPageChange: (page: ProcurementPage) => void;
   onSectionChange: (section: Section) => void;
   onNewConversation: () => void;
   onConversationOpen: (conversationId: string) => void;
@@ -40,6 +46,7 @@ type SidebarProps = {
   mobileOpen: boolean;
   onMobileClose: () => void;
   onOpenSettings: () => void;
+  onOpenProfile: () => void;
   onLogout: () => Promise<void>;
 };
 
@@ -49,6 +56,13 @@ const navItems = [
   { id: "automation", label: "自动化", icon: WandSparkles },
   { id: "workbench", label: "工作台", icon: PanelsTopLeft },
   { id: "tasks", label: "任务看板", icon: FolderKanban },
+] as const;
+
+const procurementPages = [
+  { id: "dashboard", icon: LayoutDashboard },
+  { id: "materials", icon: Database },
+  { id: "distribution", icon: Columns2 },
+  { id: "batches", icon: PackageCheck },
 ] as const;
 
 export function Sidebar({
@@ -61,6 +75,9 @@ export function Sidebar({
   dataState,
   enabledModules,
   environment,
+  openedWorkbenchId,
+  procurementPage,
+  onProcurementPageChange,
   onSectionChange,
   onNewConversation,
   onConversationOpen,
@@ -71,6 +88,7 @@ export function Sidebar({
   mobileOpen,
   onMobileClose,
   onOpenSettings,
+  onOpenProfile,
   onLogout,
 }: SidebarProps) {
   const [expandedProjectId, setExpandedProjectId] = useState("");
@@ -88,6 +106,11 @@ export function Sidebar({
 
   const openConversation = (conversationId: string) => {
     onConversationOpen(conversationId);
+    onMobileClose();
+  };
+
+  const openProcurementPage = (page: ProcurementPage) => {
+    onProcurementPageChange(page);
     onMobileClose();
   };
 
@@ -126,13 +149,23 @@ export function Sidebar({
               aria-current={activeSection === id && id !== "chat" ? "page" : undefined}
               onClick={() => id === "chat" ? onNewConversation() : selectSection(id)}
             >
-              <Icon size={18} strokeWidth={1.7} />
-              <span>{label}</span>
+              {id === "workbench" && openedWorkbenchId ? <ArrowLeft size={18} strokeWidth={1.7} /> : <Icon size={18} strokeWidth={1.7} />}
+              <span>{id === "workbench" && openedWorkbenchId ? "返回工作台" : label}</span>
             </button>
           ))}
         </nav>
 
         <div className="sidebar__scroll">
+          {activeSection === "workbench" && openedWorkbenchId === "procurement" && (
+            <SidebarGroup title="采购工作台">
+              {procurementPages.map(({ id, icon: Icon }) => (
+                <button className={(procurementPage === "updates" ? "materials" : procurementPage === "history" ? "batches" : procurementPage) === id ? "workbench-page-row is-active" : "workbench-page-row"} type="button" key={id} aria-current={(procurementPage === "updates" ? "materials" : procurementPage === "history" ? "batches" : procurementPage) === id ? "page" : undefined} onClick={() => openProcurementPage(id)}>
+                  <Icon size={15} strokeWidth={1.7} />
+                  <span>{PROCUREMENT_PAGE_LABELS[id]}</span>
+                </button>
+              ))}
+            </SidebarGroup>
+          )}
           {enabledModules.chat && <>
             <SidebarGroup title="置顶"><p className="sidebar-empty">暂无置顶会话</p></SidebarGroup>
             <SidebarGroup title="项目" action={<button className="sidebar-group__action" type="button" aria-label="新建项目" onClick={() => setProjectCreateOpen((open) => !open)}><Plus size={14} /></button>}>
@@ -179,15 +212,14 @@ export function Sidebar({
         <div className="profile-area">
           {profileOpen && (
             <div className="profile-menu" role="menu">
-              <button role="menuitem" type="button"><UserRound size={16} /><span>个人资料</span></button>
-              <button role="menuitem" type="button"><Columns2 size={16} /><span>使用情况</span></button>
+              <button role="menuitem" type="button" onClick={onOpenProfile}><UserRound size={16} /><span>个人资料</span></button>
               <button role="menuitem" type="button" onClick={onOpenSettings}><Settings size={16} /><span>系统设置</span><span className="profile-menu__meta">Ctrl+,</span></button>
               <div className="profile-menu__divider" />
               <button className="is-danger" role="menuitem" type="button" onClick={() => void onLogout()}><LogOut size={16} /><span>退出登录</span></button>
             </div>
           )}
           <button className="profile-trigger" type="button" onClick={onProfileToggle} aria-expanded={profileOpen}>
-            <span className="avatar"><img src={userAvatar} alt={`${currentUser.display_name}的虚拟头像`} /></span>
+            <span className="avatar" aria-hidden="true">{Array.from(currentUser.display_name)[0]}</span>
             <span className="profile-trigger__copy"><strong>{currentUser.display_name}</strong><small>{currentUser.department ?? (currentUser.is_system_admin ? "系统管理员" : "企业用户")}</small></span>
             <ChevronDown size={15} />
           </button>

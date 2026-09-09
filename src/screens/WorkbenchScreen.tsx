@@ -10,7 +10,8 @@ import {
 } from "lucide-react";
 import { useEffect } from "react";
 import { TopBar, type ScreenChromeProps } from "../components/TopBar";
-import type { WorkbenchId, WorkbenchStatus } from "../types";
+import { WorkbenchModuleSlot } from "../workbenches/WorkbenchModuleSlot";
+import { PROCUREMENT_PAGE_LABELS, type CurrentUser, type ProcurementPage, type WorkbenchId, type WorkbenchStatus } from "../types";
 
 export const workbenches = [
   {
@@ -39,7 +40,7 @@ export const workbenches = [
     modules: ["供应商报价归集", "到厂成本计算", "价格波动提示"],
     source: "供应商报价、采购订单及运输费用",
     output: "经采购确认的原料成本基线",
-    owner: "采购经办人与采购负责人",
+    owner: "采购员",
   },
   {
     id: "research",
@@ -74,13 +75,18 @@ export const workbenches = [
 type WorkbenchDefinition = (typeof workbenches)[number];
 
 type WorkbenchScreenProps = ScreenChromeProps & {
+  currentUser: CurrentUser;
   statuses: WorkbenchStatus[];
   dataState: "loading" | "ready" | "error";
   selectedId: WorkbenchId;
   onSelectedIdChange: (id: WorkbenchId) => void;
+  openedWorkbenchId: WorkbenchId | null;
+  onOpenedWorkbenchIdChange: (id: WorkbenchId | null) => void;
+  procurementPage: ProcurementPage;
+  onProcurementPageChange: (page: ProcurementPage) => void;
 };
 
-export function WorkbenchScreen({ statuses, dataState, selectedId, onSelectedIdChange, ...chrome }: WorkbenchScreenProps) {
+export function WorkbenchScreen({ currentUser, statuses, dataState, selectedId, onSelectedIdChange, openedWorkbenchId, onOpenedWorkbenchIdChange, procurementPage, onProcurementPageChange, ...chrome }: WorkbenchScreenProps) {
   const modes = new Map(statuses.map((status) => [status.id, status.mode]));
   const visibleWorkbenches = dataState === "ready"
     ? workbenches.filter((item) => {
@@ -100,11 +106,13 @@ export function WorkbenchScreen({ statuses, dataState, selectedId, onSelectedIdC
       ? "模块状态暂不可用"
       : `${visibleWorkbenches.length} 个职能工作台`;
 
+  const procurementOpen = openedWorkbenchId === "procurement" && selected?.id === "procurement";
+
   return (
     <main className="app-main">
-      <TopBar {...chrome} title="工作台" subtitle={subtitle} tabs={null} contextEnabled={false} />
-      <section className="workspace-layout workspace-layout--workbench">
-        <aside className="workspace-list-panel workbench-index">
+      <TopBar {...chrome} title={procurementOpen ? "采购工作台" : "工作台"} subtitle={procurementOpen ? PROCUREMENT_PAGE_LABELS[procurementPage] : subtitle} tabs={null} contextEnabled={false} />
+      <section className={`workspace-layout workspace-layout--workbench${openedWorkbenchId ? " is-module-open" : ""}`}>
+        {!openedWorkbenchId && <aside className="workspace-list-panel workbench-index">
           <div className="workspace-panel-title">
             <div>
               <h1>职能工作台</h1>
@@ -136,11 +144,19 @@ export function WorkbenchScreen({ statuses, dataState, selectedId, onSelectedIdC
               );
             })}
           </div>
-        </aside>
+        </aside>}
         {dataState !== "ready" || !selected
           ? <article className="workbench-detail workspace-detail-empty"><ShieldCheck size={22} /><strong>职能工作台未加载</strong></article>
           : modes.get(selected.id) === "active"
-            ? <ActiveWorkbenchPending selected={selected} />
+            ? <WorkbenchModuleSlot
+                workbenchId={selected.id}
+                title={selected.title}
+                currentUser={currentUser}
+                view={openedWorkbenchId === selected.id ? "full" : "preview"}
+                procurementPage={procurementPage}
+                onProcurementPageChange={onProcurementPageChange}
+                onEnter={() => onOpenedWorkbenchIdChange(selected.id)}
+              />
             : <PrototypeWorkbenchDetail selected={selected} />}
       </section>
     </main>
@@ -149,16 +165,6 @@ export function WorkbenchScreen({ statuses, dataState, selectedId, onSelectedIdC
 
 function WorkbenchState({ title, detail }: { title: string; detail: string }) {
   return <div className="workspace-empty"><ShieldCheck size={20} /><strong>{title}</strong><p>{detail}</p></div>;
-}
-
-function ActiveWorkbenchPending({ selected }: { selected: WorkbenchDefinition }) {
-  return (
-    <article className="workbench-detail workspace-detail-empty">
-      <ShieldCheck size={24} />
-      <strong>{selected.title}已进入受保护接入状态</strong>
-      <p>服务端已标记为 active，但真实模块尚未注册。为避免误用，当前不展示示例数据，也不会执行正式写入。</p>
-    </article>
-  );
 }
 
 function PrototypeWorkbenchDetail({ selected }: { selected: WorkbenchDefinition }) {
