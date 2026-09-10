@@ -11,81 +11,24 @@ from api.settings import Settings
 from tests.helpers import authenticated_client
 
 
-def test_system_admin_can_register_a_custom_sensitive_field(tmp_path: Path) -> None:
+def test_field_management_endpoints_are_retired_without_changing_history(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
-
     with authenticated_client(settings) as admin:
-        created = admin.post(
-            "/api/admin/fields",
-            json={
-                "area": "采购",
-                "name": "合同付款条件",
-                "description": "采购合同约定的付款方式与账期",
-                "read_min_level": 2,
-                "write_min_level": 3,
-                "read_scope_ids": ["procurement", "management"],
-                "write_scope_ids": ["procurement"],
-            },
-        )
-        fields = admin.get("/api/admin/fields")
+        store = AuthorizationStore(settings.database_path)
+        field = store.create_field("采购", "合同付款条件", "历史配置", 2, 3, ["procurement"], ["procurement"])
+        store.audit("field.created", actor_user_id=None, target_type="field", target_id=field["id"])
+        before = store.list_field_policies()
+        for method, url in [
+            ("GET", "/api/admin/fields"),
+            ("POST", "/api/admin/fields"),
+            ("PUT", "/api/admin/fields/procurement.material_unit_price"),
+        ]:
+            assert admin.request(method, url, json={}).status_code == 404
+        assert store.list_field_policies() == before
         events = admin.get("/api/admin/audit-events")
-
-    created_field = created.json()
-    assert created.status_code == 201
-    assert created_field["id"].startswith("custom.")
-    assert {key: value for key, value in created_field.items() if key != "id"} == {
-        "area": "采购",
-        "name": "合同付款条件",
-        "description": "采购合同约定的付款方式与账期",
-        "read_min_level": 2,
-        "write_min_level": 3,
-        "read_scope_ids": ["management", "procurement"],
-        "write_scope_ids": ["procurement"],
-    }
-    assert created_field in fields.json()
-    assert any(
-        event["action"] == "field.created" and event["target_id"] == created_field["id"]
-        for event in events.json()
-    )
-
-
-def test_view_permission_cannot_be_used_as_field_write_permission(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
-
-    with authenticated_client(settings) as admin:
-        response = admin.put(
-            "/api/admin/fields/procurement.material_unit_price",
-            json={
-                "read_min_level": 2,
-                "write_min_level": 2,
-                "read_scope_ids": ["procurement"],
-                "write_scope_ids": ["procurement"],
-            },
-        )
-
-    assert response.status_code == 422
-
-
-def test_security_changes_and_logins_are_audited_without_field_values(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
-
-    with authenticated_client(settings) as admin:
-        admin.put(
-            "/api/admin/fields/sales.floor_price",
-            json={
-                "read_min_level": 2,
-                "write_min_level": 3,
-                "read_scope_ids": ["sales", "management"],
-                "write_scope_ids": ["sales"],
-            },
-        )
-        events = admin.get("/api/admin/audit-events")
-
-    assert events.status_code == 200
-    assert {"login.succeeded", "field.policy.updated"} <= {
-        event["action"] for event in events.json()
-    }
-    assert "报价底价" not in events.text
+        assert events.status_code == 200
+        assert {"login.succeeded", "field.created"} <= {event["action"] for event in events.json()}
+        assert "合同付款条件" not in events.text
 
 
 def test_non_admin_cannot_read_management_policies_or_audit(tmp_path: Path) -> None:
@@ -120,7 +63,7 @@ def test_non_admin_cannot_read_management_policies_or_audit(tmp_path: Path) -> N
             employee.get("/api/admin/audit-events"),
         ]
 
-    assert [response.status_code for response in responses] == [403, 403, 403]
+    assert [response.status_code for response in responses] == [404, 404, 403]
 
 
 def test_authorization_schema_migrates_custom_fields_additively(tmp_path: Path) -> None:

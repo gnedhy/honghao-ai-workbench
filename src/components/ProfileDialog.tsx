@@ -1,10 +1,18 @@
-import { ChevronRight, Info, KeyRound, ShieldCheck, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Check, ChevronRight, Eye, EyeOff, Info, KeyRound, X } from "lucide-react";
+import { useEffect, useRef, useState, type InputHTMLAttributes } from "react";
 import { changeMyPassword, fetchPersonalProfile } from "../api";
+import { DiscardChangesDialog, SettingsGroup, useFadingScrollbars } from "./SettingsDialog";
 import type { CurrentUser, PersonalProfile } from "../types";
 
 const SCOPE_NAMES: Record<string, string> = { procurement: "采购工作台", research: "研发工作台", sales: "销售工作台", management: "总经办工作台", knowledge: "知识库" };
 const LEVEL_NAMES: Record<number, string> = { 2: "查看", 3: "编辑", 4: "管理" };
+
+function PasswordInput({ label, ...props }: InputHTMLAttributes<HTMLInputElement> & { label: string }) {
+  const [visible, setVisible] = useState(false);
+  const hasValue = String(props.value ?? "").length > 0;
+  useEffect(() => { if (!hasValue) setVisible(false); }, [hasValue]);
+  return <span className="personal-password-input"><input {...props} type={visible && hasValue ? "text" : "password"} /><button type="button" className="personal-password-eye" data-visible={hasValue} aria-hidden={!hasValue} tabIndex={hasValue ? 0 : -1} aria-label={`${visible ? "隐藏" : "显示"}${label}`} aria-pressed={visible} disabled={props.disabled || !hasValue} onClick={() => setVisible(value => !value)}>{visible ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}</button></span>;
+}
 
 export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, beforePasswordChange }: {
   onClose: () => void;
@@ -13,6 +21,7 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
   beforePasswordChange: () => boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  useFadingScrollbars(dialog);
   const busy = useRef(false);
   const [profile, setProfile] = useState<PersonalProfile | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -20,17 +29,12 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
   const [expanded, setExpanded] = useState(false);
   const [instant, setInstant] = useState(false);
   const [passwords, setPasswords] = useState({ current_password: "", new_password: "", confirm_password: "" });
+  const variety = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/].filter(pattern => pattern.test(passwords.new_password)).length;
+  const strength = passwords.new_password.length < 8 || /^(.)\1+$/.test(passwords.new_password) || /^(1234567890?|password|qwerty|admin)/i.test(passwords.new_password) ? "较弱" : passwords.new_password.length >= 12 && variety >= 3 ? "较高" : "一般";
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [discardOpen, setDiscardOpen] = useState(false);
-  const keepEditing = useRef<HTMLButtonElement>(null);
   const dirty = Object.values(passwords).some(Boolean);
-  const priceAccess = profile?.procurement_capabilities.can_manage_grants ? "启用与授权管理" : profile?.procurement_capabilities.can_activate ? "仅启用" : "未授权";
-  const priceAccessDescription = profile?.procurement_capabilities.can_manage_grants
-    ? "可以启用采购价格，也可以授予或撤销其他人的价格启用权。不包含账号管理或其他业务权限。"
-    : profile?.procurement_capabilities.can_activate
-      ? "可以启用采购价格，不能授予或撤销他人的启用权。"
-      : "不能启用采购价格。录入、修改价格仍以已有业务和字段权限为准。";
 
   useEffect(() => {
     const trigger = document.querySelector<HTMLButtonElement>(".profile-trigger");
@@ -44,7 +48,7 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
     setLoadError("");
     void fetchPersonalProfile(controller.signal).then((data) => {
       if (!controller.signal.aborted) { setProfile(data); onUserChanged(data); }
-    }).catch(() => { if (!controller.signal.aborted) setLoadError("个人资料读取失败，请重试；登录失效时请重新登录。"); });
+    }).catch(() => { if (!controller.signal.aborted) setLoadError("我的账号读取失败，请重试；登录失效时请重新登录。"); });
     return () => controller.abort();
   }, [reload, onUserChanged]);
 
@@ -54,7 +58,6 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
     return () => window.removeEventListener("beforeunload", protect);
   }, [dirty]);
 
-  useEffect(() => { if (discardOpen) keepEditing.current?.focus(); }, [discardOpen]);
 
   const close = () => {
     if (busy.current) return;
@@ -87,32 +90,43 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
       const rect = event.currentTarget.getBoundingClientRect();
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) close();
     }}>
-    <header><h1 id="personal-profile-title">个人资料</h1><button className="icon-button" type="button" aria-label="关闭个人资料" autoFocus disabled={submitting} onClick={close}><X size={18} /></button></header>
-    {discardOpen && <section className="personal-profile__discard" role="alertdialog" aria-labelledby="profile-discard-title" aria-describedby="profile-discard-copy"><h2 id="profile-discard-title">放弃密码输入？</h2><p id="profile-discard-copy">密码尚未保存，关闭后需重新输入。</p><div className="admin-form-actions"><button ref={keepEditing} className="secondary-button" type="button" onClick={() => { setDiscardOpen(false); dialog.current?.querySelector<HTMLButtonElement>("header button")?.focus(); }}>继续编辑</button><button className="primary-button" type="button" onClick={onClose}>放弃并关闭</button></div></section>}
-    <div className="personal-profile__body" hidden={discardOpen} inert={discardOpen}>
-      {loadError ? <div role="alert"><p>{loadError}</p><button className="secondary-button" onClick={() => setReload((value) => value + 1)}>重新读取</button></div> : !profile ? <p role="status">正在读取个人资料…</p> : <>
-        <div className="personal-profile__identity"><span className="avatar" aria-hidden="true">{Array.from(profile.display_name)[0]}</span><div><div className="personal-profile__name"><strong>{profile.display_name}</strong>{profile.is_system_admin && <span className="personal-profile__role">系统管理员</span>}</div><p><span aria-label={`登录账号：${profile.username}`}>{profile.username}</span><span aria-hidden="true"> · </span><span aria-label={`部门：${profile.department || "未填写"}`}>{profile.department || "未填写"}</span></p></div></div>
-        <div className="personal-profile__access">
-          <details><summary><span><ShieldCheck size={16} />访问权限</span><span className="personal-profile__summary">{profile.is_system_admin ? "全部业务范围" : Object.keys(profile.scope_levels).length ? `${Object.keys(profile.scope_levels).length} 项业务范围` : "未授权"}<ChevronRight size={14} /></span></summary>
-            <div className="personal-profile__detail">{profile.is_system_admin ? <p>系统管理员，拥有全部业务范围和系统管理权限。</p> : Object.keys(profile.scope_levels).length ? <dl className="personal-profile__rows">{Object.entries(profile.scope_levels).map(([scope, level]) => <div key={scope}><dt>{SCOPE_NAMES[scope] || scope}</dt><dd>{LEVEL_NAMES[level!] || "未授权"}</dd></div>)}</dl> : <p>暂无业务授权，需要使用业务功能时请联系管理员。</p>}</div>
-          </details>
-          <details className="personal-profile__price-access"><summary><span><ShieldCheck size={16} />采购价格权限</span><span className="personal-profile__summary">{priceAccess}<Info size={14} /></span></summary><div className="personal-profile__detail"><p>{priceAccessDescription}</p><p>业务功能仍受模块启用状态限制。</p></div></details>
-        </div>
+    <header><h1 id="personal-profile-title">我的账号</h1><button className="icon-button" type="button" aria-label="关闭我的账号" autoFocus disabled={submitting} onClick={close}><X size={18} /></button></header>
+    {discardOpen && <DiscardChangesDialog description="关闭后，未保存的密码输入将不会保留。" confirmLabel="放弃并关闭" onCancel={() => setDiscardOpen(false)} onDiscard={onClose} />}
+    <div className="personal-profile__body">
+      {loadError ? <div role="alert"><p>{loadError}</p><button className="secondary-button" onClick={() => setReload((value) => value + 1)}>重新读取</button></div> : !profile ? <p role="status">正在读取我的账号…</p> : <>
+        <div className="personal-profile__identity"><span className="avatar" aria-hidden="true">{Array.from(profile.display_name)[0]}</span><div><div className="personal-profile__name"><strong>{profile.display_name}</strong>{profile.is_system_admin && <span className="personal-profile__role">管理员</span>}</div><p><span aria-label={`登录账号：${profile.username}`}>{profile.username}</span><span aria-hidden="true"> · </span><span aria-label={`部门：${profile.department || "未分配"}`}>{profile.department || "未分配"}</span></p></div></div>
+        {!!profile.departments?.some(d => !d.is_primary) && <p className="personal-profile__hint">兼属：{profile.departments.filter(d => !d.is_primary).map(d => d.name).join('、')}</p>}
+        <div className="personal-profile__scroll" tabIndex={0} role="region" aria-label="我的权限与密码设置">
+        <section className="personal-profile__access personal-account-permissions" aria-label="我的权限">
+          <SettingsGroup id="my-permissions" title="我的权限" description="查看功能模块与职能工作台的授权范围。" summary={profile.is_system_admin ? "系统管理员" : `${Object.keys(profile.scope_levels).length} 项已授权`}>
+            {profile.is_system_admin && <p className="personal-profile__hint">拥有全部业务范围和系统管理权限。</p>}
+            {[{ id: "modules", title: "功能模块", scopes: ["knowledge"] }, { id: "workbenches", title: "职能工作台", scopes: ["procurement", "research", "sales", "management"] }].map(group => ({ ...group, scopes: group.scopes.filter(scope => profile.is_system_admin || (profile.scope_levels[scope as keyof typeof profile.scope_levels] ?? 0) >= 2) })).filter(group => group.scopes.length > 0).map(group => <SettingsGroup key={group.id} id={"my-permissions-" + group.id} title={group.title} description={group.id === "modules" ? "查看各功能模块的访问权限。" : "查看各工作台的业务操作权限。"} summary={`${group.scopes.length} 项已授权`}>
+              {group.scopes.map(scope => <div className="personal-account-scope" key={scope}>
+                <div className="personal-account-scope-heading"><span>{SCOPE_NAMES[scope]}</span><span>{profile.is_system_admin ? "管理" : LEVEL_NAMES[profile.scope_levels[scope as keyof typeof profile.scope_levels]!] || "未授权"}</span></div>
+                {scope === "procurement" && <div className="personal-capabilities">
+                  {[{ id: "activate", label: "价格启用", allowed: profile.procurement_capabilities.can_activate, help: "将已确认的采购价格启用为当前价格。录入、修改价格以工作台授权等级为准。" }, { id: "grants", label: "启用权分配", allowed: profile.procurement_capabilities.can_manage_grants, help: "授予或撤销其他人的价格启用权，不包含账号管理或其他业务授权。" }].map(item => <div className="personal-capability" key={item.id}>
+                    <div className="personal-capability-row"><span>{item.label}<button type="button" className="personal-capability-help" aria-label={item.label + "说明：" + item.help} title={item.help}><Info size={13} /></button></span><span>{item.allowed ? "已授权" : "未授权"}</span></div>
+                  </div>)}
+                </div>}
+              </div>)}
+            </SettingsGroup>)}
+            <p className="personal-profile__hint">{!profile.is_system_admin && !Object.values(profile.scope_levels).some(level => level >= 2) ? "暂无已授权的功能模块或工作台。" : "业务功能仍受模块启用状态限制。"}</p>
+          </SettingsGroup>
+        </section>
         <section className="personal-profile__security" aria-label="账号安全">
           <button className="personal-profile__password-toggle" type="button" aria-expanded={expanded} aria-controls="profile-password-form" disabled={submitting} onClick={(event) => { setInstant(event.detail === 0); setExpanded(!expanded); }}><span><KeyRound size={16} />修改密码</span><ChevronRight size={16} /></button>
           <div className="personal-profile__collapse" data-open={expanded} data-instant={instant} aria-hidden={!expanded} inert={!expanded}><div>
             <form id="profile-password-form" className="personal-profile__password-form" onSubmit={submit} aria-busy={submitting}>
-              <p id="profile-password-help" className="personal-profile__hint">新密码须为 12–1000 个字符。修改成功后，所有设备需重新登录。</p>
-              <label>当前密码<input type="password" autoComplete="current-password" required maxLength={1000} disabled={submitting} value={passwords.current_password} onChange={(event) => setPasswords({ ...passwords, current_password: event.target.value })} /></label>
-              <label>新密码<input type="password" autoComplete="new-password" aria-describedby="profile-password-help" required minLength={12} maxLength={1000} disabled={submitting} value={passwords.new_password} onChange={(event) => setPasswords({ ...passwords, new_password: event.target.value })} /></label>
-              <label>确认新密码<input type="password" autoComplete="new-password" required minLength={12} maxLength={1000} disabled={submitting} value={passwords.confirm_password} onChange={(event) => setPasswords({ ...passwords, confirm_password: event.target.value })} /></label>
+              <label>当前密码<PasswordInput label="当前密码" autoComplete="current-password" required maxLength={1000} disabled={submitting} value={passwords.current_password} onChange={(event) => setPasswords({ ...passwords, current_password: event.target.value })} /></label>
+              <label>新密码<PasswordInput label="新密码" autoComplete="new-password" aria-describedby={passwords.new_password ? "password-strength" : undefined} required maxLength={1000} disabled={submitting} value={passwords.new_password} onChange={(event) => { setPasswords({ ...passwords, new_password: event.target.value }); setError(""); }} />{passwords.new_password && <span id="password-strength" className="password-strength" data-strength={strength} role="status"><span className="password-strength-line"><span className="password-strength-bars" aria-hidden="true">{[1, 2, 3].map(segment => <span key={segment} data-active={segment <= (strength === "较高" ? 3 : strength === "一般" ? 2 : 1)} />)}</span><span>安全性{strength}</span></span><span className="password-advice">仅供参考，不影响保存</span></span>}</label>
+              <label>确认新密码<PasswordInput label="确认新密码" autoComplete="new-password" aria-describedby={passwords.confirm_password ? "password-match" : undefined} aria-invalid={!!passwords.confirm_password && passwords.new_password !== passwords.confirm_password} required maxLength={1000} disabled={submitting} value={passwords.confirm_password} onChange={(event) => { setPasswords({ ...passwords, confirm_password: event.target.value }); setError(""); }} />{passwords.confirm_password && <span id="password-match" className="password-advice" data-match={passwords.new_password === passwords.confirm_password} role="status">{passwords.new_password === passwords.confirm_password ? <><Check size={13} aria-hidden="true" />两次密码一致</> : "两次密码不一致，请核对"}</span>}</label>
               {error && <p className="login-error" role="alert">{error}</p>}
               <div className="admin-form-actions"><button className="primary-button" type="submit" disabled={submitting}>{submitting ? "正在修改…" : "修改密码并重新登录"}</button></div>
             </form>
           </div></div>
         </section>
+        </div>
       </>}
     </div>
-    {profile && !discardOpen && <footer className="personal-profile__note">姓名与部门由管理员维护 · 登录账号不可修改</footer>}
   </dialog>;
 }

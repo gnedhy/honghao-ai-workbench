@@ -14,6 +14,8 @@ ModuleMode = Literal["off", "prototype", "active"]
 RuntimeEnvironment = Literal["test", "production"]
 MODULE_MODES: tuple[ModuleMode, ...] = ("off", "prototype", "active")
 REQUIRED_ACTIVATION_REVIEWS = frozenset({"business", "security", "code", "rollback"})
+# Increment when activation scope or security boundaries materially change.
+ACTIVATION_REVIEW_REVISION = 1
 _ISSUE_URL = re.compile(r"^https://github\.com/[^/]+/[^/]+/issues/\d+$")
 _PULL_REQUEST_URL = re.compile(r"^https://github\.com/[^/]+/[^/]+/pull/\d+$")
 MODULE_IDS: tuple[ModuleId, ...] = (
@@ -60,6 +62,8 @@ def create_activation_review_record(
         "reviewed_at": datetime.now(UTC).isoformat(),
         "issue_url": issue_url,
         "pull_request_url": pull_request_url,
+        "confirmation_version": 1,
+        "activation_revision": ACTIVATION_REVIEW_REVISION,
     }
 
 
@@ -73,7 +77,7 @@ def activation_review_is_complete(record: object) -> bool:
         and set(checks) == REQUIRED_ACTIVATION_REVIEWS
         and all(
             isinstance(record.get(key), str) and bool(record[key])
-            for key in ("reviewed_by", "reviewed_at", "issue_url", "pull_request_url")
+            for key in ("reviewed_by", "reviewed_at")
         )
     ):
         return False
@@ -84,9 +88,23 @@ def activation_review_is_complete(record: object) -> bool:
         return False
     return (
         reviewed_at.tzinfo is not None
-        and _ISSUE_URL.fullmatch(record["issue_url"]) is not None
-        and _PULL_REQUEST_URL.fullmatch(record["pull_request_url"]) is not None
+        and (record.get("confirmation_version") == 1 or (
+            isinstance(record.get("issue_url"), str)
+            and isinstance(record.get("pull_request_url"), str)
+            and _ISSUE_URL.fullmatch(record["issue_url"]) is not None
+            and _PULL_REQUEST_URL.fullmatch(record["pull_request_url"]) is not None
+        ))
     )
+
+
+def reusable_activation_review(data_dir: Path, filename: str, target: str) -> dict[str, object] | None:
+    path = data_dir / filename
+    if not path.exists():
+        return None
+    record = json.loads(path.read_text(encoding="utf-8")).get("activation_reviews", {}).get(target)
+    if activation_review_is_complete(record) and record.get("activation_revision", 1) == ACTIVATION_REVIEW_REVISION:
+        return dict(record)
+    return None
 
 
 def create_mode_change_record(

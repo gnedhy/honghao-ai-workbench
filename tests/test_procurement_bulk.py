@@ -87,7 +87,7 @@ def test_bulk_schedule_isolation_confirmation_and_cancel(tmp_path):
         assert all(item['published_price'] == '10' for item in final['materials'])
 
 
-def test_bulk_requires_scope_and_price_field_permission(tmp_path):
+def test_bulk_requires_edit_scope_and_ignores_legacy_field_restriction(tmp_path):
     settings = procurement_settings(tmp_path)
     with authenticated_client(settings) as admin:
         base = import_prices(admin, '2026-09-01', [('A', 10)])
@@ -95,11 +95,14 @@ def test_bulk_requires_scope_and_price_field_permission(tmp_path):
         request = payload(None, [{'material_id': base['input_items'][0]['material_id'], 'price': '11'}])
         for level in [2, 3]:
             IdentityStore(settings.database_path).create_user(username=f'bulk-{level}', display_name='采购测试', department='采购', password='Bulk-Test-Password-2026', scope_levels={'procurement': level})
-        assert admin.put('/api/admin/fields/procurement.material_unit_price', json={'read_min_level': 2, 'write_min_level': 4, 'read_scope_ids': ['procurement'], 'write_scope_ids': ['procurement']}).status_code == 200
+        from api.authorization import AuthorizationStore
+        AuthorizationStore(settings.database_path).set_field_policy("procurement.material_unit_price", 2, 4, ["procurement"], ["procurement"])
     before = snapshot(settings.database_path)
     for level in [2, 3]:
         with TestClient(create_app(settings)) as client:
             assert procurement_post(client,'/api/login', json={'username': f'bulk-{level}', 'password': 'Bulk-Test-Password-2026'}).status_code == 200
-            assert procurement_post(client,URL, json=request).status_code == 403
-    assert snapshot(settings.database_path) == before
+            response = procurement_post(client,URL, json=request)
+            assert response.status_code == (403 if level == 2 else 200)
+            if level == 2:
+                assert snapshot(settings.database_path) == before
 from tests.procurement_helpers import procurement_post

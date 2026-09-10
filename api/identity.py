@@ -11,11 +11,14 @@ from typing import Any
 from uuid import uuid4
 
 from api.authorization import AuthorizationStore
+from api import organization
 
 
-IDENTITY_SCHEMA_VERSION = 5
+IDENTITY_SCHEMA_VERSION = 6
 SESSION_COOKIE_NAME = "honghao_session"
 SYSTEM_ADMIN_ROLE_ID = "system-admin"
+# Explicit deployment policy for new and administrator-reset credentials.
+INITIAL_ACCOUNT_PASSWORD = "123456"
 
 SCOPE_ACCESS_LEVELS = (2, 3, 4)
 SCOPE_IDS = ("management", "procurement", "research", "sales", "knowledge")
@@ -169,7 +172,7 @@ class IdentityStore:
                 )
                 version_number = IDENTITY_SCHEMA_VERSION
             if version_number != IDENTITY_SCHEMA_VERSION:
-                if version_number == 4:
+                if version_number in (4, 5):
                     connection.execute("UPDATE schema_metadata SET value=? WHERE key='identity_schema_version'", (IDENTITY_SCHEMA_VERSION,))
                     version_number = IDENTITY_SCHEMA_VERSION
             if version_number != IDENTITY_SCHEMA_VERSION:
@@ -178,6 +181,7 @@ class IdentityStore:
                 "INSERT OR IGNORE INTO identity_roles (id, name, system) VALUES (?, ?, 1)",
                 SYSTEM_ROLES,
             )
+            organization.initialize(connection)
 
     def create_user(
         self,
@@ -188,6 +192,8 @@ class IdentityStore:
         password: str,
         is_system_admin: bool = False,
         scope_levels: dict[str, int] | None = None,
+        primary_department_id: str | None = None,
+        additional_department_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         normalized_scopes = {} if is_system_admin else _validate_scope_levels(scope_levels or {})
         salt = os.urandom(16)
@@ -205,6 +211,8 @@ class IdentityStore:
                     "INSERT INTO identity_user_scopes (user_id, scope_id, access_level) VALUES (?, ?, ?)",
                     [(user_id, scope_id, level) for scope_id, level in normalized_scopes.items()],
                 )
+                primary = primary_department_id or (organization.legacy_department(connection, department) if department and department.strip() else None)
+                organization.assign(connection, user_id, primary, additional_department_ids or [])
         except sqlite3.IntegrityError as error:
             raise DuplicateIdentityError from error
         user = self.get_user(user_id)
@@ -272,7 +280,7 @@ class IdentityStore:
         return user, token
 
     def change_password(self, user_id: str, token: str, current: str, new: str, confirm: str) -> str:
-        if not 12 <= len(new) <= 1000 or new != confirm:
+        if not 1 <= len(new) <= 1000 or new != confirm:
             return "invalid"
         now = datetime.now(UTC)
         with sqlite3.connect(self.path) as connection:
@@ -300,15 +308,41 @@ class IdentityStore:
             AuthorizationStore(self.path).audit("password." + result, actor_user_id=user_id, target_type="account", target_id=user_id, connection=connection)
             return result
 
-    def update_profile(self, user_id: str, *, actor_id: str, display_name: str, department: str | None) -> dict[str, Any] | None:
+    def reset_initial_passwords(self, *, actor_id: str, user_ids: list[str]) -> int:
+        if actor_id in user_ids or len(set(user_ids)) != len(user_ids):
+            raise ValueError('不能重置当前管理员自身密码或重复选择账号')
+        with sqlite3.connect(self.path) as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            organization.require_admin(connection, actor_id)
+            for user_id in user_ids:
+                if not connection.execute('SELECT 1 FROM identity_users WHERE id=?', (user_id,)).fetchone():
+                    raise ValueError('账号已不存在，未执行重置')
+            for user_id in user_ids:
+                salt = os.urandom(16)
+                connection.execute('UPDATE identity_users SET password_salt=?,password_hash=? WHERE id=?', (salt, _hash_password(INITIAL_ACCOUNT_PASSWORD, salt), user_id))
+                connection.execute('DELETE FROM identity_sessions WHERE user_id=?', (user_id,))
+                connection.execute('DELETE FROM identity_password_failures WHERE user_id=?', (user_id,))
+                AuthorizationStore(self.path).audit('password.reset', actor_user_id=actor_id, target_type='account', target_id=user_id, connection=connection)
+        return len(user_ids)
+
+    def update_profile(self, user_id: str, *, actor_id: str, display_name: str | None = None, department: str | None = None, membership: dict | None = None) -> dict[str, Any] | None:
         with sqlite3.connect(self.path) as connection:
             connection.execute("BEGIN IMMEDIATE")
-            actor = connection.execute("SELECT 1 FROM identity_users WHERE id=? AND is_active=1 AND access_level=5", (actor_id,)).fetchone()
+            actor = connection.execute("SELECT 1 FROM identity_users WHERE id=? AND is_active=1 AND (access_level=5 OR id=?)", (actor_id, user_id)).fetchone()
             if actor is None:
-                raise PermissionError("Administrator required")
-            if not connection.execute("UPDATE identity_users SET display_name=?,department=? WHERE id=?", (display_name, department, user_id)).rowcount:
+                raise PermissionError("Active account owner or administrator required")
+            existing = connection.execute('SELECT department FROM identity_users WHERE id=?', (user_id,)).fetchone()
+            if existing is None:
                 return None
-            AuthorizationStore(self.path).audit("user.profile.updated", actor_user_id=actor_id, target_type="account", target_id=user_id, connection=connection)
+            if department is not None and department != existing[0]:
+                raise ValueError('部门归属请由管理员通过部门选择调整')
+            if membership is not None:
+                organization.require_admin(connection, actor_id)
+                organization.assign(connection, user_id, membership['primary_department_id'], membership['additional_department_ids'])
+                AuthorizationStore(self.path).audit('user.departments.updated', actor_user_id=actor_id, target_type='account', target_id=user_id, connection=connection)
+            if display_name is not None:
+                connection.execute('UPDATE identity_users SET display_name=? WHERE id=?', (display_name, user_id))
+                AuthorizationStore(self.path).audit("user.profile.updated", actor_user_id=actor_id, target_type="account", target_id=user_id, connection=connection)
         return self.get_user(user_id)
 
     def user_for_session(self, token: str) -> dict[str, Any] | None:
@@ -347,11 +381,15 @@ class IdentityStore:
                 "SELECT scope_id, access_level FROM identity_user_scopes WHERE user_id = ?",
                 (user_id,),
             ).fetchall()
+            memberships = connection.execute('SELECT m.department_id,d.name,m.is_primary FROM organization_memberships m JOIN organization_departments d ON d.id=m.department_id WHERE m.user_id=? ORDER BY m.is_primary DESC,d.rowid', (user_id,)).fetchall()
         return {
             "id": str(row[0]),
             "username": str(row[1]),
             "display_name": str(row[2]),
             "department": str(row[3]) if row[3] is not None else None,
+            "primary_department_id": next((d for d, _, primary in memberships if primary), None),
+            "additional_department_ids": [d for d, _, primary in memberships if not primary],
+            "departments": [{"id": d, "name": name, "is_primary": bool(primary)} for d, name, primary in memberships],
             "is_active": bool(row[4]),
             "is_system_admin": int(row[5]) == 5,
             "scope_levels": {
@@ -382,7 +420,7 @@ class IdentityStore:
         with sqlite3.connect(self.path) as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
-                "SELECT access_level FROM identity_users WHERE id = ?", (user_id,)
+                "SELECT access_level, is_active FROM identity_users WHERE id = ?", (user_id,)
             ).fetchone()
             if existing is None:
                 return None
@@ -407,8 +445,13 @@ class IdentityStore:
                     (int(is_active), user_id),
                 )
             connection.execute("DELETE FROM identity_sessions WHERE user_id = ?", (user_id,))
-            if is_active is False or is_system_admin is False or (normalized_scopes is not None and normalized_scopes.get("procurement", 0) < 3):
-                from api.procurement_collaboration import pause_schedules
+            from api.procurement_collaboration import capabilities, pause_schedules
+            current_scopes = dict(connection.execute(
+                "SELECT scope_id, access_level FROM identity_user_scopes WHERE user_id = ?", (user_id,)
+            ).fetchall())
+            current = {"id": user_id, "is_system_admin": target_is_admin, "scope_levels": current_scopes,
+                       "is_active": is_active if is_active is not None else bool(existing[1])}
+            if not capabilities(self.path, current)["can_activate"]:
                 pause_schedules(connection, user_id)
         return self.get_user(user_id)
 

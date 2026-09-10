@@ -1962,20 +1962,20 @@ def create_procurement_router(
 
     def require_price_write(user: dict[str, Any]) -> None:
         if not authorization.can_write_field(PRICE_FIELD_ID, user["is_system_admin"], user["scope_levels"]):
-            raise HTTPException(status_code=403, detail="Price field write permission required")
+            raise HTTPException(status_code=403, detail="Procurement edit permission required")
 
     def require_activation(user, *, manage=False):
         key = "can_manage_grants" if manage else "can_activate"
         if not collaboration.capabilities(store.path, user)[key]:
             raise HTTPException(status_code=403, detail="需要启用授权管理权限" if manage else "尚未获得价格启用授权")
 
-    def require_admin(user):
-        if not user["is_system_admin"]:
-            raise HTTPException(status_code=403, detail="仅管理员可维护原料目录与分组")
+    def require_catalog_management(user):
+        if not collaboration.capabilities(store.path, user)["can_manage_catalog"]:
+            raise HTTPException(status_code=403, detail="需要采购管理权限以维护原料目录与分组")
 
     def permit_archived(user: dict[str, Any], include_archived: bool) -> None:
-        if include_archived and not user["is_system_admin"] and user["scope_levels"].get("procurement", 0) < 4:
-            raise HTTPException(status_code=403, detail="Manager permission required")
+        if include_archived and not user["is_system_admin"] and user["scope_levels"].get("procurement", 0) < 3:
+            raise HTTPException(status_code=403, detail="Procurement edit permission required")
 
     def visible_payload(payload: dict[str, Any], user: dict[str, Any], fields: dict[str, str] = PRICE_KEYS) -> dict[str, Any]:
         readable = authorization.filter_readable_fields(dict.fromkeys(fields, True), fields, user["is_system_admin"], user["scope_levels"])
@@ -1989,6 +1989,13 @@ def create_procurement_router(
         return clean(payload)
 
     history_fields = {key: "procurement.supplier_quote" for key in PRICE_KEYS}
+
+    @router.get("/news")
+    def news(request: Request, source: str = "all", page: int = 1):
+        actor(request, 2)
+        if source not in {"all", "market", "商务部", "生意社", "隆众资讯"} or page < 1:
+            raise HTTPException(status_code=422, detail="资讯筛选参数无效")
+        return request.app.state.procurement_news.listing(source, page)
 
     @router.get("/overview")
     def overview(request: Request, editor_id: str | None = None, editor_scope: str = "round") -> dict[str, Any]:
@@ -2049,7 +2056,7 @@ def create_procurement_router(
     @router.put("/departments/{department_id}/materials")
     def set_department_materials(department_id: str, payload: DepartmentMaterialsRequest, request: Request):
         user = actor(request, 3)
-        require_admin(user)
+        require_catalog_management(user)
         try:
             collaboration.set_department(store.path, department_id, payload.material_ids, user["id"])
         except ValueError as error:
@@ -2146,7 +2153,7 @@ def create_procurement_router(
 
     @router.post("/updates/{update_id}/return")
     def return_update(update_id: str, payload: UpdateReasonRequest, request: Request) -> dict[str, Any]:
-        user = actor(request, 4)
+        user = actor(request, 3)
         try:
             result = store.return_update(update_id, user["id"], payload.reason)
         except ValueError as error:
@@ -2260,7 +2267,7 @@ def create_procurement_router(
     @router.patch("/materials/{material_id}")
     def update_material(material_id: str, payload: MaterialIdentityRequest, request: Request) -> dict[str, Any]:
         user = actor(request, 3)
-        require_admin(user)
+        require_catalog_management(user)
         current = store.material_detail(material_id)
         if current is None:
             raise HTTPException(status_code=404, detail="Material not found")
@@ -2283,7 +2290,7 @@ def create_procurement_router(
     @router.post("/materials", status_code=201)
     def create_material(payload: MaterialCreateRequest, request: Request):
         user = actor(request, 3)
-        require_admin(user)
+        require_catalog_management(user)
         if payload.price is not None:
             require_price_write(user)
         try:
@@ -2353,7 +2360,7 @@ def create_procurement_router(
 
     def archive_item(kind: str, item_id: str, archived: bool, request: Request) -> dict[str, bool]:
         user = actor(request, 4)
-        require_admin(user)
+        require_catalog_management(user)
         try:
             found = store.set_archive(kind, item_id, archived, user["id"])
         except ValueError as error:

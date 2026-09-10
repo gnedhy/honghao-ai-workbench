@@ -47,15 +47,15 @@ def initialize(db: sqlite3.Connection) -> None:
 
 def capabilities(path: Path, user: dict) -> dict:
     admin = user.get("is_system_admin", False)
-    write = bool(user.get("is_active", True)) and (admin or user["scope_levels"].get("procurement", 0) >= 3)
-    write = write and AuthorizationStore(path).can_write_field("procurement.material_unit_price", admin, user["scope_levels"])
+    write = bool(user.get("is_active", True)) and AuthorizationStore(path).can_write_field("procurement.material_unit_price", admin, user["scope_levels"])
     with sqlite3.connect(path) as db:
         initialized = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='procurement_activation_grants'").fetchone()
         grant = db.execute("SELECT manager FROM procurement_activation_grants WHERE user_id=?", (user["id"],)).fetchone() if initialized else None
     manager = bool(write and (admin or grant and grant[0]))
-    return {"can_edit": bool(write), "can_activate": bool(write and (admin or grant)),
+    catalog_manager = bool(write and (admin or user["scope_levels"].get("procurement", 0) >= 4))
+    return {"can_edit": bool(write), "can_activate": bool(write and (catalog_manager or grant)),
             "can_manage_grants": manager, "can_cancel_round": manager,
-            "can_manage_catalog": bool(admin)}
+            "can_manage_catalog": catalog_manager}
 
 
 def can_activate(path: Path, user_id: str) -> bool:
@@ -98,6 +98,7 @@ def grants(path: Path) -> dict:
             grant = assigned.get(user["id"])
             users.append({"id": user["id"], "name": user["display_name"], "active": user["is_active"],
                           "eligible": cap["can_edit"], "granted": bool(grant), "manager": bool(grant and grant[0]),
+                          "role_granted": bool(user["is_active"] and user["scope_levels"].get("procurement", 0) >= 4),
                           "granted_by": grant[1] if grant else None, "granted_at": grant[2] if grant else None})
     return {"users": users, "events": [{"id": r[5], "action": r[0], "target_id": r[1], "detail": json.loads(r[2]), "created_at": r[3], "actor": r[4]} for r in events]}
 
@@ -111,7 +112,7 @@ def set_grant(path: Path, actor: dict, target_id: str, enabled: bool, manager: b
     if not target or target["is_system_admin"]:
         raise ValueError("请选择普通采购账号，管理员权限不在此处调整")
     if enabled and not capabilities(path, target)["can_edit"]:
-        raise ValueError("账号须已启用并具备采购编辑及价格字段写权限")
+        raise ValueError("账号须已启用并具备采购编辑权限")
     with sqlite3.connect(path) as db:
         db.execute("BEGIN IMMEDIATE")
         require_current(path, actor["id"], "can_manage_grants")
@@ -128,7 +129,9 @@ def set_grant(path: Path, actor: dict, target_id: str, enabled: bool, manager: b
                        (target_id, int(manager if manager is not None else bool(old and old[0])), actor["id"], datetime.now(UTC).isoformat()))
         else:
             db.execute("DELETE FROM procurement_activation_grants WHERE user_id=?", (target_id,))
-            pause_schedules(db, target_id)
+            target = IdentityStore(path).get_user(target_id)
+            if not (target and target["is_active"] and target["scope_levels"].get("procurement", 0) >= 4):
+                pause_schedules(db, target_id)
         admin_event(db, actor["id"], "grant.enabled" if enabled else "grant.revoked", target_id, {"name": target["display_name"], "manager": manager})
 
 

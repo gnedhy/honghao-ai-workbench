@@ -1,6 +1,8 @@
 import {
   ArrowLeft,
   ChevronDown,
+  ChevronUp,
+  CircleHelp,
   ChevronRight,
   Columns2,
   Database,
@@ -21,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { HelpDialog } from "./HelpDialog";
 import { PROCUREMENT_PAGE_LABELS, type Conversation, type CurrentUser, type ModuleVisibility, type ProcurementPage, type Project, type RuntimeEnvironment, type Section, type WorkbenchId } from "../types";
 
 type SidebarProps = {
@@ -41,6 +44,8 @@ type SidebarProps = {
   onConversationOpen: (conversationId: string) => void;
   onProjectCreate: (title: string) => void;
   onSearchOpen: () => void;
+  onFeedbackOpen: () => void;
+  feedbackUnread: number | null;
   profileOpen: boolean;
   onProfileToggle: () => void;
   mobileOpen: boolean;
@@ -83,6 +88,8 @@ export function Sidebar({
   onConversationOpen,
   onProjectCreate,
   onSearchOpen,
+  onFeedbackOpen,
+  feedbackUnread,
   profileOpen,
   onProfileToggle,
   mobileOpen,
@@ -94,6 +101,7 @@ export function Sidebar({
   const [expandedProjectId, setExpandedProjectId] = useState("");
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const [newProjectTitle, setNewProjectTitle] = useState("");
+  const [helpOpen, setHelpOpen] = useState(false);
 
   useEffect(() => {
     if (currentProjectId) setExpandedProjectId(currentProjectId);
@@ -136,6 +144,7 @@ export function Sidebar({
           </div>
           <div className="sidebar__brand-actions">
             <button className="icon-button sidebar__search" type="button" aria-label="全局搜索" onClick={onSearchOpen}><Search size={18} /></button>
+            <button className="icon-button sidebar-feedback" type="button" title={feedbackUnread === null ? "意见反馈 · 未读状态暂不可用" : "意见反馈"} aria-label={`意见反馈${feedbackUnread ? `，${feedbackUnread} 条未读` : ""}`} onClick={onFeedbackOpen}><MessageCircle size={18} />{feedbackUnread !== null && feedbackUnread > 0 && <span className="feedback-badge">{feedbackUnread > 99 ? "99+" : feedbackUnread}</span>}</button>
             <button className="icon-button sidebar__close" type="button" aria-label="关闭导航" onClick={onMobileClose}><X size={18} /></button>
           </div>
         </div>
@@ -212,19 +221,20 @@ export function Sidebar({
         <div className="profile-area">
           {profileOpen && (
             <div className="profile-menu" role="menu">
-              <button role="menuitem" type="button" onClick={onOpenProfile}><UserRound size={16} /><span>个人资料</span></button>
+              <button role="menuitem" type="button" onClick={onOpenProfile}><UserRound size={16} /><span>我的账号</span></button>
               <button role="menuitem" type="button" onClick={onOpenSettings}><Settings size={16} /><span>系统设置</span><span className="profile-menu__meta">Ctrl+,</span></button>
               <div className="profile-menu__divider" />
               <button className="is-danger" role="menuitem" type="button" onClick={() => void onLogout()}><LogOut size={16} /><span>退出登录</span></button>
             </div>
           )}
-          <button className="profile-trigger" type="button" onClick={onProfileToggle} aria-expanded={profileOpen}>
+          <div className="profile-footer-actions"><button className="profile-trigger" type="button" onClick={onProfileToggle} aria-expanded={profileOpen}>
             <span className="avatar" aria-hidden="true">{Array.from(currentUser.display_name)[0]}</span>
             <span className="profile-trigger__copy"><strong>{currentUser.display_name}</strong><small>{currentUser.department ?? (currentUser.is_system_admin ? "系统管理员" : "企业用户")}</small></span>
-            <ChevronDown size={15} />
-          </button>
+            {profileOpen ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
+          </button><button className="icon-button help-trigger" type="button" aria-label="使用说明" title="使用说明" onClick={() => { if (profileOpen) onProfileToggle(); setHelpOpen(true); }}><CircleHelp size={17} /></button></div>
         </div>
       </aside>
+      {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
     </>
   );
 }

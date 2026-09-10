@@ -12,11 +12,13 @@ from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from api.authorization import AuthorizationStore
+from api.feedback import FeedbackStore, create_feedback_router
+from api.procurement_news import NewsStore
 from api.database import Database, SubmissionConflictError
-from api.identity import DuplicateIdentityError, IdentityStore, SESSION_COOKIE_NAME
+from api.identity import DuplicateIdentityError, IdentityStore, SESSION_COOKIE_NAME, INITIAL_ACCOUNT_PASSWORD
 from api.knowledge import InvalidKnowledgeSourceError, KnowledgeStore
 from api.modules import (
     MODULE_IDS,
@@ -25,6 +27,7 @@ from api.modules import (
     RuntimeEnvironment,
     REQUIRED_ACTIVATION_REVIEWS,
     create_activation_review_record,
+    reusable_activation_review,
     load_persisted_module_modes,
     module_for_api_path,
     save_persisted_module_modes,
@@ -73,12 +76,14 @@ class AdminModuleStatusResponse(BaseModel):
     id: ModuleId
     current_mode: ModuleMode
     pending_mode: ModuleMode
+    can_reactivate: bool = False
 
 
 class AdminWorkbenchStatusResponse(BaseModel):
     id: WorkbenchId
     current_mode: WorkbenchMode
     pending_mode: WorkbenchMode
+    can_reactivate: bool = False
 
 
 class AdminModuleSettingsResponse(BaseModel):
@@ -102,7 +107,6 @@ class LoginRequest(BaseModel):
 
 
 AccessLevel = Literal[2, 3, 4]
-FieldWriteAccessLevel = Literal[3, 4]
 AccessScope = Literal["management", "procurement", "research", "sales", "knowledge"]
 
 
@@ -111,6 +115,9 @@ class CurrentUserResponse(BaseModel):
     username: str
     display_name: str
     department: str | None
+    primary_department_id: str | None = None
+    additional_department_ids: list[str] = Field(default_factory=list)
+    departments: list[dict] = Field(default_factory=list)
     is_system_admin: bool
     scope_levels: dict[AccessScope, AccessLevel]
 
@@ -125,9 +132,18 @@ class UserCreate(BaseModel):
     username: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9._-]+$")]
     display_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
     department: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)] | None = None
-    password: Annotated[str, StringConstraints(min_length=12, max_length=1_000)]
+    password: Annotated[str, StringConstraints(min_length=1, max_length=1_000)] = INITIAL_ACCOUNT_PASSWORD
     is_system_admin: bool = False
     scope_levels: dict[AccessScope, AccessLevel] = Field(default_factory=dict)
+    primary_department_id: str | None = None
+    additional_department_ids: list[str] = Field(default_factory=list)
+
+    @field_validator('password')
+    @classmethod
+    def validate_initial_password(cls, value: str) -> str:
+        if value != INITIAL_ACCOUNT_PASSWORD and len(value) < 12:
+            raise ValueError('使用默认初始密码，或设置至少12个字符的自定义密码')
+        return value
 
 
 class UserUpdate(BaseModel):
@@ -148,36 +164,27 @@ class ProfileUpdate(BaseModel):
     department: Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)] | None = None
 
 
+class MembershipUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    primary_department_id: str | None
+    additional_department_ids: list[str] = Field(default_factory=list, max_length=1000)
+
+
+class AdminProfileUpdate(ProfileUpdate):
+    membership: MembershipUpdate | None = None
+
+
+class DepartmentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    parent_id: str | None = None
+
+
 class PasswordUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     current_password: Annotated[str, StringConstraints(min_length=1, max_length=1000)]
-    new_password: Annotated[str, StringConstraints(min_length=12, max_length=1000)]
-    confirm_password: Annotated[str, StringConstraints(min_length=12, max_length=1000)]
-
-
-class FieldPolicyUpdate(BaseModel):
-    read_min_level: AccessLevel
-    write_min_level: FieldWriteAccessLevel
-    read_scope_ids: list[AccessScope]
-    write_scope_ids: list[AccessScope]
-
-
-class SensitiveFieldCreate(FieldPolicyUpdate):
-    area: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
-    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
-    description: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
-
-
-class FieldPolicyResponse(BaseModel):
-    id: str
-    area: str
-    name: str
-    description: str
-    read_min_level: int
-    write_min_level: int
-    read_scope_ids: list[AccessScope]
-    write_scope_ids: list[AccessScope]
-
+    new_password: Annotated[str, StringConstraints(min_length=1, max_length=1000)]
+    confirm_password: Annotated[str, StringConstraints(min_length=1, max_length=1000)]
 
 class AuditEventResponse(BaseModel):
     id: str
@@ -290,6 +297,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     authorization = AuthorizationStore(runtime_settings.database_path)
     knowledge = KnowledgeStore(runtime_settings.database_path, runtime_settings.data_dir)
     procurement = ProcurementStore(runtime_settings.database_path)
+    feedback = FeedbackStore(runtime_settings.database_path)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -297,6 +305,8 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         app.state.procurement_error = None
         app.state.procurement_scheduler = "ok"
         scheduler_task: asyncio.Task[None] | None = None
+        news_task: asyncio.Task[None] | None = None
+        app.state.procurement_news = NewsStore(runtime_settings.data_dir)
 
         async def run_procurement_scheduler() -> None:
             while True:
@@ -313,6 +323,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                 stack.enter_context(service_marker(runtime_settings))
                 database_preexisted = runtime_settings.database_path.is_file()
                 migrate_data(runtime_settings, include_workbenches=False)
+                feedback.initialize()
                 app.state.database = database
                 app.state.identities = identities
                 app.state.authorization = authorization
@@ -326,6 +337,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                         )
                         procurement.process_scheduled()
                         scheduler_task = asyncio.create_task(run_procurement_scheduler())
+                        news_task = asyncio.create_task(app.state.procurement_news.run())
                     except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
                         app.state.procurement_error = str(error)
                         app.state.procurement_scheduler = "failed"
@@ -334,6 +346,10 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             try:
                 yield
             finally:
+                if news_task is not None:
+                    news_task.cancel()
+                    with suppress(asyncio.CancelledError, Exception):
+                        await news_task
                 if scheduler_task is not None:
                     scheduler_task.cancel()
                     with suppress(asyncio.CancelledError):
@@ -344,7 +360,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, error: RequestValidationError):
         if request.url.path == "/api/me/password":
-            return JSONResponse(status_code=422, content={"detail": "请填写当前密码及两次新密码，新密码长度须为 12–1000 个字符，且不能包含其他字段"})
+            return JSONResponse(status_code=422, content={"detail": "请填写当前密码及两次新密码，新密码不可为空且不能超过 1000 个字符，且不能包含其他字段"})
         return await request_validation_exception_handler(request, error)
 
     def current_user(request: Request) -> dict:
@@ -482,10 +498,15 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         user = current_user(request)
         return ProfileResponse(**user, procurement_capabilities=capabilities(runtime_settings.database_path, user))
 
+    @app.patch("/api/me/profile", response_model=UserResponse)
+    def update_me_profile(update: ProfileUpdate, request: Request) -> UserResponse:
+        current_user(request)
+        raise HTTPException(status_code=403, detail="账号资料只读，请由管理员在用户管理中调整")
+
     @app.post("/api/me/password")
     def me_password(update: PasswordUpdate, request: Request, response: Response) -> dict[str, str]:
         result = identities.change_password(current_user(request)["id"], request.cookies.get(SESSION_COOKIE_NAME, ""), update.current_password, update.new_password, update.confirm_password)
-        errors = {"invalid": (422, "两次新密码须一致，长度为 12–1000 个字符"), "expired": (401, "登录状态已变化，请重新登录"), "wrong": (400, "当前密码不正确"), "same": (422, "新密码不能与当前密码相同"), "limited": (429, "当前密码错误次数过多，请在 15 分钟后重试")}
+        errors = {"invalid": (422, "两次新密码须一致，不可为空且不能超过 1000 个字符"), "expired": (401, "登录状态已变化，请重新登录"), "wrong": (400, "当前密码不正确"), "same": (422, "新密码不能与当前密码相同"), "limited": (429, "当前密码错误次数过多，请在 15 分钟后重试")}
         if result in errors:
             status, message = errors[result]
             raise HTTPException(status_code=status, detail=message)
@@ -493,12 +514,14 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         return {"message": "密码已修改，所有登录会话已退出，请重新登录。"}
 
     @app.patch("/api/users/{user_id}/profile", response_model=UserResponse)
-    def update_profile(user_id: str, update: ProfileUpdate, request: Request) -> UserResponse:
+    def update_profile(user_id: str, update: AdminProfileUpdate, request: Request) -> UserResponse:
         actor = require_system_admin(request)
         try:
-            user = identities.update_profile(user_id, actor_id=actor["id"], display_name=update.display_name, department=update.department or None)
+            user = identities.update_profile(user_id, actor_id=actor["id"], display_name=update.display_name, department=update.department or None, membership=update.membership.model_dump() if update.membership is not None else None)
         except PermissionError as error:
             raise HTTPException(status_code=403, detail="Administrator required") from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
         return UserResponse(**user)
@@ -522,6 +545,8 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                 password=user.password,
                 is_system_admin=user.is_system_admin,
                 scope_levels=user.scope_levels,
+                primary_department_id=user.primary_department_id,
+                additional_department_ids=user.additional_department_ids,
             )
         except DuplicateIdentityError as error:
             raise HTTPException(status_code=409, detail="User already exists") from error
@@ -539,6 +564,60 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     def list_users(request: Request) -> list[UserResponse]:
         require_system_admin(request)
         return [UserResponse(**user) for user in identities.list_users()]
+
+    from api.organization import OrganizationStore
+    organization = OrganizationStore(runtime_settings.database_path)
+
+    @app.get('/api/departments')
+    def list_departments(request: Request):
+        require_system_admin(request)
+        return organization.list_departments()
+
+    @app.post('/api/departments', status_code=201)
+    def create_department(update: DepartmentUpdate, request: Request):
+        actor = require_system_admin(request)
+        try:
+            return organization.save(actor['id'], update.name, update.parent_id)
+        except PermissionError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.patch('/api/departments/{department_id}')
+    def edit_department(department_id: str, update: DepartmentUpdate, request: Request):
+        actor = require_system_admin(request)
+        try:
+            return organization.save(actor['id'], update.name, update.parent_id, department_id)
+        except PermissionError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.delete('/api/departments/{department_id}', status_code=204)
+    def remove_department(department_id: str, request: Request):
+        actor = require_system_admin(request)
+        try:
+            organization.delete(actor['id'], department_id)
+        except PermissionError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.put('/api/users/{user_id}/departments', response_model=UserResponse)
+    def assign_departments(user_id: str, update: MembershipUpdate, request: Request):
+        actor = require_system_admin(request)
+        user = identities.get_user(user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail='User not found')
+        try:
+            updated = identities.update_profile(user_id, actor_id=actor['id'], membership=update.model_dump())
+        except PermissionError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if updated is None:
+            raise HTTPException(status_code=404, detail='User not found')
+        return UserResponse(**updated)
 
     @app.patch("/api/users/{user_id}", response_model=UserResponse)
     def update_user(user_id: str, update: UserUpdate, request: Request) -> UserResponse:
@@ -566,62 +645,6 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         )
         return UserResponse(**user)
 
-    @app.get("/api/admin/fields", response_model=list[FieldPolicyResponse])
-    def list_field_policies(request: Request) -> list[FieldPolicyResponse]:
-        require_system_admin(request)
-        return [FieldPolicyResponse(**field) for field in authorization.list_field_policies()]
-
-    @app.post("/api/admin/fields", response_model=FieldPolicyResponse, status_code=201)
-    def create_sensitive_field(
-        create: SensitiveFieldCreate,
-        request: Request,
-    ) -> FieldPolicyResponse:
-        actor = require_system_admin(request)
-        try:
-            field = authorization.create_field(
-                create.area,
-                create.name,
-                create.description,
-                create.read_min_level,
-                create.write_min_level,
-                create.read_scope_ids,
-                create.write_scope_ids,
-            )
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        authorization.audit(
-            "field.created",
-            actor_user_id=actor["id"],
-            target_type="field",
-            target_id=field["id"],
-        )
-        return FieldPolicyResponse(**field)
-
-    @app.put("/api/admin/fields/{field_id}", response_model=FieldPolicyResponse)
-    def update_field_policy(
-        field_id: str,
-        update: FieldPolicyUpdate,
-        request: Request,
-    ) -> FieldPolicyResponse:
-        actor = require_system_admin(request)
-        try:
-            field = authorization.set_field_policy(
-                field_id,
-                update.read_min_level,
-                update.write_min_level,
-                update.read_scope_ids,
-                update.write_scope_ids,
-            )
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        authorization.audit(
-            "field.policy.updated",
-            actor_user_id=actor["id"],
-            target_type="field",
-            target_id=field_id,
-        )
-        return FieldPolicyResponse(**field)
-
     @app.get("/api/admin/audit-events", response_model=list[AuditEventResponse])
     def list_audit_events(request: Request) -> list[AuditEventResponse]:
         require_system_admin(request)
@@ -647,6 +670,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                     id=module_id,
                     current_mode=runtime_settings.module_modes[module_id],
                     pending_mode=pending_modes[module_id],
+                    can_reactivate=reusable_activation_review(runtime_settings.data_dir, "runtime-config.json", module_id) is not None,
                 )
                 for module_id in MODULE_IDS
             ],
@@ -655,6 +679,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                     id=workbench_id,
                     current_mode=runtime_settings.workbench_modes[workbench_id],
                     pending_mode=pending_workbench_modes[workbench_id],
+                    can_reactivate=reusable_activation_review(runtime_settings.data_dir, "workbench-runtime-config.json", workbench_id) is not None,
                 )
                 for workbench_id in WORKBENCH_IDS
             ],
@@ -672,13 +697,12 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         actor = require_system_admin(request)
         if module_id not in MODULE_IDS:
             raise HTTPException(status_code=404, detail="Module not found")
+        previous_review = reusable_activation_review(runtime_settings.data_dir, "runtime-config.json", module_id)
         if (
             runtime_settings.environment == "production"
             and update.mode == "active"
             and (
-                set(update.reviews) != REQUIRED_ACTIVATION_REVIEWS
-                or update.issue_url is None
-                or update.pull_request_url is None
+                set(update.reviews) != REQUIRED_ACTIVATION_REVIEWS and (bool(update.reviews) or previous_review is None)
             )
         ):
             raise HTTPException(
@@ -699,12 +723,12 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             approved_module=typed_module_id
             if runtime_settings.environment == "production" and update.mode == "active"
             else None,
-            approved_review_record=create_activation_review_record(
+            approved_review_record=(previous_review if not update.reviews and previous_review else create_activation_review_record(
                 update.reviews,
                 reviewed_by=actor["id"],
                 issue_url=update.issue_url or "",
                 pull_request_url=update.pull_request_url or "",
-            )
+            ))
             if runtime_settings.environment == "production" and update.mode == "active"
             else None,
             changed_module=typed_module_id,
@@ -721,6 +745,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             id=typed_module_id,
             current_mode=runtime_settings.module_modes[typed_module_id],
             pending_mode=update.mode,
+            can_reactivate=previous_review is not None or (runtime_settings.environment == "production" and update.mode == "active"),
         )
 
     @app.put(
@@ -735,13 +760,12 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         actor = require_system_admin(request)
         if workbench_id not in WORKBENCH_IDS:
             raise HTTPException(status_code=404, detail="Workbench not found")
+        previous_review = reusable_activation_review(runtime_settings.data_dir, "workbench-runtime-config.json", workbench_id)
         if (
             runtime_settings.environment == "production"
             and update.mode == "active"
             and (
-                set(update.reviews) != REQUIRED_ACTIVATION_REVIEWS
-                or update.issue_url is None
-                or update.pull_request_url is None
+                set(update.reviews) != REQUIRED_ACTIVATION_REVIEWS and (bool(update.reviews) or previous_review is None)
             )
         ):
             raise HTTPException(
@@ -761,12 +785,12 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             runtime_settings.environment,
             pending_modes,
             approved_workbench=typed_workbench_id if is_production_activation else None,
-            approved_review_record=create_activation_review_record(
+            approved_review_record=(previous_review if not update.reviews and previous_review else create_activation_review_record(
                 update.reviews,
                 reviewed_by=actor["id"],
                 issue_url=update.issue_url or "",
                 pull_request_url=update.pull_request_url or "",
-            ) if is_production_activation else None,
+            )) if is_production_activation else None,
             changed_workbench=typed_workbench_id,
             changed_mode=update.mode,
             changed_by=actor["id"],
@@ -781,6 +805,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             id=typed_workbench_id,
             current_mode=runtime_settings.workbench_modes[typed_workbench_id],
             pending_mode=update.mode,
+            can_reactivate=previous_review is not None or (runtime_settings.environment == "production" and update.mode == "active"),
         )
 
     @app.get("/api/workbenches", response_model=list[WorkbenchStatusResponse])
@@ -1023,6 +1048,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         return TaskResponse(**task)
 
     app.include_router(create_procurement_router(procurement, authorization, runtime_settings))
+    app.include_router(create_feedback_router(feedback, current_user))
 
     if static_root is not None:
         _mount_static_frontend(app, static_root)

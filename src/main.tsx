@@ -7,6 +7,23 @@ import "./styles.css";
 import type { CurrentUser, RuntimeEnvironment } from "./types";
 
 function Root() {
+  useEffect(() => {
+    const root = document.documentElement;
+    const pointer = () => { root.dataset.inputModality = "pointer"; };
+    const keyboard = (event: KeyboardEvent) => {
+      if (["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", "Enter", " "].includes(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        const typing = event.target instanceof HTMLElement && (event.target.matches("input,textarea") || event.target.isContentEditable);
+        if (event.key === "Tab" || !typing) root.dataset.inputModality = "keyboard";
+      }
+    };
+    window.addEventListener("pointerdown", pointer, true);
+    window.addEventListener("keydown", keyboard, true);
+    return () => {
+      window.removeEventListener("pointerdown", pointer, true);
+      window.removeEventListener("keydown", keyboard, true);
+      delete root.dataset.inputModality;
+    };
+  }, []);
   const [user, setUser] = useState<CurrentUser | null>();
   const [loginNotice, setLoginNotice] = useState("");
   const [environment, setEnvironment] = useState<RuntimeEnvironment | null>();

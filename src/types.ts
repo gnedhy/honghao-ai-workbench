@@ -20,6 +20,9 @@ export type CurrentUser = {
   username: string;
   display_name: string;
   department: string | null;
+  primary_department_id?: string | null;
+  additional_department_ids?: string[];
+  departments?: { id: string; name: string; is_primary: boolean }[];
   is_system_admin: boolean;
   scope_levels: Partial<Record<AccessScope, AccessLevel>>;
 };
@@ -29,12 +32,14 @@ export type PersonalProfile = CurrentUser & {
 };
 
 export type AdminModuleSetting = {
+  can_reactivate?: boolean;
   id: Section;
   current_mode: ModuleMode;
   pending_mode: ModuleMode;
 };
 
 export type AdminWorkbenchSetting = {
+  can_reactivate?: boolean;
   id: WorkbenchId;
   current_mode: WorkbenchMode;
   pending_mode: WorkbenchMode;
@@ -52,16 +57,8 @@ export type ManagedUser = CurrentUser & {
   is_active: boolean;
 };
 
-export type SensitiveFieldPolicy = {
-  id: string;
-  area: string;
-  name: string;
-  description: string;
-  read_min_level: AccessLevel;
-  write_min_level: AccessLevel;
-  read_scope_ids: AccessScope[];
-  write_scope_ids: AccessScope[];
-};
+export type OrganizationDepartment = { id: string; name: string; parent_id: string | null };
+export type DepartmentMembership = { primary_department_id: string | null; additional_department_ids: string[] };
 
 export type AuditEvent = {
   id: string;

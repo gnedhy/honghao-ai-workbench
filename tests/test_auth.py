@@ -38,6 +38,9 @@ def test_admin_can_log_in_and_read_current_session(tmp_path: Path) -> None:
         "username": "admin",
         "display_name": "系统管理员",
         "department": "总经办",
+        "primary_department_id": login.json()["primary_department_id"],
+        "additional_department_ids": [],
+        "departments": [{"id": login.json()["primary_department_id"], "name": "总经办", "is_primary": True}],
         "is_system_admin": True,
         "scope_levels": {},
     }
@@ -207,7 +210,7 @@ def test_identity_schema_is_additive_to_core_schema_v5(tmp_path: Path) -> None:
 
     assert health.status_code == 200
     assert Database(settings.database_path).schema_version() == 5
-    assert identity_version == (5,)
+    assert identity_version == (6,)
 
 
 def test_non_admin_cannot_manage_users(tmp_path: Path) -> None:
@@ -235,7 +238,7 @@ def test_newer_identity_schema_is_not_silently_downgraded(tmp_path: Path) -> Non
     Database(settings.database_path).initialize()
     with sqlite3.connect(settings.database_path) as connection:
         connection.execute(
-            "INSERT INTO schema_metadata (key, value) VALUES ('identity_schema_version', 6)"
+            "INSERT INTO schema_metadata (key, value) VALUES ('identity_schema_version', 7)"
         )
 
     with TestClient(create_app(settings)) as client:
@@ -246,4 +249,4 @@ def test_newer_identity_schema_is_not_silently_downgraded(tmp_path: Path) -> Non
         version = connection.execute(
             "SELECT value FROM schema_metadata WHERE key = 'identity_schema_version'"
         ).fetchone()
-    assert version == (6,)
+    assert version == (7,)

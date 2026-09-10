@@ -1,4 +1,4 @@
-import type { AccessLevel, AccessScope, ActivationReview, AdminModuleSetting, AdminModuleSettings, AdminWorkbenchSetting, AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleMode, ModuleStatus, ProcurementBatch, ProcurementBatchDetail, ProcurementHistoryBatch, ProcurementHistoryBatchDetail, ProcurementImportPreview, ProcurementIssue, ProcurementMaterialDetail, ProcurementOverview, ProcurementPreferences, ProcurementPriceHistory, ProcurementUpdate, Project, RuntimeEnvironment, Section, SensitiveFieldPolicy, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
+import type { AccessLevel, AccessScope, ActivationReview, AdminModuleSetting, AdminModuleSettings, AdminWorkbenchSetting, AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleMode, ModuleStatus, ProcurementBatch, ProcurementBatchDetail, ProcurementHistoryBatch, ProcurementHistoryBatchDetail, ProcurementImportPreview, ProcurementIssue, ProcurementMaterialDetail, ProcurementOverview, ProcurementPreferences, ProcurementPriceHistory, ProcurementUpdate, Project, RuntimeEnvironment, Section, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
 
 export type ServiceHealth = {
   status: "ok";
@@ -39,7 +39,7 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
       : `请求未完成（${response.status}），请核对输入后重试`;
     throw new Error(message);
   }
-  return response.json() as Promise<T>;
+  return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }
 
 export function fetchCurrentUser(signal?: AbortSignal): Promise<CurrentUser> {
@@ -75,15 +75,20 @@ export function fetchWorkbenches(signal?: AbortSignal): Promise<WorkbenchStatus[
   return fetchJson<WorkbenchStatus[]>("/api/workbenches", { signal });
 }
 
+export function fetchProcurementNews(source = 'all', page = 1, signal?: AbortSignal): Promise<import('./workbenches/ProcurementNews').NewsData> {
+  return fetchJson(`/api/workbenches/procurement/news?source=${encodeURIComponent(source)}&page=${page}`, {signal});
+}
+
 export function fetchPersonalProfile(signal?: AbortSignal): Promise<import("./types").PersonalProfile> {
   return fetchJson("/api/me/profile", { signal });
 }
+
 
 export function changeMyPassword(input: { current_password: string; new_password: string; confirm_password: string }): Promise<{ message: string }> {
   return fetchJson("/api/me/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
 }
 
-export function updateUserProfile(id: string, input: { display_name: string; department: string | null }): Promise<ManagedUser> {
+export function updateUserProfile(id: string, input: { display_name: string; membership?: import('./types').DepartmentMembership }): Promise<ManagedUser> {
   return fetchJson(`/api/users/${id}/profile`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
 }
 
@@ -91,7 +96,7 @@ export function fetchProcurementOverview(signal?: AbortSignal): Promise<Procurem
   return fetchJson<ProcurementOverview>("/api/workbenches/procurement/overview", { signal });
 }
 
-export type ActivationGrants = { users: Array<{ id: string; name: string; eligible: boolean; granted: boolean; manager: boolean }>; events: Array<{ id: string; actor: string; action: string; target_id: string; created_at: string }> };
+export type ActivationGrants = { users: Array<{ id: string; name: string; eligible: boolean; granted: boolean; role_granted: boolean; manager: boolean }>; events: Array<{ id: string; actor: string; action: string; target_id: string; created_at: string }> };
 export function fetchActivationGrants(): Promise<ActivationGrants> { return fetchJson("/api/workbenches/procurement/activation-grants"); }
 export function saveActivationGrant(id: string, enabled: boolean, manager?: boolean): Promise<ActivationGrants> {
   return fetchJson(`/api/workbenches/procurement/activation-grants/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({enabled, manager}) });
@@ -263,8 +268,9 @@ export function fetchUsers(): Promise<ManagedUser[]> {
 export function createUser(input: {
   username: string;
   display_name: string;
-  department: string | null;
-  password: string;
+  primary_department_id: string | null;
+  additional_department_ids: string[];
+  password?: string;
   is_system_admin: boolean;
   scope_levels: Partial<Record<AccessScope, AccessLevel>>;
 }): Promise<ManagedUser> {
@@ -275,34 +281,19 @@ export function createUser(input: {
   });
 }
 
+export function fetchDepartments(): Promise<import('./types').OrganizationDepartment[]> {
+  return fetchJson('/api/departments');
+}
+export function saveDepartment(input: { name: string; parent_id: string | null }, id?: string): Promise<import('./types').OrganizationDepartment> {
+  return fetchJson(`/api/departments${id ? '/' + encodeURIComponent(id) : ''}`, { method: id ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+}
+export function deleteDepartment(id: string): Promise<void> {
+  return fetchJson(`/api/departments/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
 export function updateUser(userId: string, input: { is_active?: boolean; is_system_admin?: boolean; scope_levels?: Partial<Record<AccessScope, AccessLevel>> }): Promise<ManagedUser> {
   return fetchJson<ManagedUser>(`/api/users/${userId}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-}
-
-export function fetchSensitiveFields(): Promise<SensitiveFieldPolicy[]> {
-  return fetchJson<SensitiveFieldPolicy[]>("/api/admin/fields");
-}
-
-export function createSensitiveField(
-  input: Omit<SensitiveFieldPolicy, "id">,
-): Promise<SensitiveFieldPolicy> {
-  return fetchJson<SensitiveFieldPolicy>("/api/admin/fields", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-}
-
-export function updateSensitiveField(
-  fieldId: string,
-  input: Pick<SensitiveFieldPolicy, "read_min_level" | "write_min_level" | "read_scope_ids" | "write_scope_ids">,
-): Promise<SensitiveFieldPolicy> {
-  return fetchJson<SensitiveFieldPolicy>(`/api/admin/fields/${fieldId}`, {
-    method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });

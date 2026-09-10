@@ -410,19 +410,10 @@ def test_procurement_real_routes_require_active_mode(tmp_path: Path) -> None:
     assert response.status_code == 404
 
 
-def test_procurement_scope_levels_enforce_view_edit_and_field_policy(tmp_path: Path) -> None:
+def test_procurement_scope_levels_enforce_view_edit_and_separate_activation(tmp_path: Path) -> None:
     settings = procurement_settings(tmp_path)
 
     with authenticated_client(settings) as admin:
-        assert admin.put(
-            "/api/admin/fields/procurement.material_unit_price",
-            json={
-                "read_min_level": 2,
-                "write_min_level": 3,
-                "read_scope_ids": ["procurement"],
-                "write_scope_ids": ["procurement"],
-            },
-        ).status_code == 200
         IdentityStore(settings.database_path).create_user(
             username="buyer-viewer",
             display_name="采购查看用户",
@@ -555,8 +546,7 @@ def test_material_identity_permissions_and_old_code_alias_import(tmp_path: Path)
 
     with TestClient(create_app(settings)) as manager:
         assert procurement_post(manager,"/api/login", json={"username": "buyer-manager", "password": manager_password}).status_code == 200
-        assert manager.patch(f"/api/workbenches/procurement/materials/{material['id']}", json={"code": "CF004-N", "name": "测试"}).status_code == 403
-        switch_to_test_admin(manager)
+        assert manager.patch(f"/api/workbenches/procurement/materials/{material['id']}", json={"code": "CF004-N", "name": "测试"}).status_code == 200
         recoded = manager.patch(
             f"/api/workbenches/procurement/materials/{material['id']}",
             json={"code": "CF004-N", "name": "聚合氯化铝（采购备注）"},

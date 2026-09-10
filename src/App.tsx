@@ -4,6 +4,7 @@ import { createConversationSubmission, createProject, fetchConversations, fetchM
 import { ContextSidebar } from "./components/ContextSidebar";
 import { SettingsDialog, type UiFontSize } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
+import { FeedbackDialog } from "./components/FeedbackDialog";
 import { ProfileDialog } from "./components/ProfileDialog";
 import { knowledgeItems, skills, workflows } from "./data";
 import { AutomationScreen } from "./screens/AutomationScreen";
@@ -12,6 +13,7 @@ import { KnowledgeScreen } from "./screens/KnowledgeScreen";
 import { TaskBoardScreen } from "./screens/TaskBoardScreen";
 import { workbenches, WorkbenchScreen } from "./screens/WorkbenchScreen";
 import type { Conversation, ConversationMessage, ConversationView, CurrentUser, ModuleStatus, ModuleVisibility, ProcurementPage, Project, Section, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
+import { PROCUREMENT_PAGE_LABELS } from "./types";
 
 type AppProps = {
   currentUser: CurrentUser;
@@ -88,6 +90,29 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
   const [selectedWorkflow, setSelectedWorkflow] = useState(workflows[0]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [serviceConnection, setServiceConnection] = useState<ServiceConnection>({ state: "checking" });
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackUnread, setFeedbackUnread] = useState<number | null>(null);
+  const [feedbackRevision, setFeedbackRevision] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    let inFlight = false;
+    const refresh = async () => {
+      if (document.hidden || inFlight) return;
+      inFlight = true;
+      try {
+        const response = await fetch("/api/feedback/unread", { signal: controller.signal });
+        if (!response.ok) throw new Error("Unread unavailable");
+        const data = await response.json() as { count: number };
+        if (!controller.signal.aborted) setFeedbackUnread(data.count);
+      } catch { if (!controller.signal.aborted) setFeedbackUnread(null); }
+      finally { inFlight = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { controller.abort(); clearInterval(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
+  }, [currentUser.id, feedbackRevision]);
 
   const selectedConversation = conversations.find((conversation) => conversation.id === selectedConversationId) ?? null;
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
@@ -353,6 +378,8 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
         onConversationOpen={(conversationId) => { if (!allowProcurementLeave()) return; setSection("chat"); setConversationView("existing"); setSelectedConversationId(conversationId); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
         onProjectCreate={(title) => { void createProject(title).then((created) => { setProjects((current) => [...current, created]); setCurrentProjectId(created.id); }).catch(() => setWorkbenchDataState("error")); }}
         onSearchOpen={() => { setProfileOpen(false); setMobileOpen(false); setGlobalSearchOpen(true); }}
+        feedbackUnread={feedbackUnread}
+        onFeedbackOpen={() => { setProfileOpen(false); setMobileOpen(false); setFeedbackOpen(true); }}
         profileOpen={profileOpen}
         onProfileToggle={() => setProfileOpen((open) => !open)}
         mobileOpen={mobileOpen}
@@ -429,7 +456,8 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
           }
         }}
       />
-      {settingsOpen && <SettingsDialog currentUser={currentUser} onUserChanged={onUserChanged} serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} workbenchStatuses={workbenchStatuses} workbenchRegistryState={workbenchRegistryState} uiFontSize={uiFontSize} onUiFontSizeChange={setUiFontSize} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsDialog currentUser={currentUser} onUserChanged={onUserChanged} serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} workbenchStatuses={workbenchStatuses} workbenchRegistryState={workbenchRegistryState} uiFontSize={uiFontSize} onUiFontSizeChange={setUiFontSize} onClose={() => setSettingsOpen(false)} onOpenProfile={() => { setSettingsOpen(false); setPersonalProfileOpen(true); }} />}
+      {feedbackOpen && <FeedbackDialog currentUser={currentUser} context={openedWorkbenchId ? `${workbenches.find(item => item.id === openedWorkbenchId)?.title ?? "工作台"}${openedWorkbenchId === "procurement" ? ` / ${PROCUREMENT_PAGE_LABELS[procurementPage]}` : ""}` : ({chat:"新聊天",knowledge:"知识库",automation:"自动化",workbench:"工作台",tasks:"任务看板"})[section]} version={serviceConnection.state === "online" ? serviceConnection.health.api_version : "未知"} onClose={() => setFeedbackOpen(false)} onUnreadChanged={() => setFeedbackRevision(value => value + 1)} />}
       {personalProfileOpen && <ProfileDialog onClose={() => setPersonalProfileOpen(false)} onUserChanged={onUserChanged} onPasswordChanged={onPasswordChanged} beforePasswordChange={allowProcurementLeave} />}
     </div>
   );

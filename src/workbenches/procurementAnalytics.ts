@@ -87,6 +87,22 @@ export function countValidPrices(history: PriceRecord[]) {
   return history.filter((item) => toNumber(item.latest_price) !== null).length;
 }
 
+export function buildPriceUpdateOverview(batch: ProcurementBatchDetail, materials: Array<{ id: string; code: string }>, range: { start: string; end: string }) {
+  const sources = batch.snapshot_sources ?? {};
+  let reported = 0, unknown = 0;
+  const carried: Array<{ id: string; code: string; date: string }> = [];
+  for (const material of materials) {
+    const source = sources[material.id];
+    // A version date is not evidence of a quotation; never substitute it for missing provenance.
+    const date = source?.price_date?.slice(0, 10);
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || date > range.end || !source.raw_price?.trim() || source.price_kind === "missing") { unknown++; continue; }
+    if (date >= range.start) reported++;
+    else carried.push({ id: material.id, code: material.code, date });
+  }
+  carried.sort((a, b) => a.date.localeCompare(b.date) || a.code.localeCompare(b.code, "zh-CN", { numeric: true }));
+  return { reported, carried: carried.length, unknown, oldest: carried.slice(0, 5) };
+}
+
 export function moverDateRange(end: string, preset: "14d" | "1m" | "3m") {
   const [year, month, day] = end.split("-").map(Number);
   const start = new Date(Date.UTC(year, month - 1, day));

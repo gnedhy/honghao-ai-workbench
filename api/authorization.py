@@ -242,24 +242,11 @@ class AuthorizationStore:
         ]
 
     def _field_allowed(self, field_id: str, is_system_admin: bool, scope_levels: dict[str, int], operation: str) -> bool:
+        if field_id not in {field[0] for field in FIELD_CATALOG}:
+            return False
         if is_system_admin:
             return True
-        if not scope_levels:
-            return False
-        level_column = f"{operation}_min_level"
-        scopes_column = f"{operation}_scope_ids"
-        with sqlite3.connect(self.path) as connection:
-            row = connection.execute(
-                f"SELECT {level_column}, {scopes_column} FROM authorization_field_policies WHERE field_id = ?",
-                (field_id,),
-            ).fetchone()
-        if row is None:
-            return False
-        minimum_level = int(row[0])
-        return any(
-            scope_levels.get(scope_id, 0) >= minimum_level
-            for scope_id in json.loads(str(row[1]))
-        )
+        return scope_levels.get(field_id.split(".", 1)[0], 0) >= (2 if operation == "read" else 3)
 
     def _field_catalog(self) -> list[tuple[str, str, str, str]]:
         with sqlite3.connect(self.path) as connection:

@@ -13,7 +13,7 @@ from api.authorization import AuthorizationStore
 from api.identity import IdentityStore
 from api.main import create_app
 from api.procurement import ProcurementStore
-from api.procurement_collaboration import set_grant
+from api.procurement_collaboration import capabilities, set_grant
 from api.procurement_excel import history_preview, import_history, read_workbook, selected_prices, price_value
 from tests.helpers import authenticated_client, TEST_ADMIN_PASSWORD
 from tests.test_procurement_workbench import procurement_settings
@@ -21,6 +21,26 @@ from tests.test_procurement_workbench import procurement_settings
 SOURCE_NAME = '采购迁入测试.xlsx'
 PREFIX = '/api/workbenches/procurement'
 PASSWORD = 'Independent-Test-Password-2026'
+
+
+def test_capabilities_follow_scope_without_implying_activation_or_catalog_access(tmp_path):
+    settings = procurement_settings(tmp_path)
+    with authenticated_client(settings):
+        pass
+    AuthorizationStore(settings.database_path).set_field_policy('procurement.material_unit_price', 4, 4, [], [])
+    for scope in ('procurement', 'research', 'sales', 'management', 'knowledge'):
+        for level in (0, 2, 3, 4):
+            user = {'id': 'ungranted', 'is_active': True, 'is_system_admin': False, 'scope_levels': {scope: level}}
+            result = capabilities(settings.database_path, user)
+            assert result['can_edit'] == (scope == 'procurement' and level >= 3)
+            assert result['can_activate'] == (scope == 'procurement' and level >= 4)
+            assert result['can_manage_catalog'] == (scope == 'procurement' and level >= 4)
+            assert not any(result[key] for key in ('can_manage_grants', 'can_cancel_round'))
+    user = {'id': 'admin', 'is_active': True, 'is_system_admin': True, 'scope_levels': {}}
+    assert all(capabilities(settings.database_path, user).values())
+    user['is_active'] = False
+    assert not capabilities(settings.database_path, user)['can_edit']
+    assert not capabilities(settings.database_path, user)['can_activate']
 
 
 @pytest.fixture
@@ -197,6 +217,43 @@ def test_disabled_or_revoked_scheduler_pauses_immediately(real_data):
     with sqlite3.connect(settings.database_path) as db:
         assert db.execute("SELECT status FROM procurement_updates ORDER BY created_at DESC LIMIT 1").fetchone()[0]=='revalidation_required'
     assert ProcurementStore(settings.database_path).process_scheduled(datetime.now(UTC)+timedelta(days=1))==0
+
+
+@pytest.mark.parametrize('independent_grant', [False, True])
+def test_manager_demotion_only_pauses_when_effective_activation_is_lost(real_data, independent_grant):
+    settings,client,users = real_data
+    admin = client.get('/api/me').json()
+    target = users[1]['id']
+    IdentityStore(settings.database_path).update_user(target, scope_levels={'procurement':4})
+    if independent_grant:
+        set_grant(settings.database_path, admin, target, True)
+    login(client,2)
+    assert save(client,'CF001L','13.6').status_code == 200
+    login(client,1)
+    assert publish(client,'scheduled').status_code == 200
+    IdentityStore(settings.database_path).update_user(target, scope_levels={'procurement':3})
+    with sqlite3.connect(settings.database_path) as db:
+        status = db.execute('SELECT status FROM procurement_updates ORDER BY created_at DESC LIMIT 1').fetchone()[0]
+    assert status == ('scheduled' if independent_grant else 'revalidation_required')
+
+
+def test_revoking_independent_grant_keeps_manager_activation_and_schedule(real_data):
+    settings,client,users = real_data
+    admin = client.get('/api/me').json()
+    target = users[1]['id']
+    IdentityStore(settings.database_path).update_user(target, scope_levels={'procurement':4})
+    set_grant(settings.database_path, admin, target, True)
+    login(client,2)
+    assert save(client,'CF001L','13.6').status_code == 200
+    login(client,1)
+    assert publish(client,'scheduled').status_code == 200
+    set_grant(settings.database_path, admin, target, False)
+    from api.procurement_collaboration import grants
+    row = next(u for u in grants(settings.database_path)['users'] if u['id'] == target)
+    assert row['role_granted'] and not row['granted'] and not row['manager']
+    assert capabilities(settings.database_path, IdentityStore(settings.database_path).get_user(target))['can_activate']
+    with sqlite3.connect(settings.database_path) as db:
+        assert db.execute('SELECT status FROM procurement_updates ORDER BY created_at DESC LIMIT 1').fetchone()[0] == 'scheduled'
 
 
 def test_daily_import_full_preview_blanks_unknown_and_revision(real_data):

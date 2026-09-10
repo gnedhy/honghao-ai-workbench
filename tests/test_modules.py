@@ -36,17 +36,17 @@ def test_admin_can_read_environment_and_pending_module_settings(tmp_path: Path) 
     assert response.json() == {
         "environment": "test",
         "modules": [
-            {"id": "chat", "current_mode": "off", "pending_mode": "off"},
-            {"id": "knowledge", "current_mode": "off", "pending_mode": "off"},
-            {"id": "automation", "current_mode": "off", "pending_mode": "off"},
-            {"id": "workbench", "current_mode": "active", "pending_mode": "active"},
-            {"id": "tasks", "current_mode": "off", "pending_mode": "off"},
+            {"id": "chat", "current_mode": "off", "pending_mode": "off", "can_reactivate": False},
+            {"id": "knowledge", "current_mode": "off", "pending_mode": "off", "can_reactivate": False},
+            {"id": "automation", "current_mode": "off", "pending_mode": "off", "can_reactivate": False},
+            {"id": "workbench", "current_mode": "active", "pending_mode": "active", "can_reactivate": False},
+            {"id": "tasks", "current_mode": "off", "pending_mode": "off", "can_reactivate": False},
         ],
         "workbenches": [
-            {"id": "management", "current_mode": "prototype", "pending_mode": "prototype"},
-            {"id": "procurement", "current_mode": "prototype", "pending_mode": "prototype"},
-            {"id": "research", "current_mode": "prototype", "pending_mode": "prototype"},
-            {"id": "sales", "current_mode": "prototype", "pending_mode": "prototype"},
+            {"id": "management", "current_mode": "prototype", "pending_mode": "prototype", "can_reactivate": False},
+            {"id": "procurement", "current_mode": "prototype", "pending_mode": "prototype", "can_reactivate": False},
+            {"id": "research", "current_mode": "prototype", "pending_mode": "prototype", "can_reactivate": False},
+            {"id": "sales", "current_mode": "prototype", "pending_mode": "prototype", "can_reactivate": False},
         ],
     }
 
@@ -66,7 +66,7 @@ def test_module_mode_change_is_pending_until_restart(tmp_path: Path) -> None:
     assert changed.json() == {
         "id": "knowledge",
         "current_mode": "off",
-        "pending_mode": "active",
+        "pending_mode": "active", "can_reactivate": False,
     }
     assert next(item for item in running.json() if item["id"] == "knowledge")["mode"] == "off"
 
@@ -79,7 +79,7 @@ def test_module_mode_change_is_pending_until_restart(tmp_path: Path) -> None:
     assert next(item for item in applied.json()["modules"] if item["id"] == "knowledge") == {
         "id": "knowledge",
         "current_mode": "active",
-        "pending_mode": "active",
+        "pending_mode": "active", "can_reactivate": False,
     }
 
 

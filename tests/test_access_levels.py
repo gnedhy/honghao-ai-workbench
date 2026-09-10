@@ -184,44 +184,35 @@ def test_user_api_rejects_old_global_level_and_removed_scope_levels(tmp_path: Pa
     assert removed_basic_level.status_code == 422
 
 
-def test_sensitive_fields_use_minimum_level_and_allowed_scopes(tmp_path: Path) -> None:
+def test_fields_follow_only_their_own_scope_and_level(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
-
-    with authenticated_client(settings) as admin:
-        changed = admin.put(
-            "/api/admin/fields/procurement.material_unit_price",
-            json={
-                "read_min_level": 2,
-                "write_min_level": 3,
-                "read_scope_ids": ["procurement", "research"],
-                "write_scope_ids": ["procurement"],
-            },
-        )
-
+    with authenticated_client(settings):
+        pass
     store = AuthorizationStore(settings.database_path)
+    # An old cross-scope grant must neither expose prices nor block their owner.
+    store.set_field_policy("procurement.material_unit_price", 4, 4, ["research"], ["research"])
     payload = {"material_name": "乙二醇", "unit_price": 4280}
     mapping = {"unit_price": "procurement.material_unit_price"}
-
-    assert changed.status_code == 200
-    assert store.filter_readable_fields(payload, mapping, False, {"research": 2}) == payload
-    assert store.filter_readable_fields(payload, mapping, False, {"research": 1}) == {"material_name": "乙二醇"}
-    assert store.can_write_field("procurement.material_unit_price", False, {"procurement": 3})
-    assert not store.can_write_field("procurement.material_unit_price", False, {"research": 3})
+    for level in (0, 1, 2, 3, 4):
+        expected = payload if level >= 2 else {"material_name": "乙二醇"}
+        assert store.filter_readable_fields(payload, mapping, False, {"procurement": level}) == expected
+        assert store.can_write_field("procurement.material_unit_price", False, {"procurement": level}) == (level >= 3)
+        assert store.filter_readable_fields(payload, mapping, False, {"research": level}) == {"material_name": "乙二醇"}
+        assert not store.can_write_field("procurement.material_unit_price", False, {"research": level})
     assert store.can_write_field("procurement.material_unit_price", True, {})
+    assert store.filter_readable_fields(payload, mapping, True, {}) == payload
 
 
-def test_unconfigured_field_uses_configurable_level_but_remains_system_admin_only(tmp_path: Path) -> None:
-    settings = Settings.from_data_dir(tmp_path / "data")
-    with authenticated_client(settings) as admin:
-        field = admin.get("/api/admin/fields").json()[0]
-
-    assert field["read_min_level"] == 4
-    assert field["write_min_level"] == 4
-    assert field["read_scope_ids"] == []
-    assert field["write_scope_ids"] == []
-    store = AuthorizationStore(settings.database_path)
-    assert not store.can_write_field(field["id"], False, {"procurement": 4})
-    assert store.can_write_field(field["id"], True, {})
+def test_unconfigured_builtin_fields_use_scope_and_unknown_fields_are_denied(tmp_path: Path) -> None:
+    from api.authorization import FIELD_CATALOG
+    store = AuthorizationStore(tmp_path / "unused.db")
+    for field_id, *_ in FIELD_CATALOG:
+        scope = field_id.split(".", 1)[0]
+        assert store.can_write_field(field_id, False, {scope: 3})
+        assert not store.can_write_field(field_id, False, {scope: 2})
+    for admin in (False, True):
+        assert not store.can_write_field("procurement.unknown", admin, {"procurement": 4})
+        assert store.filter_readable_fields({"value": 42}, {"value": "custom.unknown"}, admin, {"procurement": 4}) == {}
 
 
 def test_identity_v1_migrates_legacy_roles_to_levels_and_scopes(tmp_path: Path) -> None:

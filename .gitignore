@@ -9,3 +9,8 @@ dist/
 .playwright-cli/
 __pycache__/
 *.pyc
+
+# Local candidate builds, one-off account scripts, logs and QA captures.
+output/
+.codex-tmp/
+.scratch/

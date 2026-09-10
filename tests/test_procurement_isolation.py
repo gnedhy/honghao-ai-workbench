@@ -78,23 +78,21 @@ def test_copy_of_invalidated_schedule_requires_fresh_confirmation(tmp_path: Path
         assert publish(client, copied).status_code == 409
 
 
-def test_restricted_reader_cannot_read_prices_in_nested_responses(tmp_path: Path):
+def test_scope_reader_can_read_nested_prices_despite_legacy_restriction(tmp_path: Path):
     settings = procurement_settings(tmp_path)
     with authenticated_client(settings) as client:
         assert publish(client, import_prices(client, '2026-08-01', [('A', 10)])).status_code == 200
         import_prices(client, '2026-08-02', [('A', 11)])
-        assert client.put('/api/admin/fields/procurement.material_unit_price', json={
-            'read_min_level': 4, 'write_min_level': 4,
-            'read_scope_ids': ['procurement'], 'write_scope_ids': ['procurement'],
-        }).status_code == 200
+        from api.authorization import AuthorizationStore
+        AuthorizationStore(settings.database_path).set_field_policy("procurement.material_unit_price", 4, 4, ["procurement"], ["procurement"])
         IdentityStore(settings.database_path).create_user(username='restricted', display_name='查看账号', department='采购', password='Isolated-Test-Password-2026', scope_levels={'procurement': 2})
         procurement_post(client,'/api/logout')
         assert procurement_post(client,'/api/login', json={'username': 'restricted', 'password': 'Isolated-Test-Password-2026'}).status_code == 200
         overview = client.get('/api/workbenches/procurement/overview').json()
         current = client.get('/api/workbenches/procurement/updates/current').json()['current']
-        forbidden = {'latest_price', 'published_price', 'draft_price', 'draft_change', 'change'}
+        price_keys = {'latest_price', 'published_price', 'draft_price'}
         for item in overview['materials'] + overview['current_update']['items'] + current['items'] + overview['current_update']['input_items'] + current['input_items']:
-            assert not forbidden.intersection(item)
+            assert price_keys.intersection(item)
 
 
 def test_input_items_include_unchanged_zero_and_missing_but_not_untouched_materials(tmp_path: Path):
@@ -214,21 +212,19 @@ def test_active_import_cannot_be_archived(tmp_path: Path):
         assert procurement_post(client,f'/api/workbenches/procurement/imports/{import_id}/archive').status_code == 200
 
 
-def test_history_uses_its_own_field_policy(tmp_path: Path):
+def test_history_and_material_use_same_scope_not_legacy_field_policy(tmp_path: Path):
     settings = procurement_settings(tmp_path)
     with authenticated_client(settings) as client:
         current = import_prices(client, '2026-08-01', [('A', 10)])
         material_id = current['items'][0]['material_id']
         for field, level in [('material_unit_price', 4), ('supplier_quote', 2)]:
-            assert client.put(f'/api/admin/fields/procurement.{field}', json={
-                'read_min_level': level, 'write_min_level': 4,
-                'read_scope_ids': ['procurement'], 'write_scope_ids': ['procurement'],
-            }).status_code == 200
+            from api.authorization import AuthorizationStore
+            AuthorizationStore(settings.database_path).set_field_policy(f"procurement.{field}", level, 4, ["procurement"], ["procurement"])
         IdentityStore(settings.database_path).create_user(username='editor', display_name='采购', department='采购', password='Isolated-Test-Password-2026', scope_levels={'procurement': 3})
         procurement_post(client,'/api/logout')
         assert procurement_post(client,'/api/login', json={'username': 'editor', 'password': 'Isolated-Test-Password-2026'}).status_code == 200
         detail = client.get(f'/api/workbenches/procurement/materials/{material_id}').json()
-        assert 'latest_price' not in detail['material']
+        assert detail['latest_price'] == '10'
         assert detail['history'][0]['latest_price'] == '10'
         edited = client.patch(f'/api/workbenches/procurement/materials/{material_id}', json={'code': 'A', 'name': '原料A'})
         assert edited.status_code == 403

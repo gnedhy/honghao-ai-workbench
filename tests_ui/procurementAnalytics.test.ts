@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildPriceMovement, buildRangeDistribution, buildPublishedPriceMovement, buildPriceTrend, buildVersionMovers, moverDateRange, sortBatchPrices, countValidPrices } from "../src/workbenches/procurementAnalytics.ts";
+import { buildPriceMovement, buildPriceUpdateOverview, buildRangeDistribution, buildPublishedPriceMovement, buildPriceTrend, buildVersionMovers, moverDateRange, sortBatchPrices, countValidPrices } from "../src/workbenches/procurementAnalytics.ts";
 import type { ProcurementBatchDetail } from "../src/types.ts";
 
 const batch = (version: number, prices: Record<string, string | null>, dates: Record<string, string> = {}): ProcurementBatchDetail => ({
   id: `b${version}`, version, published_at: `2026-09-0${version}`, price_date: `2026-09-0${version}`, item_count: Object.keys(prices).length,
   items: Object.entries(prices).map(([code, latest_price]) => ({ material_id: code, code, name: code, unit: "kg", latest_price })),
   snapshot_sources: Object.fromEntries(Object.entries(prices).map(([code, raw_price]) => [code, { price_date: dates[code] ?? `2026-09-0${version}`, raw_price, price_kind: raw_price?.includes("-") ? "range" : "number", sheet: null, cell: null }])),
+});
+
+test("更新概况使用报价来源日期，沿用与同价重报分开，缺来源不以版本日期补齐", () => {
+  const detail = batch(3, { A: "5", B: "5", C: "0", D: null, E: "10", F: "2-3" }, { A: "2026-08-01", B: "2026-09-02", C: "2026-09-01", F: "2026-08-02" });
+  delete detail.snapshot_sources!.E;
+  const materials = ["A", "B", "C", "D", "E", "F"].map(id => ({ id, code: id }));
+  assert.deepEqual(buildPriceUpdateOverview(detail, materials, { start: "2026-09-01", end: "2026-09-03" }), { reported: 2, carried: 2, unknown: 2, oldest: [{ id: "A", code: "A", date: "2026-08-01" }, { id: "F", code: "F", date: "2026-08-02" }] });
+  assert.equal(buildPriceUpdateOverview(detail, materials.slice(1, 3), { start: "2026-09-01", end: "2026-09-01" }).unknown, 1);
 });
 
 test("排行按原料最近两次有效价格，跳过沿用快照，跨版本去重并按绝对幅度排序", () => {
