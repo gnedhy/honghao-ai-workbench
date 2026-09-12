@@ -72,7 +72,7 @@ const MODULE_OPTIONS = [
 
 const WORKBENCH_OPTIONS: { id: WorkbenchId; label: string; description: string }[] = [
   { id: "management", label: "总经办工作台", description: "成本经营分析" },
-  { id: "procurement", label: "采购工作台", description: "原料成本管理" },
+  { id: "procurement", label: "采购工作台", description: "原料价格管理" },
   { id: "research", label: "研发工作台", description: "产品成本计算" },
   { id: "sales", label: "销售工作台", description: "产品报价管理" },
 ];
@@ -428,6 +428,23 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
     </div>
     <h3 className="settings-section-label">更新日志</h3>
     <ol className="settings-timeline" tabIndex={0} aria-label="更新日志"><li>
+      <div className="changelog-date"><time dateTime="2026-09-12">2026年9月12日</time></div>
+      <div className="settings-timeline-content">
+        <div><strong>研发五部工作台</strong><p>启用研发看板、产品成本、配方管理和价格历史，65条产品内编分别管理。提供最新优先、库存优先双成本，逐层计入收率，点击产品可查看配方及引用明细。</p></div>
+        <div><strong>配方管理</strong><p>支持新增、编辑、双成本试算、保存草稿及管理人员核对启用；停用检查引用关系，重新启用保留原编号和历史。草稿重启后保留，并发或试算过期时提示重新核对。</p></div>
+        <div><strong>成本历史与自动更新</strong><p>价格、库存或配方启用后自动重算，历史保存当期配方与取价依据。补齐采购V1—V21对应的21期历史回算，明确当前补价依据，与正式记录及原表历史试算分别展示。</p></div>
+        <div><strong>看板与成本比较</strong><p>趋势增加双线图例、日期和产品选择；新增双成本差异排行，支持最新优先和库存优先筛选。台账变化与最近一次不同价格比较，连续同价保留最后变化；日期排行仍按区间首尾比较。</p><p>研发金额显示和悬停统一两位，比较前四舍五入到分；配方内部计算精度保留。</p></div>
+        <div><strong>界面统一</strong><p>复用采购菜单、筛选、显示设置和价格历史布局，历史明细原位展开；分段切换统一白色选中底和轻阴影，优化桌面与窄屏排布。</p></div>
+      </div>
+    </li><li>
+      <div className="changelog-date"><time dateTime="2026-09-11">2026年9月11日</time></div>
+      <div className="settings-timeline-content">
+        <div><strong>库存与研发原料</strong><p>采购台账增加库存量和库存价格；数量显示整数部分，悬停保留原值，支持排序。补齐研发五部原料后，采购台账194项、研发分流107项，新增价格形成V21，原有价格历史保留。</p></div>
+        <div><strong>采购台账与数据分流</strong><p>纯补料保留原有原料的价格比较基准，历史区分新增价格与沿用项。部门分流复用台账的筛选、排序、列设置和分页，支持跨页调整原料范围；修正待发布价对齐。</p></div>
+        <div><strong>主页排行与采购资讯</strong><p>主页采购排行固定显示前10项，保留日期和涨跌切换；采购资讯详情统一抽屉动效、关闭及焦点恢复体验。</p></div>
+        <div><strong>反馈填写体验</strong><p>关闭或返回后保留当前页面内的反馈草稿，重新打开可继续填写；刷新或退出登录后清空。修复取消选图误关窗口，优化截图移除、上传区和按钮布局。</p></div>
+      </div>
+    </li><li>
       <div className="changelog-date"><time dateTime="2026-09-10">2026年9月10日</time><time className="changelog-updated" dateTime="2026-09-10T23:44:00+08:00" title="日志整理更新时间（北京时间）">23:44 整理更新</time></div>
       <div className="settings-timeline-content">
         <div><strong>我的账号</strong><p>集中只读展示本人资料，仅列出已授权的功能模块和工作台；姓名和部门统一由管理员在用户管理中维护。</p><p>修改密码时提供安全性和两次输入一致性提示，安全性仅作参考。密码框支持显示／隐藏，眼睛图标随输入淡入、清空后淡出。</p></div>

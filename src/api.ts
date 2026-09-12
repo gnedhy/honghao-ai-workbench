@@ -29,7 +29,7 @@ export async function fetchServiceHealth(signal?: AbortSignal): Promise<ServiceH
   return health;
 }
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { detail?: unknown } | null;

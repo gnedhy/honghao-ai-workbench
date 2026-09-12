@@ -43,6 +43,7 @@ from api.workbenches import (
 from api.operations import migrate_data, migrate_procurement_data, readiness_checks, service_marker
 from api.procurement import ProcurementStore, create_procurement_router
 from api.procurement_collaboration import capabilities
+from api.research import ResearchStore, create_research_router
 
 
 API_VERSION = "0.1.0"
@@ -298,15 +299,28 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     knowledge = KnowledgeStore(runtime_settings.database_path, runtime_settings.data_dir)
     procurement = ProcurementStore(runtime_settings.database_path)
     feedback = FeedbackStore(runtime_settings.database_path)
+    research = ResearchStore(runtime_settings.database_path)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.startup_error = None
         app.state.procurement_error = None
         app.state.procurement_scheduler = "ok"
+        app.state.research_error = None
+        app.state.research_scheduler = "ok"
+        research_task = None
         scheduler_task: asyncio.Task[None] | None = None
         news_task: asyncio.Task[None] | None = None
         app.state.procurement_news = NewsStore(runtime_settings.data_dir)
+
+        async def run_research_scheduler():
+            while True:
+                try:
+                    await asyncio.to_thread(research.process_events)
+                    app.state.research_scheduler = "ok"
+                except (OSError, RuntimeError, ValueError, KeyError, ArithmeticError, sqlite3.Error):
+                    app.state.research_scheduler = "failed"
+                await asyncio.sleep(3)
 
         async def run_procurement_scheduler() -> None:
             while True:
@@ -341,11 +355,22 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                     except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
                         app.state.procurement_error = str(error)
                         app.state.procurement_scheduler = "failed"
+                if runtime_settings.workbench_modes["research"] == "active":
+                    try:
+                        research.initialize()
+                        app.state.research = research
+                        research_task = asyncio.create_task(run_research_scheduler())
+                    except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
+                        app.state.research_error = str(error)
             except (OSError, RuntimeError, ValueError) as error:
                 app.state.startup_error = str(error)
             try:
                 yield
             finally:
+                if research_task is not None:
+                    research_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await research_task
                 if news_task is not None:
                     news_task.cancel()
                     with suppress(asyncio.CancelledError, Exception):
@@ -449,6 +474,9 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         )
         if runtime_settings.workbench_modes["procurement"] == "active" and app.state.procurement_error is None:
             checks["procurement_scheduler"] = app.state.procurement_scheduler
+        if runtime_settings.workbench_modes["research"] == "active":
+            checks["research_startup"] = "failed" if app.state.research_error else "ok"
+            checks["research_scheduler"] = app.state.research_scheduler
         response = ReadinessResponse(
             status="ready" if all(value == "ok" for value in checks.values()) else "not_ready",
             checks=cast(dict[str, Literal["ok", "failed"]], checks),
@@ -1048,6 +1076,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         return TaskResponse(**task)
 
     app.include_router(create_procurement_router(procurement, authorization, runtime_settings))
+    app.include_router(create_research_router(research, runtime_settings))
     app.include_router(create_feedback_router(feedback, current_user))
 
     if static_root is not None:

@@ -1,11 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildLedgerRows, collectPriceEdits, draftLedgerChange, editedPriceChange, filterLedgerRows, formalLedgerChange, summarizeUpdate } from "../src/workbenches/procurementLedger.ts";
-import type { ProcurementMaterial, ProcurementUpdate } from "../src/types.ts";
+import type { ProcurementBatch, ProcurementMaterial, ProcurementUpdate } from "../src/types.ts";
 
 const material = (id: string, extra: Partial<ProcurementMaterial> = {}): ProcurementMaterial => ({ id, code: id, name: id, unit: "kg", price_date: "2026-09-08", updated_at: "", ...extra });
 const defaults: Parameters<typeof filterLedgerRows>[1] = { query: "", movement: "all", scope: "all", editor: "", selectedPerson: "", current: null, sort: "code", sortDirection: "ascending", edit: null, values: {} };
 const ids = (materials: ProcurementMaterial[], options: Partial<typeof defaults> = {}) => filterLedgerRows(buildLedgerRows(materials, options.current ?? null), { ...defaults, ...options }).map(row => row.material.id);
+
+test("台账与上版正式价格比较：当前持平不沿用早先涨跌，无比较基准保持暂无对比", () => {
+  const current: ProcurementBatch["comparison"] = { previous_version: 20, up: 0, down: 0, unchanged: 2, first: 1, missing: 0, items: {
+    CF040: { previous: "0.54", change: 0, kind: "unchanged" },
+    CF298: { previous: "3.5", change: 0, kind: "unchanged" },
+    new: { previous: null, change: null, kind: "first" },
+  } };
+  const materials = [material("CF040", { published_price: "0.54", previous_published_price: "0.54" }), material("CF298", { published_price: "3.5", previous_published_price: "3.5", inventory_price: "2.9" }), material("new", { published_price: "10" })];
+  assert.deepEqual(materials.map(item => formalLedgerChange(item, current)), [0, 0, null]);
+  assert.deepEqual(ids(materials, { comparison: current, movement: "flat" }), ["CF040", "CF298"]);
+  assert.deepEqual(ids(materials, { comparison: current, movement: "up" }), []);
+  assert.deepEqual(ids(materials, { comparison: current, movement: "down" }), []);
+  assert.deepEqual(ids(materials, { comparison: current, sort: "change" }), ["CF040", "CF298", "new"]);
+});
 
 test("待发布项优先，保存后的变化按待发布价比较，编辑输入不移动行", () => {
   const list = [material("old", { published_price: "20", previous_published_price: "10" }), material("down", { published_price: "10", previous_published_price: "1" }), material("up", { published_price: "10", previous_published_price: "100" })];
@@ -123,6 +137,7 @@ test("各数值列和日期双向排序始终空值置后，同值按自然编�
   for (const [sort, field, low, high] of [
     ["latest_price", "published_price", "2", "12"],
     ["previous_latest_price", "previous_published_price", "2", "12"],
+    ["inventory_quantity", "inventory_quantity", "2", "12"],
     ["price_date", "published_price_date", "2026-08-01", "2026-09-08"],
   ]) {
     const materials = [material("CF10", { [field]: high }), material("CF2", { [field]: high }), material("CF1", { [field]: low }), material("empty")];
@@ -138,6 +153,18 @@ test("变化排序保留正负号而不是绝对波动，未知比较始终排�
   const materials = [material("up", { published_price: "11", previous_published_price: "10" }), material("down", { published_price: "1", previous_published_price: "10" }), material("flat", { published_price: "10", previous_published_price: "10" }), material("unknown")];
   assert.deepEqual(ids(materials, { sort: "change" }), ["down", "flat", "up", "unknown"]);
   assert.deepEqual(ids(materials, { sort: "change", sortDirection: "descending" }), ["up", "flat", "down", "unknown"]);
+});
+
+test("库存量按完整小数排序，取整同值不合并，零值有效，缺失始终最后", () => {
+  const materials = [
+    material("CF1", { inventory_quantity: "10.49", published_price: "1" }),
+    material("CF2", { inventory_quantity: "10.01", published_price: "100" }),
+    material("zero", { inventory_quantity: "0", published_price: "999" }),
+    material("missing"),
+  ];
+  assert.deepEqual(ids(materials, { sort: "inventory_quantity" }), ["zero", "CF2", "CF1", "missing"]);
+  assert.deepEqual(ids(materials, { sort: "inventory_quantity", sortDirection: "descending" }), ["CF1", "CF2", "zero", "missing"]);
+  assert.equal(materials[0].inventory_quantity, "10.49");
 });
 
 test("待发布价排序使用表内输入，空白与非法数字不当成零，未输入项使用原值", () => {

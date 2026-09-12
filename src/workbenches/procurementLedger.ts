@@ -70,7 +70,7 @@ export function filterLedgerRows(rows: ReturnType<typeof buildLedgerRows>, optio
       const change = edit ? draftLedgerChange(item, values[item.id] ?? edit.originals[item.id] ?? "", comparison) : row.input ? draftLedgerChange(item, row.input.draft_price ?? "", comparison) : formalLedgerChange(item, comparison);
       return typeof change === "number" ? change : null;
     }
-    const raw = sort === "draft_price" ? edit ? values[item.id] ?? edit.originals[item.id] : row.input?.draft_price : sort === "previous_latest_price" ? item.previous_published_price : item.published_price;
+    const raw = sort === "inventory_quantity" ? item.inventory_quantity : sort === "draft_price" ? edit ? values[item.id] ?? edit.originals[item.id] : row.input?.draft_price : sort === "previous_latest_price" ? item.previous_published_price : item.published_price;
     return raw == null || !/^\d+(\.\d+)?$/.test(String(raw).trim()) || !Number.isFinite(Number(raw)) ? null : Number(raw);
   };
   return rows.filter(row => {

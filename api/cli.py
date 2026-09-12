@@ -5,6 +5,7 @@ import json
 import getpass
 import re
 import sys
+from datetime import date
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -33,6 +34,26 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
     history.add_argument("--apply", action="store_true")
     history.add_argument("--actor-id")
     history.add_argument("--sha256")
+    inventory = subcommands.add_parser("procurement-inventory", help="管理员导入完整库存报表；默认只预检")
+    inventory.add_argument("source", type=Path)
+    inventory.add_argument("--apply", action="store_true")
+    inventory.add_argument("--actor-id")
+    inventory.add_argument("--sha256")
+    inventory.add_argument("--catalog-sha256")
+    rd5 = subcommands.add_parser("procurement-rd5", help="管理员补齐研发五部原料并准备配方数据；默认只预检")
+    rd5.add_argument("source", type=Path)
+    rd5.add_argument("--apply", action="store_true")
+    rd5.add_argument("--actor-id")
+    rd5.add_argument("--sha256")
+    rd5.add_argument("--state-sha256")
+    rd5.add_argument("--effective-date", type=date.fromisoformat)
+    rd5.add_argument("--export-dir", type=Path)
+    rd5_current = subcommands.add_parser("procurement-rd5-current", help="应用已确认的 CF401B 现行方案及历史试算范围；默认只预检")
+    rd5_current.add_argument("sha256")
+    rd5_current.add_argument("--apply", action="store_true")
+    rd5_current.add_argument("--actor-id")
+    rd5_current.add_argument("--state-sha256")
+    rd5_current.add_argument("--export-dir", type=Path)
     serve = subcommands.add_parser("serve", help="启动正式单机服务")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", default=8000, type=int)
@@ -78,6 +99,39 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
             return 0
 
         runtime_settings = settings or Settings.from_environment()
+        if args.command == "procurement-rd5-current":
+            from api.procurement_rd5 import revise_preparation, export_preparation
+            if args.apply and not all((args.actor_id, args.state_sha256)):
+                raise ValueError("执行修订须提供管理员ID及预检状态SHA256")
+            result = revise_preparation(runtime_settings.database_path, args.sha256,
+                actor_id=args.actor_id if args.apply else None, expected_state_sha256=args.state_sha256)
+            if args.export_dir:
+                result["export"] = export_preparation(runtime_settings.database_path, args.sha256, args.export_dir)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "procurement-rd5":
+            from api.procurement_rd5 import preview, import_rd5, export_preparation
+            result = preview(runtime_settings.database_path, args.source.read_bytes())
+            if args.apply:
+                if not all((args.actor_id, args.sha256, args.state_sha256, args.effective_date)):
+                    raise ValueError("执行导入须提供管理员ID、预检文件及状态SHA256、价格生效日期")
+                result = import_rd5(runtime_settings.database_path, args.source, args.actor_id,
+                                    expected_sha256=args.sha256, expected_state_sha256=args.state_sha256,
+                                    effective_date=args.effective_date)
+            if args.export_dir:
+                result["export"] = export_preparation(runtime_settings.database_path, result["sha256"], args.export_dir)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "procurement-inventory":
+            from api.procurement_inventory import inventory_preview, import_inventory
+            result = inventory_preview(runtime_settings.database_path, args.source.read_bytes())
+            if args.apply:
+                if not args.actor_id or not args.sha256 or not args.catalog_sha256:
+                    raise ValueError("执行导入须提供有效管理员ID、预检文件SHA256及目录SHA256")
+                result = import_inventory(runtime_settings.database_path, args.source, args.actor_id,
+                                          expected_sha256=args.sha256, expected_catalog_sha256=args.catalog_sha256)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         if args.command == "procurement-history":
             from api.procurement_excel import history_preview, import_history
             result = history_preview(args.source.read_bytes())

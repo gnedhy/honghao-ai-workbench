@@ -80,7 +80,7 @@ def test_procurement_migration_is_additive_and_overview_starts_empty(tmp_path: P
         version = connection.execute(
             "SELECT value FROM schema_metadata WHERE key = 'workbench_procurement_schema_version'"
         ).fetchone()
-    assert version == (5,)
+    assert version == (7,)
 
 
 def test_existing_database_is_backed_up_before_procurement_migration(tmp_path: Path) -> None:

@@ -32,18 +32,29 @@ export function ProcurementNews({ cache }: { cache: RefObject<NewsData | null> }
     {data?.items.length ? <div className={styles.newsPages}>{Array.from({length:pages},(_,index)=><div key={index} className={`${styles.newsPage} ${index!==currentPage?styles.newsPageInactive:''}`} aria-hidden={index!==currentPage} inert={index!==currentPage}><NewsGroups items={data.items.slice(index*5,index*5+5)}/></div>)}</div> : <p className={styles.newsEmpty}>{failed?'资讯暂时无法读取':!data?'正在读取资讯':'最近30天暂无资讯'}</p>}
     {(failed||data?.delayed)&&<p className={styles.newsWarning}>{failed?'资讯读取延迟，稍后自动重试':'部分来源更新延迟'}</p>}
     <footer className={styles.newsFooter}><span title={data?.updated_at?updateTime(data.updated_at):undefined}>{data?.updated_at?`更新于 ${new Date(data.updated_at).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false})}`:'等待首次更新'}</span><button ref={button} type="button" onClick={()=>setOpen(true)}>查看全部 <ChevronRight size={14}/></button></footer>
-    {open&&<NewsDrawer onClose={()=>{setOpen(false);requestAnimationFrame(()=>button.current?.focus());}}/>}
+    {open&&<NewsDrawer onClose={()=>{setOpen(false);requestAnimationFrame(()=>button.current?.focus({preventScroll:true}));}}/>}
   </section>;
 }
 function NewsDrawer({onClose}:{onClose:()=>void}){
   const dialog=useRef<HTMLDialogElement>(null);
+  const [closing,setClosing]=useState(false);
+  const closeTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
   const [source,setSource]=useState('all'),[page,setPage]=useState(1),[failed,setFailed]=useState(false),[retry,setRetry]=useState(0);
   const [result,setResult]=useState<{key:string;data:NewsData}|null>(null);const key=`${source}:${page}`;
-  useEffect(()=>{dialog.current?.showModal();},[]);
+  useEffect(()=>{const element=dialog.current;element?.showModal();return()=>{if(closeTimer.current)clearTimeout(closeTimer.current);element?.close();};},[]);
+  const close=()=>{
+    if(closeTimer.current)return;
+    setClosing(true);
+    closeTimer.current=setTimeout(onClose,window.matchMedia('(prefers-reduced-motion: reduce)').matches?0:140);
+  };
   useEffect(()=>{const controller=new AbortController();setFailed(false);fetchProcurementNews(source,page,controller.signal).then(data=>setResult({key,data})).catch(()=>{if(!controller.signal.aborted)setFailed(true);});return()=>controller.abort();},[source,page,retry]);
   const data=result?.key===key?result.data:null;
-  return <dialog ref={dialog} className={styles.newsDialog} aria-labelledby="news-title" onCancel={event=>{event.preventDefault();onClose();}}>
-    <header className={styles.drawerHeader}><h2 id="news-title">采购资讯</h2><button type="button" className="icon-button" aria-label="关闭采购资讯" onClick={onClose}><X size={17}/></button></header>
+  return <dialog ref={dialog} className={`${styles.newsDialog} ${closing?styles.closing:''}`} aria-labelledby="news-title" onCancel={event=>{if(event.target!==event.currentTarget)return;event.preventDefault();event.stopPropagation();close();}} onKeyDown={event=>{if(event.key==='Escape')event.stopPropagation();}} onMouseDown={event=>{
+    if(event.target!==event.currentTarget)return;
+    const rect=event.currentTarget.getBoundingClientRect();
+    if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)close();
+  }}>
+    <header className={styles.drawerHeader}><h2 id="news-title">采购资讯</h2><button autoFocus type="button" className="icon-button" aria-label="关闭采购资讯" onClick={close}><X size={17}/></button></header>
     <div className={styles.newsFilters}><span>最近30天</span><label>信源 <select value={source} onChange={event=>{setSource(event.target.value);setPage(1);}}><option value="all">全部</option>{['生意社','隆众资讯','商务部'].map(name=><option key={name}>{name}</option>)}</select></label></div>
     <details className={styles.newsSources}><summary>来源更新状态</summary>{data?.sources.map(s=><p key={s.name}>{s.name} · {s.status==='ok'?'正常':s.status==='pending'?'等待首次更新':'更新延迟'}{s.last_success?` · ${updateTime(s.last_success)}`:''}</p>)}</details>
     <div className={styles.newsScroll}>{failed?<div className={styles.newsEmpty}>资讯读取失败 <button className="secondary-button" onClick={()=>setRetry(x=>x+1)}>重新加载</button></div>:!data?<p className={styles.newsEmpty}>正在读取资讯</p>:data.items.length?<ul className={styles.newsList}>{data.items.map(item=><NewsRow key={item.url} item={item}/>)}</ul>:<p className={styles.newsEmpty}>最近30天暂无资讯</p>}</div>

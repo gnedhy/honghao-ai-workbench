@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { ArrowLeft, X, ImagePlus, LockKeyhole, UserRound, Check, ChevronDown } from "lucide-react";
 import type { CurrentUser } from "../types";
 import { DiscardChangesDialog } from "./SettingsDialog";
@@ -11,6 +11,8 @@ type Feedback = {
   result_at: string | null; revision: number; unread: boolean; has_image: boolean;
 };
 const statuses = ["待处理", "处理中", "已处理"];
+export type FeedbackDraft = { kind: string; text: string; image: string };
+export const emptyFeedbackDraft: FeedbackDraft = { kind: "问题反馈", text: "", image: "" };
 const date = (value: string) => new Date(value).toLocaleString("zh-CN", { hour12: false });
 class FeedbackError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 async function request<T>(path = "", method = "GET", body?: unknown): Promise<T> {
@@ -20,8 +22,9 @@ async function request<T>(path = "", method = "GET", body?: unknown): Promise<T>
   return data as T;
 }
 
-export function FeedbackDialog({ currentUser, context, version, onClose, onUnreadChanged }: {
+export function FeedbackDialog({ currentUser, context, version, onClose, onUnreadChanged, draft, onDraftChange }: {
   currentUser: CurrentUser; context: string; version: string; onClose: () => void; onUnreadChanged: () => void;
+  draft: FeedbackDraft; onDraftChange: Dispatch<SetStateAction<FeedbackDraft>>;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const backButton = useRef<HTMLButtonElement>(null);
@@ -34,13 +37,15 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [imageLoading, setImageLoading] = useState(false);
-  const [view, setView] = useState<"list" | "new" | "detail">("list");
+  const hasDraft = !!(draft.text || draft.image || draft.kind !== "问题反馈");
+  const [view, setView] = useState<"list" | "new" | "detail">(hasDraft ? "new" : "list");
   const [selected, setSelected] = useState<Feedback | null>(null);
   const [filter, setFilter] = useState("全部");
   const [onlyMine, setOnlyMine] = useState(false);
-  const [kind, setKind] = useState("问题反馈");
-  const [text, setText] = useState("");
-  const [image, setImage] = useState("");
+  const { kind, text, image } = draft;
+  const setKind = (kind: string) => onDraftChange(old => ({ ...old, kind }));
+  const setText = (text: string) => onDraftChange(old => ({ ...old, text }));
+  const setImage = (image: string) => onDraftChange(old => ({ ...old, image }));
   const [status, setStatus] = useState("待处理");
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
@@ -71,7 +76,7 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
 
   function leave(action: () => void) {
     if (busyRef.current || imageLoading || closing) return;
-    if (dirty) setPending(() => action); else action();
+    if (dirty && view === "detail") setPending(() => action); else action();
   }
   function close() {
     if (closeTimer.current) return;
@@ -91,9 +96,9 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
     } catch { setError("未能标记已读，消息提醒已保留。"); }
   }
   async function chooseImage(file?: File) {
+    if (!file) return;
     const sequence = ++fileSequence.current;
     setImage(""); setError("");
-    if (!file) return;
     if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024 || !file.size) { setError("请选择 5 MB 以内的 PNG、JPG 或 WebP 图片。"); return; }
     setImageLoading(true);
     try {
@@ -128,12 +133,12 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
     } finally { busyRef.current = false; setBusy(false); }
   }
   const rows = records.filter(row => (admin || row.owner_id === currentUser.id) && (!onlyMine || row.owner_id === currentUser.id) && (filter === "全部" || row.status === filter));
-  return <dialog ref={dialog} className="feedback-dialog" data-closing={closing || undefined} aria-labelledby="feedback-title" onCancel={event => { event.preventDefault(); event.stopPropagation(); if (!pending) leave(close); }} onKeyDown={event => { if (event.key === "Escape") event.stopPropagation(); }}>
+  return <dialog ref={dialog} className="feedback-dialog" data-closing={closing || undefined} aria-labelledby="feedback-title" onClick={event => { if (view === "list" && event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) leave(close); } }} onCancel={event => { if (event.target !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); if (!pending) leave(close); }} onKeyDown={event => { if (event.key === "Escape") event.stopPropagation(); }}>
     <div className="feedback-window" inert={!!pending || closing}>
       <header className="feedback-header">
         {view !== "list" && <button ref={backButton} className="feedback-icon" aria-label="返回列表" title="返回列表" disabled={busy || imageLoading} onClick={() => leave(list)}><ArrowLeft size={19} /></button>}
         <h2 id="feedback-title">{view === "new" ? "新建反馈" : view === "detail" ? "反馈详情" : admin ? "用户反馈" : "我的反馈"}</h2>
-        {view === "list" && <button className="secondary-button" onClick={() => { setKind("问题反馈"); setText(""); setImage(""); setError(""); setNotice(""); setView("new"); }}>新建反馈</button>}
+        {view === "list" && <button className="secondary-button" onClick={() => { setError(""); setNotice(""); setView("new"); }}>{hasDraft ? "继续填写" : "新建反馈"}</button>}
         <button className="feedback-icon" aria-label="关闭反馈" disabled={busy || imageLoading} onClick={() => leave(close)}><X size={19} /></button>
       </header>
       <div key={view} className="feedback-body" data-view={view} ref={bodyRef}>
@@ -145,9 +150,10 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
         </>}
         {view === "new" && <form id="feedback-compose" onSubmit={e => { e.preventDefault(); void save(); }}>
           <fieldset disabled={busy} className="feedback-compose-fields">
+          <small className="feedback-context">草稿在本次登录期间自动保留，刷新页面或退出登录后清空。</small>
           <fieldset className="feedback-kind-options"><legend>反馈类型</legend><div className="feedback-segments sliding-segments">{["问题反馈", "功能建议"].map(value => <label key={value}><input type="radio" name="feedback-kind" value={value} checked={kind === value} onChange={() => setKind(value)} />{value}</label>)}</div></fieldset>
           <div className="feedback-writing"><div className="feedback-label-row"><label htmlFor="feedback-text">反馈内容</label><small>必填</small></div><div className="feedback-editor"><textarea id="feedback-text" required maxLength={2000} value={text} onChange={e => setText(e.target.value)} placeholder="在哪个页面、进行了什么操作、遇到了什么问题？" /><div className="feedback-count">{text.length} / 2000</div></div></div>
-          <div className="feedback-attachment-field"><div className="feedback-label-row"><label htmlFor="feedback-file">附加截图 <span>（选填）</span></label></div><div className="feedback-upload-row"><label className="feedback-upload-target" htmlFor="feedback-file">{image ? <img src={image} alt="待提交截图" /> : <ImagePlus size={24} />}<span><strong>{imageLoading ? "正在读取图片…" : image ? "已选择截图，可点击更换" : "添加一张截图"}</strong><small>PNG、JPG、WebP · 最多 5 MB</small></span><span className="feedback-upload-choice">{image ? "更换图片" : "选择图片"}</span><input id="feedback-file" type="file" accept="image/png,image/jpeg,image/webp" disabled={imageLoading} onChange={e => void chooseImage(e.target.files?.[0])} /></label>{image && <button type="button" className="feedback-icon" aria-label="移除截图" onClick={() => { setImage(""); const input = document.getElementById("feedback-file") as HTMLInputElement; if (input) input.value = ""; }}><X size={16} /></button>}</div></div>
+          <div className="feedback-attachment-field"><div className="feedback-label-row"><label htmlFor="feedback-file">附加截图 <span>（选填）</span></label></div><div className="feedback-upload-row"><label className="feedback-upload-target" htmlFor="feedback-file">{image ? <img src={image} alt="待提交截图" /> : <ImagePlus size={24} />}<span><strong>{imageLoading ? "正在读取图片…" : image ? "已选择截图，可点击更换" : "添加一张截图"}</strong><small>PNG、JPG、WebP · 最多 5 MB</small></span><span className="feedback-upload-choice">{image ? "更换图片" : "选择图片"}</span><input id="feedback-file" type="file" accept="image/png,image/jpeg,image/webp" disabled={imageLoading} onChange={e => void chooseImage(e.target.files?.[0])} /></label>{image && <button type="button" className="feedback-icon feedback-remove-image" aria-label="移除截图" title="移除截图" onClick={() => { setImage(""); const input = document.getElementById("feedback-file") as HTMLInputElement; if (input) input.value = ""; }}><X size={16} /></button>}</div></div>
           </fieldset>
         </form>}
         {view === "detail" && selected && <>
@@ -161,8 +167,8 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
         </>}
       </div>
       {error && <p className="feedback-error" role="alert">{error}{view === "list" && <button onClick={() => { setError(""); setLoading(true); void refresh().catch(e => setError(e.message)).finally(() => setLoading(false)); }}>重试</button>}</p>}
-      {view !== "list" && <footer className="feedback-actions">{view === "new" && <small className="feedback-privacy"><LockKeyhole size={14} />仅本人和管理员可查看</small>}<button className="secondary-button" disabled={busy || imageLoading} onClick={() => leave(list)}>{view === "new" ? "取消" : "返回列表"}</button>{(view === "new" || admin) && <button className="primary-button" type="submit" form={view === "new" ? "feedback-compose" : "feedback-process"} disabled={busy || imageLoading || (view === "new" ? !text.trim() : !dirty)}>{busy ? "正在保存…" : view === "new" ? "提交反馈" : "保存处理"}</button>}</footer>}
+      {view !== "list" && <footer className="feedback-actions">{view === "new" && <small className="feedback-privacy"><LockKeyhole size={14} />仅本人和管理员可查看</small>}{view === "new" && !!(text.trim() || image) && <button className="secondary-button" disabled={busy || imageLoading} onClick={() => setPending(() => () => { onDraftChange(emptyFeedbackDraft); list(); })}>放弃草稿</button>}{view === "detail" && <button className="secondary-button" disabled={busy || imageLoading} onClick={() => leave(list)}>返回列表</button>}{(view === "new" || admin) && <button className="primary-button" type="submit" form={view === "new" ? "feedback-compose" : "feedback-process"} disabled={busy || imageLoading || (view === "new" ? !text.trim() : !dirty)}>{busy ? "正在保存…" : view === "new" ? "提交反馈" : "保存处理"}</button>}</footer>}
     </div>
-    {pending && <DiscardChangesDialog onCancel={() => setPending(null)} onDiscard={() => { const action = pending; setPending(null); action(); }} />}
+    {pending && <DiscardChangesDialog {...(view === "new" ? { title: "放弃这份草稿？", description: "反馈类型、正文和截图将被清空。", confirmLabel: "放弃草稿", cancelLabel: "继续填写" } : {})} onCancel={() => setPending(null)} onDiscard={() => { const action = pending; setPending(null); action(); }} />}
   </dialog>;
 }

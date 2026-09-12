@@ -75,8 +75,8 @@ export type ProcurementPage = "dashboard" | "updates" | "materials" | "distribut
 
 export const PROCUREMENT_PAGE_LABELS: Record<ProcurementPage, string> = {
   dashboard: "采购看板",
-  updates: "原料台账",
-  materials: "原料台账",
+  updates: "原料价格",
+  materials: "原料价格",
   distribution: "数据分流",
   history: "价格历史",
   batches: "价格历史",
@@ -104,6 +104,7 @@ export type ProcurementMaterial = {
   latest_price?: string | null;
   previous_latest_price?: string | null;
   inventory_price?: string | null;
+  inventory_quantity?: string | null;
   in_transit_price?: string | null;
   suggested_price?: string | null;
   published_price?: string | null;
@@ -132,7 +133,7 @@ export type ProcurementIssue = {
 export type ProcurementBatch = {
   provenance?: { origin: string; filename: string; imported_at: string; imported_by: string; reported_count: number };
   published_by_name?: string | null;
-  comparison?: { previous_version: number | null; up: number; down: number; unchanged: number; first: number; missing: number; incomparable?: number; items: Record<string, { previous: string | null; previous_raw?: string | null; change: number | null; kind: string }> };
+  comparison?: { added_material_ids?: string[]; previous_version: number | null; up: number; down: number; unchanged: number; first: number; missing: number; incomparable?: number; items: Record<string, { previous: string | null; previous_raw?: string | null; change: number | null; kind: string; version?: number; previous_version?: number | null }> };
   id: string;
   version: number;
   published_at: string;
@@ -231,6 +232,7 @@ export type ProcurementHistoryBatchDetail = ProcurementHistoryBatch & {
 };
 
 export type ProcurementMaterialDetail = {
+  comparison?: NonNullable<ProcurementBatch["comparison"]>["items"][string] | null;
   official_history: Array<{id: string; version: number; version_date: string; latest_price?: string | null; price_date: string | null; raw_price?: string | null; price_kind: string; sheet: string | null; cell: string | null; modifier?: PriceModifier | null}>;
   sources: Array<{sheet: string; row: number; purchaser: string | null; filename: string}>;
   changes?: ProcurementBatchDetail["changes"];
@@ -252,6 +254,7 @@ export type ProcurementPreferences = {
 };
 
 export type ProcurementOverview = {
+  ledger_comparison?: ProcurementBatch["comparison"] | null;
   editors?: Array<{ id: string; name: string }>;
   environment?: string;
   capabilities?: { can_edit: boolean; can_activate: boolean; can_manage_grants: boolean; can_cancel_round: boolean; can_manage_catalog: boolean };
@@ -365,3 +368,6 @@ export type TaskItem = {
   created_at: string;
   latest_run: string | null;
 };
+
+export type ResearchPage = "dashboard" | "products" | "formulas" | "history";
+export const RESEARCH_PAGE_LABELS: Record<ResearchPage, string> = { dashboard: "研发看板", products: "产品成本", formulas: "配方管理", history: "价格历史" };

@@ -10,7 +10,7 @@ import { PRICE_REASONS, REVIEW_REASONS, resolveReason, type ReasonSelection } fr
 import styles from "./ProcurementWorkbench.module.css";
 import { previewPriceAdjustments, type PricePreview } from "../api";
 import { previewProcurementExcel, type ExcelPreview } from "../api";
-import { ProcurementDistribution } from "./ProcurementDistribution";
+import { ProcurementDistribution, type DepartmentLedger } from "./ProcurementDistribution";
 import { ProcurementNews, type NewsData } from "./ProcurementNews";
 
 function usePricePreview(enabled: boolean, date: string, items: Array<{ material_id: string; price: string }>) {
@@ -77,14 +77,16 @@ export function ProcurementWorkbench({ accessLevel, view, page, onPageChange, on
   if (state === "loading") return <ModuleState title="正在读取采购数据" />;
   if (state === "error" || !data) return <ModuleState title="采购工作台暂时不可用" retry={() => void load()} />;
 
-  if (view === "preview") return <ProcurementPreview data={data} onEnter={() => { onPageChange(defaultProcurementPage(data.current_update)); onEnter(); }} />;
+  const renderLedger = (ledgerData: ProcurementOverview, department?: DepartmentLedger) => <Materials startInEdit={editFromDashboard} onEditStarted={() => setEditFromDashboard(false)} locateCode={locateCode} data={ledgerData} accessLevel={accessLevel} onRefresh={() => load()} onSaved={setData} onCreate={() => setCatalogOpen(true)} onImport={() => setImportOpen(true)} onPublish={() => {publishTrigger.current = document.activeElement as HTMLElement; setPublishOpen(true);}} onPageChange={onPageChange} focusPending={page === "updates"} department={department} onOpenDepartmentMaterial={id => { distributionTrigger.current = document.activeElement as HTMLElement; setDistributionMaterial(id); }} />;
+
+  if (view === "preview") return <ProcurementPreview data={data} moverHistory={moverHistory} onEnter={() => { onPageChange(defaultProcurementPage(data.current_update)); onEnter(); }} />;
 
   return (
-    <article className={`workbench-detail ${styles.root} ${styles.full}${page === "materials" || page === "updates" ? ` ${styles.ledgerPage}` : ""}`}>
+    <article className={`workbench-detail ${styles.root} ${styles.full}${page === "materials" || page === "updates" || page === "distribution" ? ` ${styles.ledgerPage}` : ""}`}>
       <header className={styles.header}>
         <div>
           <span className={styles.eyebrow}>采购部 · 已启用</span>
-          <h1>原料成本管理</h1>
+          <h1>原料价格管理</h1>
           <p>归集采购价格，确认异常波动后启用可追溯的原料成本基线。</p>
         </div>
       </header>
@@ -93,9 +95,9 @@ export function ProcurementWorkbench({ accessLevel, view, page, onPageChange, on
       {notice && <div className={styles.notice}><Check size={14} />{notice}<button type="button" aria-label="关闭提示" onClick={() => setNotice("")}><X size={13} /></button></div>}
 
       {page === "dashboard" && <Dashboard data={data} moverHistory={moverHistory} newsCache={newsCache} onOpenUpdate={() => { setEditFromDashboard(true); onPageChange("materials"); }} />}
-      {(page === "materials" || page === "updates") && <Materials startInEdit={editFromDashboard} onEditStarted={() => setEditFromDashboard(false)} locateCode={locateCode} data={data} accessLevel={accessLevel} onRefresh={() => load()} onSaved={setData} onCreate={() => setCatalogOpen(true)} onImport={() => setImportOpen(true)} onPublish={() => {publishTrigger.current = document.activeElement as HTMLElement; setPublishOpen(true);}} onPageChange={onPageChange} focusPending={page === "updates"} />}
-      {page === "distribution" && <ProcurementDistribution revision={distributionRevision} onOpenMaterial={id => { distributionTrigger.current = document.activeElement as HTMLElement; setDistributionMaterial(id); }} />}
-      {page === "distribution" && distributionMaterial && <MaterialDrawer materialId={distributionMaterial} canEdit={accessLevel >= 3} canManage={Boolean(data.capabilities?.can_manage_catalog)} currentPriceDate={data.current_update?.price_date} onClose={closeDistributionMaterial} onChanged={() => { closeDistributionMaterial(); setDistributionRevision(value => value + 1); void load(); }} />}
+      {(page === "materials" || page === "updates") && renderLedger(data)}
+      {page === "distribution" && <ProcurementDistribution revision={distributionRevision} renderLedger={renderLedger} />}
+      {page === "distribution" && distributionMaterial && <MaterialDrawer batches={data.batches} materialId={distributionMaterial} canEdit={accessLevel >= 3} canManage={Boolean(data.capabilities?.can_manage_catalog)} currentPriceDate={data.current_update?.price_date} onClose={closeDistributionMaterial} onChanged={() => { closeDistributionMaterial(); setDistributionRevision(value => value + 1); void load(); }} />}
       {(page === "history" || page === "batches") && <Batches data={data} accessLevel={accessLevel} onRefresh={() => void load()} onNotice={setNotice} onOpenUpdate={() => onPageChange("updates")} />}
       {importOpen && <ImportPanel current={data.current_update} onClose={() => setImportOpen(false)} onImported={(overview) => { setData(overview); setImportOpen(false); onPageChange("materials"); setNotice("价格数据已加入本轮更新，请在台账内处理并启用。"); }} />}
       {publishOpen && data.current_update && <PublishConfirm update={data.current_update} publishing={publishing} onClose={() => {setPublishOpen(false); requestAnimationFrame(() => publishTrigger.current?.focus({preventScroll:true}));}} onConfirm={async (mode, activateAt) => {
@@ -124,23 +126,17 @@ function ProcurementMetrics({ data, movement }: { data: ProcurementOverview; mov
   return <div className={`${styles.metrics} workbench-metrics`}>{metrics.map(([label, value, note]) => <div key={label}><small>{label}</small><strong>{value}</strong><span>{note}</span></div>)}</div>;
 }
 
-function ProcurementPreview({ data, onEnter }: { data: ProcurementOverview; onEnter: () => void }) {
+function ProcurementPreview({ data, moverHistory, onEnter }: { data: ProcurementOverview; moverHistory: React.RefObject<MoverHistoryCache>; onEnter: () => void }) {
   const movement = buildPublishedPriceMovement(data.materials, data.batches[0]?.comparison);
-  const materialMap = new Map(data.materials.map((material) => [material.code, material]));
 
   return <article className={`workbench-detail ${styles.root} ${styles.summaryPage}`}>
     <header className={styles.header}>
-      <div><span className={styles.eyebrow}>采购部 · 已启用</span><h1>原料成本管理</h1><p>快速查看采购价格、异常和最新成本基线，需要处理业务时再进入完整工作台。</p></div>
+      <div><span className={styles.eyebrow}>采购部 · 已启用</span><h1>原料价格管理</h1><p>快速查看采购价格、异常和最新成本基线，需要处理业务时再进入完整工作台。</p></div>
       <button className="primary-button" type="button" onClick={onEnter}>进入工作台<ArrowRight size={15} /></button>
     </header>
     <ProcurementMetrics data={data} movement={movement} />
     <PriceTrendPanel data={data} className={styles.previewTrend} />
-    <section className={styles.section}>
-      <div className={styles.sectionHeading}><div><span>管理摘要</span><h2>价格关注</h2></div><small>{movement.comparable ? `${movement.comparable} 项可比较` : "暂无可比较周期"}</small></div>
-      {movement.ranked.length
-        ? <div className={styles.previewMovers}>{movement.ranked.slice(0, 4).map((item) => { const material = materialMap.get(item.code); return <div key={item.code}><span><strong>{item.code}</strong><small>{item.code} · 当前 {price(material?.published_price)}</small></span><Movement value={item.changePercent} /></div>; })}</div>
-        : <div className={styles.inlineEmpty}><strong>暂无价格变动</strong><span>价格版本出现可比较的价格变化后，这里将显示变动最大的原料。</span></div>}
-    </section>
+    <PriceMovers batches={data.batches} cache={moverHistory} compact />
   </article>;
 }
 
@@ -172,7 +168,7 @@ function PriceTrendPanel({ data, className = "" }: { data: ProcurementOverview; 
   </section>;
 }
 
-function TrendMaterialMenu({ materials, selected, onSelect }: { materials: ProcurementMaterial[]; selected: string; onSelect: (code: string) => void }) {
+export function TrendMaterialMenu({ materials, selected, onSelect, label = "趋势原料", placeholder = "搜索原料编号" }: { materials: { id: string; code: string }[]; selected: string; onSelect: (code: string) => void; label?: string; placeholder?: string }) {
   const menu = useRef<HTMLDetailsElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -193,9 +189,9 @@ function TrendMaterialMenu({ materials, selected, onSelect }: { materials: Procu
       if (next < 0) search.current?.focus(); else options[next]?.focus();
     }
   }}>
-    <summary aria-label="选择趋势原料"><span>{selected || "选择原料"}</span><ChevronRight size={14} /></summary>
+    <summary aria-label={`选择${label}`}><span>{selected || "选择原料"}</span><ChevronRight size={14} /></summary>
     <div>
-      <label className={styles.trendMaterialSearch}><Search size={14} /><input ref={search} aria-label="搜索趋势原料编号" placeholder="搜索原料编号" value={query} onChange={event => setQuery(event.target.value)} /></label>
+      <label className={styles.trendMaterialSearch}><Search size={14} /><input ref={search} aria-label={`搜索${label}`} placeholder={placeholder} value={query} onChange={event => setQuery(event.target.value)} /></label>
       <div className={`${styles.filterGroup} ${styles.trendMaterialOptions}`}>
         {matches.map(item => <button key={item.id} data-material-option type="button" aria-pressed={selected === item.code} onClick={event => { event.preventDefault(); onSelect(item.code); close(true); }}>{item.code}{selected === item.code && <Check size={14} />}</button>)}
         {!matches.length && <p role="status">没有匹配的原料</p>}
@@ -209,7 +205,7 @@ function Dashboard({ data, moverHistory, newsCache, onOpenUpdate }: { data: Proc
   const editable = Boolean(data.capabilities?.can_edit) && (!data.current_update || ["draft", "returned"].includes(data.current_update.status));
   return <>
     <section className={styles.taskCard}>
-      <div><span>价格更新提醒</span><h2>及时更新采购价格</h2><p>收到最新报价后，请及时更新原料台账。</p></div>
+      <div><span>价格更新提醒</span><h2>及时更新采购价格</h2><p>收到最新报价后，请及时更新价格台账。</p></div>
       <button className="primary-button" type="button" onClick={onOpenUpdate}>{editable ? "更新价格" : "查看台账"}<ArrowRight size={15} /></button>
     </section>
     <ProcurementMetrics data={data} movement={movement} />
@@ -253,7 +249,7 @@ function PriceDistributionPanel({ data }: { data: ProcurementOverview }) {
       </section>;
 }
 
-function PriceMovers({ batches, cache }: { batches: ProcurementOverview["batches"]; cache: React.RefObject<MoverHistoryCache> }) {
+function PriceMovers({ batches, cache, compact = false }: { batches: ProcurementOverview["batches"]; cache: React.RefObject<MoverHistoryCache>; compact?: boolean }) {
   const [history, setHistory] = useState<ProcurementBatchDetail[] | null>(() => cache.current?.history ?? null);
   const historyKey = JSON.stringify(batches);
   const { period, range, setPeriod } = usePriceDateRange(batches);
@@ -270,8 +266,9 @@ function PriceMovers({ batches, cache }: { batches: ProcurementOverview["batches
   const [hidden, setHidden] = useState(document.hidden);
   const [ranking, setRanking] = useState<"up" | "down">("up");
   const matchingRows = rows?.filter(row => ranking === "up" ? row.changePercent > 0 : row.changePercent < 0) ?? [];
-  const rankedRows = matchingRows.slice(0, 30);
-  const pages = Math.ceil(rankedRows.length / 10);
+  const rankedRows = matchingRows.slice(0, compact ? 10 : 30);
+  const pageSize = 10;
+  const pages = Math.ceil(rankedRows.length / pageSize);
   const rotating = pages > 1 && !hovered && !focused && !reduced && !hidden;
 
   useEffect(() => {
@@ -300,16 +297,16 @@ function PriceMovers({ batches, cache }: { batches: ProcurementOverview["batches
     return () => { media.removeEventListener("change", motion); document.removeEventListener("visibilitychange", visibility); document.removeEventListener("pointerdown", pointer, true); document.removeEventListener("keydown", keyboard, true); };
   }, []);
 
-  return <section className={`${styles.dashboardPanel} ${styles.moversPanel}`} aria-label="价格变动排行" aria-roledescription="轮播" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} onFocusCapture={() => setFocused(keyboardInteraction.current)} onKeyDownCapture={() => setFocused(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}>
+  return <section className={`${styles.dashboardPanel} ${styles.moversPanel}${compact ? ` ${styles.compactMovers}` : ""}`} aria-label="价格变动排行" aria-roledescription={compact ? undefined : "轮播"} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} onFocusCapture={() => setFocused(keyboardInteraction.current)} onKeyDownCapture={() => setFocused(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}>
     <div className={styles.panelHeading}><div><span>区间涨跌幅</span><h2>价格变动排行</h2></div><div className={styles.moverActions}><PriceDateRangeMenu period={period} range={range} onChange={value => { setPeriod(value); setPage(0); setPreviousPage(null); setInstant(true); }} /><div className={styles.moverSwitch} role="group" aria-label="排行方向">{(["up", "down"] as const).map(value => <button key={value} type="button" aria-pressed={ranking === value} onClick={() => { setRanking(value); setPage(0); setPreviousPage(null); setInstant(true); }}>{value === "up" ? "涨幅" : "降幅"}</button>)}</div></div></div>
     {failed && history !== null && <p role="status">排行刷新失败，暂显示上次结果。<button type="button" onClick={() => setRetry(value => value + 1)}>重试</button></p>}
     {failed && history === null ? <div className={styles.chartEmpty}><strong>价格排行读取失败</strong><button type="button" className="secondary-button" onClick={() => setRetry(value => value + 1)}>重新加载</button></div> : rows === null ? <ChartEmpty title="正在读取价格排行" detail="正在核对各版本价格快照。" /> : !rankedRows.length ? <ChartEmpty title={ranking === "up" ? "暂无涨价原料" : "暂无降价原料"} detail="该范围内暂无符合条件的原料；缺少期初价格不参与排行。" /> : <>
       <div key={`${ranking}-${range.start}-${range.end}`} className={styles.moverPages} data-instant={instant || reduced} aria-live={rotating ? "off" : "polite"}>
-        {Array.from({ length: pages }, (_, index) => <div key={index} data-active={page === index} data-retiring={previousPage === index} aria-hidden={page !== index} inert={page !== index} className={styles.moverList} role="group" aria-roledescription="排行页" aria-label={`第 ${index + 1} 页，共 ${pages} 页`}>
-          {rankedRows.slice(index * 10, index * 10 + 10).map((row, rowIndex) => { const Icon = row.changePercent > 0 ? TrendingUp : TrendingDown; return <div key={`${row.batchId}-${row.materialId}`} style={{ transitionDelay: `${Math.floor(rowIndex / 2) * 30}ms` }}><Icon size={16} /><span><span className={styles.moverLine}><strong>{row.item.code}</strong><span className={styles.moverPrices} title={`比较日期：${formatPriceDate(row.previousDate)} → ${formatPriceDate(row.date)}`}><span>{price(row.previous)}</span><ArrowRight size={12} /><b>{price(row.item.latest_price)}</b><Movement value={row.changePercent} /></span></span><small className={styles.moverVersions}><span>v{row.version}</span>{" · "}<span>{formatPriceDate(row.date)}</span></small></span></div>; })}
+        {Array.from({ length: pages }, (_, index) => <div key={index} data-active={page === index} data-retiring={previousPage === index} aria-hidden={page !== index} inert={page !== index} className={styles.moverList} role="group" aria-roledescription={compact ? undefined : "排行页"} aria-label={compact ? "排行结果" : `第 ${index + 1} 页，共 ${pages} 页`}>
+          {rankedRows.slice(index * pageSize, (index + 1) * pageSize).map((row, rowIndex) => { const Icon = row.changePercent > 0 ? TrendingUp : TrendingDown; return <div key={`${row.batchId}-${row.materialId}`} style={{ transitionDelay: `${Math.floor(rowIndex / 2) * 30}ms` }}><Icon size={16} /><span><span className={styles.moverLine}><strong>{row.item.code}</strong><span className={styles.moverPrices} title={`比较日期：${formatPriceDate(row.previousDate)} → ${formatPriceDate(row.date)}`}><span>{price(row.previous)}</span><ArrowRight size={12} /><b>{price(row.item.latest_price)}</b><Movement value={row.changePercent} /></span></span><small className={styles.moverVersions}><span>v{row.version}</span>{" · "}<span>{formatPriceDate(row.date)}</span></small></span></div>; })}
         </div>)}
       </div>
-      <footer className={styles.moverCaption}><span>本期{ranking === "up" ? "上涨" : "下降"} {matchingRows.length} 项</span>{pages > 1 && <div key={`${ranking}-${range.start}-${range.end}`} className={styles.moverControls} aria-label="排行分页" data-paused={!rotating} data-reduced={reduced}>
+      <footer className={styles.moverCaption}><span>本期{ranking === "up" ? "上涨" : "下降"} {matchingRows.length} 项{compact && matchingRows.length > rankedRows.length && ` · 显示前 ${rankedRows.length} 项`}</span>{pages > 1 && <div key={`${ranking}-${range.start}-${range.end}`} className={styles.moverControls} aria-label="排行分页" data-paused={!rotating} data-reduced={reduced}>
       {Array.from({ length: pages }, (_, index) => <button key={index} type="button" className={styles.moverDot} aria-label={`查看排行第 ${index + 1} 页`} aria-current={page === index ? "page" : undefined} title="每 8 秒切换，悬停暂停" onClick={event => { if (index !== page) { setInstant(event.detail === 0); setPreviousPage(page); setPage(index); } }} onAnimationEnd={() => { if (page === index && !reduced) { setInstant(false); setPreviousPage(index); setPage((index + 1) % pages); } }}><i /></button>)}
     </div>}</footer>
     </>}
@@ -324,7 +321,7 @@ function usePriceDateRange(batches: ProcurementOverview["batches"], defaultPerio
   return { period, range, setPeriod };
 }
 
-function PriceDateRangeMenu({ period, range, onChange, label = "排行日期范围" }: {
+export function PriceDateRangeMenu({ period, range, onChange, label = "排行日期范围" }: {
   label?: string;
   period: "14d" | "1m" | "3m" | { start: string; end: string };
   range: { start: string; end: string };
@@ -363,11 +360,12 @@ function ChartEmpty({ title, detail }: { title: string; detail: string }) {
 }
 
 const LEDGER_COLUMNS = [
-  ["unit", "单位"], ["latest_price", "最新价格"], ["previous_latest_price", "上版价格"], ["change", "价格变化"],
-  ["price_date", "价格日期"], ["modifier", "修改人"], ["status", "状态"], ["in_transit_price", "在途价"], ["inventory_price", "库存价"], ["suggested_price", "建议价"],
+  ["inventory_quantity", "库存量"], ["unit", "单位"], ["latest_price", "最新价格"], ["inventory_price", "库存价格"], ["change", "价格变化"],
+  ["price_date", "价格日期"], ["modifier", "修改人"], ["status", "状态"], ["previous_latest_price", "上版价格"], ["in_transit_price", "在途价"], ["suggested_price", "建议价"],
 ] as const;
 const MATERIAL_COLUMN_WIDTH = 240;
 const LEDGER_COLUMN_WIDTHS: Record<string, number> = {
+  inventory_quantity: 120,
   unit: 72,
   latest_price: 112,
   previous_latest_price: 112,
@@ -380,15 +378,15 @@ const LEDGER_COLUMN_WIDTHS: Record<string, number> = {
   suggested_price: 112,
 };
 const DEFAULT_PREFERENCES: ProcurementPreferences = {
-  ledger_columns: LEDGER_COLUMNS.slice(0, 7).map(([id]) => id),
+  ledger_columns: LEDGER_COLUMNS.slice(0, 8).map(([id]) => id),
   history_view: "batches",
   ledger_view: "paged",
   ledger_page_size: 50,
 };
 
-function Materials({ data, accessLevel, onRefresh, onSaved, onCreate, onImport, onPublish, onPageChange, focusPending, locateCode, startInEdit, onEditStarted }: { startInEdit: boolean; onEditStarted: () => void; data: ProcurementOverview; accessLevel: number; onRefresh: () => Promise<void>; onSaved: (data: ProcurementOverview) => void; onCreate: () => void; onImport: () => void; onPublish: () => void; onPageChange: (page: ProcurementPage) => void; focusPending: boolean; locateCode: string }) {
+function Materials({ department, onOpenDepartmentMaterial, data, accessLevel, onRefresh, onSaved, onCreate, onImport, onPublish, onPageChange, focusPending, locateCode, startInEdit, onEditStarted }: { department?: DepartmentLedger; onOpenDepartmentMaterial: (id: string) => void; startInEdit: boolean; onEditStarted: () => void; data: ProcurementOverview; accessLevel: number; onRefresh: () => Promise<void>; onSaved: (data: ProcurementOverview) => void; onCreate: () => void; onImport: () => void; onPublish: () => void; onPageChange: (page: ProcurementPage) => void; focusPending: boolean; locateCode: string }) {
   const { preferences, update: savePreferences } = useProcurementPreferences();
-  const current = data.current_update;
+  const current = department ? null : data.current_update;
   const [query, setQuery] = useState("");
   const [movement, setMovement] = useState("all");
   const [editor, setEditor] = useState("");
@@ -440,19 +438,24 @@ function Materials({ data, accessLevel, onRefresh, onSaved, onCreate, onImport, 
   const [workColumns, setWorkColumns] = useState<{ id: string; columns: string[] } | null>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const summary = useRef<HTMLDivElement>(null);
-  const canEdit = Boolean(data.capabilities?.can_edit) && (!current || ["draft", "returned"].includes(current.status));
+  const canEdit = !department && Boolean(data.capabilities?.can_edit) && (!current || ["draft", "returned"].includes(current.status));
   const canConfirm = Boolean(data.capabilities?.can_activate) && Boolean(current && ["draft", "returned", "submitted", "revalidation_required"].includes(current.status));
-  const allRows = buildLedgerRows(data.materials, current);
+  const materials = department?.materialIds ? data.materials.filter(item => department.materialIds!.includes(item.id)) : data.materials;
+  const allRows = buildLedgerRows(materials, current);
   const errors = allRows.filter(row => row.missing).length;
   const risks = allRows.filter(row => row.risk?.status === "open").length;
-  const formalComparison = [...data.batches].sort((a, b) => b.version - a.version)[0]?.comparison;
+  const formalComparison = data.ledger_comparison ?? data.batches[0]?.comparison;
   const formalChange = (item: ProcurementMaterial) => formalLedgerChange(item, formalComparison);
   const pending = new Set(allRows.filter(row => row.pending).map(row => row.material.id));
   const selectedPerson = editors.find(person => person.id === editor)?.name ?? "";
   const rows = filterLedgerRows(allRows, { query, movement, scope, editor, selectedPerson, current, comparison: formalComparison, sort, sortDirection, edit, values });
   const columnOptions: ReadonlyArray<readonly [string, string]> = current || edit ? [...LEDGER_COLUMNS.map(([id, label]) => [id, id === "status" ? "处理状态" : label] as const), ["draft_price", "待发布价"]] : LEDGER_COLUMNS;
   const savedColumns = current ? workColumns?.id === current.id ? workColumns.columns : ["unit", "latest_price", "draft_price", "change", "modifier", "status"] : preferences?.ledger_columns ?? DEFAULT_PREFERENCES.ledger_columns;
-  const columns = edit ? Array.from(new Set(["unit", "latest_price", "draft_price", ...savedColumns])) : savedColumns;
+  const columns = [...savedColumns];
+  if (edit) {
+    for (const id of ["unit", "latest_price"]) if (!columns.includes(id)) columns.push(id);
+    if (!columns.includes("draft_price")) columns.splice(columns.indexOf("latest_price") + 1, 0, "draft_price");
+  }
   const ledgerView = preferences?.ledger_view ?? DEFAULT_PREFERENCES.ledger_view;
   const pageSize = preferences?.ledger_page_size ?? DEFAULT_PREFERENCES.ledger_page_size;
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
@@ -460,9 +463,9 @@ function Materials({ data, accessLevel, onRefresh, onSaved, onCreate, onImport, 
   const visibleRows = ledgerView === "paged" ? rows.slice((safePage - 1) * pageSize, safePage * pageSize) : rows;
   const activeFilterCount = Number(movement !== "all") + Number(scope !== "all");
   const columnWidth = (id: string) => current && id === "status" ? 150 : current && id === "change" ? 178 : LEDGER_COLUMN_WIDTHS[id] ?? 112;
-  const tableWidth = MATERIAL_COLUMN_WIDTH + columns.reduce((total, id) => total + columnWidth(id), 0);
+  const tableWidth = (department?.selection ? 56 : 0) + MATERIAL_COLUMN_WIDTH + columns.reduce((total, id) => total + columnWidth(id), 0);
 
-  useEffect(() => { setPage(1); }, [query, editor, movement, scope, sort, sortDirection, pageSize]);
+  useEffect(() => { setPage(1); }, [query, editor, movement, scope, sort, sortDirection, pageSize, Boolean(department?.selection)]);
   useEffect(() => {
     setEdit(previous => previous ? { ...previous, order: [...new Set([...rows, ...allRows].map(row => row.material.id))], sort, sortDirection } : previous);
   }, [sort, sortDirection]);
@@ -479,10 +482,11 @@ function Materials({ data, accessLevel, onRefresh, onSaved, onCreate, onImport, 
   const scopeLabels: Record<string, string> = { all: "全部原料", involved: "本轮已录入", missing: "待补价", risk: "待确认" };
   const sortHeader = (id: string, label: string) => {
     if (id === "change" && edit) label = "本次变化";
-    const sortable = ["code", "latest_price", "previous_latest_price", "change", "price_date", "draft_price"].includes(id);
+    const sortable = ["code", "inventory_quantity", "latest_price", "previous_latest_price", "change", "price_date", "draft_price"].includes(id);
     return <th data-column={id === "code" ? "identity" : id} key={id} aria-sort={sortable && sort === id ? sortDirection : undefined}>
       {sortable ? <button className={styles.sortHeading} type="button" onClick={() => { setSort(id); setSortDirection(sort === id ? sortDirection === "ascending" ? "descending" : "ascending" : id === "code" ? "ascending" : "descending"); }}>{label}{sort === id && (sortDirection === "ascending" ? <ArrowUp size={13} /> : <ArrowDown size={13} />)}</button> : label}
-      {id === "change" && <button type="button" className={styles.comparisonInfo} aria-label={edit ? "本次变化：待发布价与最新价格比较" : current ? "价格变化：待发布价与最新价格比较；未录入项显示版本变化" : "价格变化：最新价格与上一版本比较"} title={edit ? "待发布价与最新价格比较" : current ? "待发布价与最新价格比较；未录入项显示版本变化" : "最新价格与上一版本比较"}><Info size={14} /></button>}
+      {id === "change" && <button type="button" className={styles.comparisonInfo} aria-label={edit ? "本次变化：待发布价与最新价格比较" : current ? "价格变化：待发布价与最新价格比较；未录入项比较最新价格与上版价格" : "价格变化：最新价格与上版正式价格比较；价格相同显示 0.0%，无可比较价格显示暂无对比"} title={edit ? "待发布价与最新价格比较" : current ? "待发布价与最新价格比较；未录入项比较最新价格与上版价格" : "最新价格与上版正式价格比较；价格相同显示 0.0%，无可比较价格显示暂无对比；补充新原料不重置已有原料的比较；悬停涨跌幅查看比较价格和版本"}><Info size={14} /></button>}
+      {id === "inventory_quantity" && <button type="button" className={styles.comparisonInfo} aria-label="库存量：仅显示整数部分，鼠标悬停数值可查看完整数值；排序使用原始数值" title="仅显示整数部分，鼠标悬停数值可查看完整数值；排序使用原始数值"><Info size={14} /></button>}
     </th>;
   };
 
@@ -495,7 +499,7 @@ function Materials({ data, accessLevel, onRefresh, onSaved, onCreate, onImport, 
     if (Number.isFinite(value)) setPageSize(value); else setPageSizeInput(String(pageSize));
   };
   const filterTasks = (next: string) => { setScope(next); setQuery(""); setMovement("all");  setPage(1); };
-  const openMaterial = (id: string, editing = false) => { if (edit) return; setNewPrice(editing); setSelected(id); };
+  const openMaterial = (id: string, editing = false) => { if (edit || department?.selection) return; if (department) { onOpenDepartmentMaterial(id); return; } setNewPrice(editing); setSelected(id); };
   const startEditing = () => {
     if (!canEdit || edit) return;
     setEdit({ update_id: current?.id ?? null, updated_at: current?.updated_at ?? null, originals: Object.fromEntries((current?.input_items ?? []).map(item => [item.material_id, item.draft_price ?? ""])), order: [...new Set([...rows, ...allRows].map(row => row.material.id))], sort, sortDirection });
@@ -555,9 +559,9 @@ function Materials({ data, accessLevel, onRefresh, onSaved, onCreate, onImport, 
     finally { setBusy(false); }
   };
 
-  return <section className={`${styles.section} ${styles.ledgerSection}`}>
-    <div className={`${styles.sectionHeading} ${styles.ledgerHeading}`}>
-      <div><div className={styles.ledgerTitle}><h2>原料台账</h2><small>{rows.length} / {data.materials.length} 条</small></div><p className={styles.sectionDescription}>在台账内编辑价格，或导入报表批量更新；启用前，最新价格保持不变。</p></div>
+  return <section className={`${styles.section} ${styles.ledgerSection} ${department ? styles.distributionLedger : ""}`}>
+    {!department && <div className={`${styles.sectionHeading} ${styles.ledgerHeading}`}>
+      <div><div className={styles.ledgerTitle}><h2>价格台账</h2><small>{rows.length} / {data.materials.length} 条</small></div><p className={styles.sectionDescription}>在台账内编辑价格，或导入报表批量更新；启用前，最新价格保持不变。</p></div>
       <div className={styles.ledgerActions}>
         {canEdit && edit && <><button ref={saveButton} className="primary-button" type="button" disabled={busy || !dirty || !validEdits} onClick={() => setSaveOpen(true)}>保存修改{dirty ? `（${edits.length}）` : ""}</button><button className="secondary-button" type="button" disabled={busy} onClick={stopEditing}>取消编辑</button></>}
         {!edit && <>{canEdit && <button className={current ? "secondary-button" : "primary-button"} type="button" onClick={startEditing}><Pencil size={14} />编辑价格</button>}{!current && data.capabilities?.can_manage_catalog && <button className="secondary-button" type="button" onClick={onCreate}><Plus size={14} />新增原料</button>}{!current && canEdit && <button className="secondary-button" type="button" onClick={onImport}><FileUp size={14} />导入报表</button>}</>}
@@ -565,7 +569,7 @@ function Materials({ data, accessLevel, onRefresh, onSaved, onCreate, onImport, 
           <details className={`${styles.columnMenu} ${styles.ledgerMore}`}><summary aria-label="更多操作" title="更多操作" ref={node => { moreButton.current = node; }}><Ellipsis size={18} aria-hidden="true" /></summary><div>{data.capabilities?.can_manage_catalog && <button type="button" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); onCreate(); }}>新增原料</button>}{canEdit && <button type="button" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); onImport(); }}>导入报表</button>}<button type="button" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setPanel("events"); }}>操作记录</button></div></details>
         </div>}
       </div>
-    </div>
+    </div>}
     {panelError && <p className={styles.error} role="alert">{panelError}</p>}
     <div className={styles.ledgerEditHint} data-open={Boolean(edit)} aria-hidden={!edit}><div><div className={styles.ledgerEditBar}><small>已修改 {edits.length} 项 · 保存包含其他页的修改；清空输入仅撤回本次修改。</small></div></div></div>
     {edit && saveOpen && <dialog ref={saveDialog} className={`${styles.confirmDialog} ${styles.saveDialog}`} aria-labelledby="ledger-save-title" onCancel={event => { event.preventDefault(); closeSave(); }}>
@@ -582,7 +586,7 @@ function Materials({ data, accessLevel, onRefresh, onSaved, onCreate, onImport, 
         <div className={styles.panelActions}><button className="secondary-button" type="button" disabled={busy} onClick={closeSave}>返回编辑</button><button className="primary-button" type="submit" disabled={busy || !dirty || !validEdits || !editDate || !resolveReason(editReason) || !pricePreview.data}>{busy ? "正在保存" : "确认并保存"}</button></div>
       </form>
     </dialog>}
-    {data.scheduled_update && <div className={styles.ledgerSchedule}><Clock3 size={15} /><span>等待启用：{formatPriceDate(data.scheduled_update.price_date)} · {formatShanghaiDateTime(data.scheduled_update.activate_at)}，最新价格未改变。</span><button type="button" disabled={Boolean(edit)} onClick={() => onPageChange("batches")}>查看排期</button></div>}
+    {!department && data.scheduled_update && <div className={styles.ledgerSchedule}><Clock3 size={15} /><span>等待启用：{formatPriceDate(data.scheduled_update.price_date)} · {formatShanghaiDateTime(data.scheduled_update.activate_at)}，最新价格未改变。</span><button type="button" disabled={Boolean(edit)} onClick={() => onPageChange("batches")}>查看排期</button></div>}
     {current && !edit && <div ref={summary} className={styles.ledgerUpdate} aria-label="本轮更新摘要">
       <div><strong>本轮更新 · {formatPriceDate(current.price_date)}</strong><small>{current.source_name} · {current.status === "revalidation_required" ? "需要重新确认，原排期不会自动启用" : updateStatusLabel(current.status)}</small></div>
       <div className={styles.ledgerTaskCounts}><button type="button" onClick={() => filterTasks("involved")}>{current.input_items.length} 项涉及</button>{errors > 0 && <button type="button" onClick={() => filterTasks("missing")}>{errors} 项待补价</button>}{risks > 0 && <button type="button" onClick={() => filterTasks("risk")}>{risks} 项待确认</button>}</div>
@@ -604,7 +608,9 @@ function Materials({ data, accessLevel, onRefresh, onSaved, onCreate, onImport, 
         <div className={styles.ledgerMode} role="group" aria-label="台账查看模式"><button type="button" aria-pressed={ledgerView === "scroll"} onClick={() => void savePreferences({ ledger_view: "scroll" })}>连续</button><button type="button" aria-pressed={ledgerView === "paged"} onClick={() => void savePreferences({ ledger_view: "paged" })}>分页</button></div>
         {ledgerView === "paged" && <><span className={styles.menuLabel}>每页条数</span><div className={styles.pageSizeControl}>{[25, 50, 100].map(size => <button key={size} type="button" aria-pressed={pageSize === size} onClick={() => setPageSize(size)}>{size}</button>)}<input aria-label="自定义每页条目数" type="number" min="10" max="200" value={pageSizeInput} onChange={(event) => setPageSizeInput(event.target.value)} onBlur={applyCustomPageSize} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></div></>}
       </div></details>
+      {department?.actions}
     </div>
+    {department?.notice}
     {(editor || activeFilterCount > 0) && <div className={styles.filterTags}>
       {editor && <span>人员：{selectedPerson}<button type="button" aria-label="清除人员筛选" onClick={() => setEditor("")}><X size={13} /></button></span>}
       {movement !== "all" && <span>价格 · {movementLabels[movement]}<button type="button" aria-label="清除价格筛选" onClick={() => setMovement("all")}><X size={13} /></button></span>}
@@ -612,15 +618,17 @@ function Materials({ data, accessLevel, onRefresh, onSaved, onCreate, onImport, 
       <button className={styles.clearFilters} type="button" onClick={() => { setEditor(""); setMovement("all"); setScope("all"); }}>清除筛选</button>
     </div>}
     {filterNotice && <div role="status" className={styles.comparisonHelp}>{filterNotice}<button type="button" aria-label="关闭筛选提示" onClick={() => setFilterNotice("")}><X size={13} /></button></div>}
-    {!rows.length ? <Empty title={editor && current && scope !== "all" ? "该人员暂无符合条件的待发布修改" : "没有符合条件的原料"} detail="可调整筛选条件或清除筛选。" /> : <div className={`${styles.tableWrap} ${styles.ledgerTableWrap}`}><table className={`${styles.table} ${styles.stickyTable} ${styles.decisionTable}`} style={{ minWidth: `${tableWidth}px` }}><colgroup><col style={{ width: MATERIAL_COLUMN_WIDTH }} />{columns.map(id => <col key={id} style={{ width: columnWidth(id) }} />)}</colgroup><thead><tr>{sortHeader("code", "原料编号")}{columns.map(id => sortHeader(id, columnOptions.find(([column]) => column === id)?.[1] ?? id))}</tr></thead><tbody>{visibleRows.map(row => {
+    {!rows.length ? <Empty title={editor && current && scope !== "all" ? "该人员暂无符合条件的待发布修改" : "没有符合条件的原料"} detail="可调整筛选条件或清除筛选。" /> : <div className={`${styles.tableWrap} ${styles.ledgerTableWrap}`}><table className={`${styles.table} ${styles.stickyTable} ${styles.decisionTable}`} style={{ minWidth: `${tableWidth}px` }}><colgroup>{department?.selection && <col style={{ width: 56 }} />}<col style={{ width: MATERIAL_COLUMN_WIDTH }} />{columns.map(id => <col key={id} style={{ width: columnWidth(id) }} />)}</colgroup><thead><tr>{department?.selection && <th data-column="selection">选择</th>}{sortHeader("code", "原料编号")}{columns.map(id => sortHeader(id, columnOptions.find(([column]) => column === id)?.[1] ?? id))}</tr></thead><tbody>{visibleRows.map(row => {
       const { material: item, input, risk } = row;
       const change = edit ? draftLedgerChange(item, values[item.id] ?? edit.originals[item.id] ?? "", formalComparison) : input ? draftLedgerChange(item, input.draft_price ?? "", formalComparison) : formalChange(item);
+      const comparison = formalComparison?.items[item.id];
+      const changeTitle = !edit && !input && comparison?.previous != null && ["up", "down", "unchanged"].includes(comparison.kind) ? `价格变化：${price(comparison.previous)} → ${price(item.published_price)}（v${comparison.previous_version ?? formalComparison?.previous_version} → v${comparison.version ?? data.batches[0]?.version}）${Number(comparison.previous) === 0 && comparison.change == null ? "；比较基准为零，无法计算涨跌幅" : ""}` : undefined;
       return <Fragment key={item.id}>
-        <tr><td data-column="identity"><button id={`ledger-material-${item.id}`} className={styles.materialLink} type="button" disabled={Boolean(edit)} onClick={() => openMaterial(item.id)}><span><strong title={item.code}>{item.code}</strong></span><ChevronRight size={16} aria-hidden="true" /></button></td>{columns.map(id => <td data-column={id} key={id}>{
+        <tr>{department?.selection && <td data-column="selection"><label className={styles.rangeSelectTarget}><input className={styles.rangeCheckbox} type="checkbox" aria-label={`关联 ${item.code}`} checked={department.selection.ids.includes(item.id)} disabled={department.selection.disabled} onChange={event => department.selection?.toggle(item.id, event.target.checked)} /></label></td>}<td data-column="identity">{department?.selection ? <span className={styles.materialLink}><span><strong title={item.code}>{item.code}</strong></span></span> : <button id={`ledger-material-${item.id}`} className={styles.materialLink} type="button" disabled={Boolean(edit)} onClick={() => openMaterial(item.id)}><span><strong title={item.code}>{item.code}</strong></span><ChevronRight size={16} aria-hidden="true" /></button>}</td>{columns.map(id => <td data-column={id} key={id}>{
           edit && id === "draft_price" ? <input className={styles.ledgerPriceInput} aria-label={`${item.code}待发布价`} inputMode="decimal" disabled={busy} value={values[item.id] ?? edit.originals[item.id] ?? ""} placeholder="未调整" aria-invalid={Boolean(values[item.id]?.trim() && !/^\d+(\.\d+)?$/.test(values[item.id].trim()))} onChange={event => setValues(previous => ({ ...previous, [item.id]: event.target.value }))} onBlur={() => { if (values[item.id] === "") setValues(previous => { const next = { ...previous }; delete next[item.id]; return next; }); }} /> :
           current && id === "draft_price" ? input ? <strong>{input.draft_price == null ? "缺价" : price(input.draft_price)}</strong> : "—" :
           current && id === "status" ? <div className={styles.ledgerRowActions}>{edit ? <span>{row.state}</span> : row.missing ? canEdit ? <button className="secondary-button" type="button" onClick={() => openMaterial(item.id, true)}>补录价格</button> : <span>待补价</span> : risk ? <><span className={risk.status === "reviewed" ? undefined : styles.riskText}>{risk.status === "reviewed" ? "已确认" : "待确认"}</span><button className={styles.ledgerTextAction} type="button" disabled={busy} aria-expanded={expanded === item.id} aria-controls={`ledger-review-${item.id}`} onClick={() => toggleRow(item.id)}>{risk.status === "reviewed" ? "查看依据" : canConfirm ? "确认波动" : "查看波动"}</button></> : <span className={input ? undefined : styles.baselineEmpty}>{row.state}</span>}</div> :
-          id === "change" ? typeof change === "string" ? <span>{change}</span> : <Movement value={change} /> : ledgerCell(item, id, pending.has(item.id))
+          id === "change" ? <span title={changeTitle}>{typeof change === "string" ? change : <Movement value={change} />}</span> : ledgerCell(item, id, pending.has(item.id))
         }</td>)}</tr>
         {current && expanded === item.id && risk && <tr className={styles.ledgerReviewRow}><td colSpan={columns.length + 1}><div id={`ledger-review-${item.id}`} className={styles.ledgerReview} role="region" aria-label={`${item.code}价格波动确认`}>{risk.status === "reviewed" ? <div className={styles.ledgerReviewCopy}><strong>已确认价格波动</strong><p>确认依据：{risk.review_reason}</p></div> : canConfirm ? <><div className={styles.reviewControl}><ReasonSelect label={`${item.code}确认依据`} options={REVIEW_REASONS} placeholder="请选择确认依据" value={reviewReasons[risk.id]} disabled={busy} onChange={value => setReviewReasons(reasons => ({ ...reasons, [risk.id]: value }))} /><button type="button" disabled={busy || !resolveReason(reviewReasons[risk.id])} onClick={() => void review(risk.id, item.id)}>{busy ? "正在确认" : "确认波动"}</button></div>{reviewError && <p className={styles.error} role="alert">{reviewError}</p>}</> : <p>等待采购员确认。</p>}<button className={styles.ledgerTextAction} type="button" disabled={busy} onClick={() => { setExpanded(null); document.getElementById(`ledger-material-${item.id}`)?.focus(); }}>收起</button></div></td></tr>}
       </Fragment>;
@@ -631,7 +639,7 @@ function Materials({ data, accessLevel, onRefresh, onSaved, onCreate, onImport, 
       <p>{formatPriceDate(current.price_date)} · {current.input_items.length} 项原料</p>
       <LedgerOperationRecords update={current} />
     </LedgerPanel>}
-    {selected && <MaterialDrawer materialId={selected} canEdit={canEdit} canManage={Boolean(data.capabilities?.can_manage_catalog)} currentPriceDate={current?.price_date} startWithNewPrice={newPrice} onClose={() => { const id=selected; setSelected(null); requestAnimationFrame(()=>document.getElementById(`ledger-material-${id}`)?.focus()); }} onChanged={() => { setSelected(null); void onRefresh(); }} />}
+    {selected && <MaterialDrawer batches={data.batches} materialId={selected} canEdit={canEdit} canManage={Boolean(data.capabilities?.can_manage_catalog)} currentPriceDate={current?.price_date} startWithNewPrice={newPrice} onClose={() => { const id=selected; setSelected(null); requestAnimationFrame(()=>document.getElementById(`ledger-material-${id}`)?.focus()); }} onChanged={() => { setSelected(null); void onRefresh(); }} />}
   </section>;
 }
 
@@ -732,13 +740,13 @@ function ledgerCell(item: ProcurementMaterial, column: string, pending: boolean)
     return modifier?.name ? <span className={styles.modifierCell}><span>{modifier.name}</span>{(item.round_participants?.length ?? 0) > 1 && <details><summary>本轮 {item.round_participants?.length} 人</summary><small>{item.round_participants?.map(person => person.name).join("、")}</small></details>}</span> : !modifier && item.published_price == null && item.source_purchasers?.length ? <span className={styles.modifierCell}>{item.source_purchasers.join("、")}</span> : "未记录";
   }
   if (column === "unit") return item.unit;
+  if (column === "inventory_quantity") return item.inventory_quantity == null ? "—" : <span title={`${item.inventory_quantity} ${item.unit}`}>{Number(item.inventory_quantity) === 0 ? "—" : Math.trunc(Number(item.inventory_quantity))}</span>;
   if (column === "latest_price") return item.published_price == null ? "—" : <strong>{price(item.published_price)}</strong>;
   if (column === "previous_latest_price") return item.previous_published_price == null ? "—" : <strong>{price(item.previous_published_price)}</strong>;
-  if (column === "change") return item.published_price == null ? "—" : <span className={styles.updateChange}><Movement value={materialChange(item)} /></span>;
   if (column === "price_date") return item.published_price_date ? formatPriceDate(item.published_price_date) : "—";
   if (column === "status") return <span className={`${styles.statusPill} ${pending ? styles.statusPending : item.published_price == null ? styles.statusMissing : styles.statusOk}`}>{pending ? "待处理" : item.published_price == null ? "未定价" : "有效"}</span>;
   if (column === "in_transit_price") return price(item.in_transit_price);
-  if (column === "inventory_price") return price(item.inventory_price);
+  if (column === "inventory_price") return item.inventory_price == null || Number(item.inventory_price) === 0 ? "—" : <strong>{price(item.inventory_price)}</strong>;
   return price(item.suggested_price);
 }
 
@@ -762,7 +770,7 @@ function ReasonSelect({ label, options, placeholder, value = { selected: "", cus
   </div>;
 }
 
-function MaterialDrawer({ materialId, canEdit, canManage, onClose, onChanged, currentPriceDate, startWithNewPrice = false }: { materialId: string; canEdit: boolean; canManage: boolean; onClose: () => void; onChanged?: () => void; currentPriceDate?: string; startWithNewPrice?: boolean }) {
+function MaterialDrawer({ batches, materialId, canEdit, canManage, onClose, onChanged, currentPriceDate, startWithNewPrice = false }: { batches: ProcurementOverview["batches"]; materialId: string; canEdit: boolean; canManage: boolean; onClose: () => void; onChanged?: () => void; currentPriceDate?: string; startWithNewPrice?: boolean }) {
   const [detail, setDetail] = useState<ProcurementMaterialDetail | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [closing, setClosing] = useState(false);
@@ -820,8 +828,12 @@ function MaterialDrawer({ materialId, canEdit, canManage, onClose, onChanged, cu
     } catch (failure) { setError(failure instanceof Error ? failure.message : "原料资料修改失败"); }
     finally { setSaving(false); }
   };
-  const official = detail?.official_history ?? [];
+  const carriedBatches = new Set(batches.filter(batch => batch.comparison?.added_material_ids?.length && !batch.comparison.added_material_ids.includes(materialId)).map(batch => batch.id));
+  const official = (detail?.official_history ?? []).filter(item => !carriedBatches.has(item.id));
   const latestOfficial = official.at(-1), previousOfficial = official.at(-2);
+  const comparison = detail?.comparison;
+  const previousPrice = comparison ? comparison.previous : previousOfficial?.latest_price;
+  const change = comparison ? comparison.change == null ? null : comparison.change * 100 : latestOfficial?.latest_price != null && previousPrice != null && Number(previousPrice) !== 0 ? (Number(latestOfficial.latest_price) / Number(previousPrice) - 1) * 100 : null;
   const trend = official.filter(item => item.latest_price != null).map(item => ({date: item.version_date, price: Number(item.latest_price)}));
   const validPriceCount = trend.length;
   const panelOpen = Boolean(editing || identityStep);
@@ -832,7 +844,7 @@ function MaterialDrawer({ materialId, canEdit, canManage, onClose, onChanged, cu
     <aside className={styles.drawer} role="dialog" aria-modal="true" aria-label="原料价格详情">
       <header className={styles.drawerHeader}><div><span>原料详情</span><h2>{detail ? detail.material.code : "正在读取"}</h2></div><div className={styles.drawerHeaderActions}>{detail && canEdit && <button className="primary-button" type="button" onClick={() => startEdit(null)}><Pencil size={14} />录入新价格</button>}{detail && canManage && <button className="secondary-button" type="button" onClick={startIdentityEdit}><Pencil size={14} />编辑资料</button>}<button className="icon-button" type="button" aria-label="关闭详情" ref={focusWithoutScroll} onClick={() => close()}><X size={17} /></button></div></header>
       {loadState === "error" ? <div className={styles.drawerLoading}><span><strong>原料详情暂时不可用</strong><small>请重新加载后再录入价格。</small><button className="secondary-button" type="button" onClick={() => void load()}>重新加载</button></span></div> : !detail ? <div className={styles.drawerLoading}>正在整理价格记录…</div> : <div className={styles.drawerBody}>
-        <div className={styles.detailMetrics}><div><span>最新价格</span><strong>{price(latestOfficial?.latest_price)}</strong></div><div><span>上版价格</span><strong>{price(previousOfficial?.latest_price)}</strong></div><div><span>涨跌</span><Movement value={latestOfficial?.latest_price != null && previousOfficial?.latest_price != null && Number(previousOfficial.latest_price) !== 0 ? (Number(latestOfficial.latest_price) / Number(previousOfficial.latest_price)-1)*100 : null} /></div><div><span>价格日期</span><strong>{latestOfficial?.price_date ? formatPriceDate(latestOfficial.price_date) : "—"}</strong></div></div>
+        <div className={styles.detailMetrics}><div><span>最新价格</span><strong>{price(latestOfficial?.latest_price)}</strong></div><div><span>上版价格</span><strong>{price(previousPrice)}</strong></div><div><span>涨跌</span><Movement value={change} /></div><div><span>价格日期</span><strong>{latestOfficial?.price_date ? formatPriceDate(latestOfficial.price_date) : "—"}</strong></div></div>
         <section className={styles.drawerSection}><div><span>价格版本</span><h3>有效价格走势</h3></div>{trend.length < 2 ? <ChartEmpty title="暂无可比较周期" detail="至少需要两期有效价格。" /> : <div className={styles.detailChart}><ResponsiveContainer width="100%" height="100%"><LineChart data={trend}><CartesianGrid stroke="#edf0f1" vertical={false} /><XAxis dataKey="date" tickFormatter={shortDate} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} width={42} /><Tooltip formatter={(value) => [price(String(value)), "参考价"]} /><Line type="monotone" dataKey="price" stroke="#2f3337" strokeWidth={2} dot={{ r: 2.5 }} /></LineChart></ResponsiveContainer></div>}</section>
         <section className={styles.drawerSection}><div><span>历史记录</span><h3>{validPriceCount} 期有效价格</h3></div><div className={styles.priceHistory}><div className={styles.priceHistoryHeading} aria-hidden="true"><span>版本日期</span><span>价格</span><span>修改人</span><span /></div>{[...official].reverse().map(item => <details key={item.id}><summary aria-label={`v${item.version} ${formatPriceDate(item.version_date)}，价格 ${item.latest_price == null ? item.raw_price ?? "未定价" : price(item.latest_price)}，修改人 ${item.modifier?.name || "未记录"}`}><span className={styles.historyDate}>{formatPriceDate(item.version_date)}<small>v{item.version}</small></span><strong>{item.latest_price == null ? item.raw_price ?? "未定价" : price(item.latest_price)}</strong><span>{item.modifier?.name || "未记录"}</span><ChevronRight size={13} aria-hidden="true" /></summary><dl className={styles.historySource}><div><dt>价格来源日期</dt><dd>{item.price_date ? formatPriceDate(item.price_date) : "未记录"}</dd></div><div><dt>数据位置</dt><dd>{[item.sheet, item.cell].filter(Boolean).join(" · ") || "未记录"}</dd></div></dl></details>)}</div></section>
         {detail.adjustments.length > 0 && <section className={styles.drawerSection}><div><span>修正记录</span><h3>完整留痕</h3></div><div className={styles.adjustmentList}>{detail.adjustments.map((item) => <article key={item.id}><strong>{item.reason}</strong><span>{item.created_by} · {formatDate(item.created_at)}</span></article>)}</div></section>}
@@ -872,7 +884,7 @@ function MaterialDrawer({ materialId, canEdit, canManage, onClose, onChanged, cu
 }
 
 function Movement({ value }: { value: number | null }) {
-  if (value === null || !Number.isFinite(value)) return <span className={styles.movementMuted}><Minus size={12} />暂无对比</span>;
+  if (value === null || !Number.isFinite(value)) return <span className={`${styles.priceChange} ${styles.movementMuted}`}>暂无对比</span>;
   const Icon = value > 0 ? ArrowUp : value < 0 ? ArrowDown : Minus;
   const className = value >= 10 ? `${styles.movementUp} ${styles.movementSurge}` : value > 0 ? styles.movementUp : value < 0 ? styles.movementDown : styles.movementStable;
   return <span className={`${styles.priceChange} ${className}`}><Icon size={12} />{formatPercent(value)}</span>;
@@ -890,7 +902,7 @@ function PriceHistory({ published }: { published: ProcurementOverview["batches"]
       <i aria-hidden="true" />
       <button type="button" aria-label={`v${row.version} · 价格日期 ${row.price_date || "未记录"}`} onClick={event => { trigger.current = event.currentTarget; setSelected(row.id); }}>
         <span className={styles.historyDate}><strong>{row.price_date ? formatPriceDate(row.price_date) : "日期未记录"}</strong>{row.status === "active" && <em>当前生效</em>}</span>
-        <span className={styles.historySource}><strong>v{row.version}</strong><small>覆盖 {row.item_count} 项 · {row.status === "active" ? "当前生效" : "历史版本"} · {row.provenance ? "历史迁入 · 原表未记录启用时间" : `启用 ${formatShanghaiDateTime(row.activated_at ?? row.published_at)} · ${row.published_by_name ?? "未记录启用人"}`}</small>{row.provenance && <small>本期已报 {row.provenance.reported_count} · 本期未报 {row.item_count-row.provenance.reported_count}（此前有价则沿用）</small>}</span>
+        <span className={styles.historySource}><strong>v{row.version}</strong><small>{row.comparison?.added_material_ids?.length ? `补充 ${row.comparison.added_material_ids.length} 项原料价格` : `覆盖 ${row.item_count} 项`} · {row.status === "active" ? "当前生效" : "历史版本"} · {row.provenance ? "历史迁入 · 原表未记录启用时间" : `启用 ${formatShanghaiDateTime(row.activated_at ?? row.published_at)} · ${row.published_by_name ?? "未记录启用人"}`}</small>{row.provenance && <small>本期已报 {row.provenance.reported_count} · 本期未报 {row.item_count-row.provenance.reported_count}（此前有价则沿用）</small>}</span>
         <VersionSummary comparison={row.comparison} />
         <ChevronRight size={17} aria-hidden="true" />
       </button>
@@ -901,6 +913,7 @@ function PriceHistory({ published }: { published: ProcurementOverview["batches"]
 
 function VersionSummary({ comparison, hideZeroFirst = false }: { comparison: ProcurementOverview["batches"][number]["comparison"]; hideZeroFirst?: boolean }) {
   if (!comparison) return <span className={styles.historyBatchStats}>版本统计暂不可用</span>;
+  if (comparison.added_material_ids?.length) return <span className={styles.historyBatchStats}><small>补充原料价格</small><span>{comparison.added_material_ids.length} 项首次定价</span><span className={styles.historyStable}>{comparison.unchanged} 项保留原价与比较</span></span>;
   return <span className={styles.historyBatchStats}><small>{comparison.previous_version === null ? "首次建立基线" : `较 v${comparison.previous_version}`}</small><span className={styles.historyUp}>↑ {comparison.up} 上涨</span><span className={styles.historyDown}>↓ {comparison.down} 下降</span><span className={styles.historyStable}>— {comparison.unchanged} 未变</span>{(!hideZeroFirst || comparison.first > 0) && <span>{comparison.first} 首次定价</span>}{comparison.missing > 0 && <span>{comparison.missing} 未定价</span>}{Boolean(comparison.incomparable) && <span>{comparison.incomparable} 不可比较</span>}</span>;
 }
 
@@ -1006,17 +1019,19 @@ function PublishedBatchDrawer({ batchId, onClose }: { batchId: string; onClose: 
     fetchProcurementBatch(batchId, controller.signal).then(setDetail).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => controller.abort();
   }, [batchId]);
+  const additions = detail?.comparison?.added_material_ids;
+  const priceItems = detail ? sortBatchPrices(detail, sort, direction).filter(item => !additions?.length || additions.includes(item.material_id)) : [];
   return <PriceRecordDrawer fixedBody title={detail ? `价格基线 v${detail.version}` : "正在读取"} label="价格基线详情" loading={!detail} failed={failed} onClose={onClose}>
     {detail && <>
       <div className={styles.versionOverview}><VersionSummary comparison={detail.comparison} hideZeroFirst /></div>
-      <div className={styles.detailMetrics}><div><span>价格日期</span><strong>{detail.price_date ? formatPriceDate(detail.price_date) : "—"}</strong></div><div><span>启用时间</span><strong>{detail.provenance ? "原表未记录" : formatDate(detail.activated_at ?? detail.published_at)}</strong></div><div><span>原料数量</span><strong>{detail.item_count}</strong></div><div><span>版本状态</span><strong>{detail.status === "active" ? "当前生效" : "历史版本"}</strong></div></div>
+      <div className={styles.detailMetrics}><div><span>价格日期</span><strong>{detail.price_date ? formatPriceDate(detail.price_date) : "—"}</strong></div><div><span>启用时间</span><strong>{detail.provenance ? "原表未记录" : formatDate(detail.activated_at ?? detail.published_at)}</strong></div><div><span>{additions?.length ? "本次补充" : "原料数量"}</span><strong>{additions?.length || detail.item_count}</strong></div><div><span>版本状态</span><strong>{detail.status === "active" ? "当前生效" : "历史版本"}</strong></div></div>
       <p className={styles.batchMeta}>{detail.provenance ? `历史迁入 · ${detail.provenance.filename} · 迁入操作人 ${detail.provenance.imported_by} · 迁入时间 ${formatShanghaiDateTime(detail.provenance.imported_at)}；原表未记录历史启用人及逐次修改。` : `${detail.source_name ?? "未记录来源"} · 启用人 ${detail.published_by_name ?? "未记录"}${detail.activation_mode === "scheduled" ? " · 系统定时启用" : ""}`}</p>
       {detail.provenance && <p className={styles.batchMeta}>本期已报 {detail.provenance.reported_count} 项 · 本期未报 {detail.item_count-detail.provenance.reported_count} 项（此前有价则沿用，不代表价格未变）</p>}
       <div className={styles.versionTabs} role="tablist" aria-label="版本内容">
-        {(["prices", "changes"] as const).map(value => <button key={value} id={`version-tab-${value}`} type="button" role="tab" aria-selected={tab === value} aria-controls={`version-panel-${value}`} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) { event.preventDefault(); const next = event.key === "Home" ? "prices" : event.key === "End" ? "changes" : tab === "prices" ? "changes" : "prices"; setTab(next); document.getElementById(`version-tab-${next}`)?.focus({ preventScroll: true }); } }}>{value === "prices" ? "价格" : "修改记录"}<span>{value === "prices" ? detail.item_count : detail.changes?.length ?? 0}</span></button>)}
+        {(["prices", "changes"] as const).map(value => <button key={value} id={`version-tab-${value}`} type="button" role="tab" aria-selected={tab === value} aria-controls={`version-panel-${value}`} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) { event.preventDefault(); const next = event.key === "Home" ? "prices" : event.key === "End" ? "changes" : tab === "prices" ? "changes" : "prices"; setTab(next); document.getElementById(`version-tab-${next}`)?.focus({ preventScroll: true }); } }}>{value === "prices" ? "价格" : "修改记录"}<span>{value === "prices" ? priceItems.length : detail.changes?.length ?? 0}</span></button>)}
       </div>
       <div className={styles.versionPane} id="version-panel-prices" role="tabpanel" aria-labelledby="version-tab-prices" tabIndex={0} hidden={tab !== "prices"}>
-      <div className={styles.changePrices}><table className={styles.table}><thead><tr>{header("code", "原料编号 / 来源")}{header("previous", "上版价格")}{header("current", "本版价格")}{header("change", "涨跌变化")}</tr></thead><tbody>{sortBatchPrices(detail, sort, direction).map(item => { const comparison = detail.comparison?.items[item.material_id]; const source=detail.snapshot_sources?.[item.material_id]; return <tr key={item.material_id}><td><strong>{item.code} · {item.unit}</strong><span>{source?.price_date ?? "未定价"}{source?.sheet ? ` · ${source.sheet}!${source.cell ?? "—"}` : ""}</span></td><td>{price(comparison?.previous_raw ?? comparison?.previous)}</td><td><strong>{price(source?.raw_price ?? item.latest_price)}</strong>{source && source.price_kind!=="number" && source.price_kind!=="missing" && <small>原文异常，不参与精确涨跌</small>}</td><td>{comparison?.kind === "first" ? "首次定价" : comparison?.kind === "missing" ? "未定价" : comparison?.kind === "incomparable" ? "不可比较" : <Movement value={comparison?.change == null ? null : comparison.change * 100} />}</td></tr>; })}</tbody></table></div>
+      <div className={styles.changePrices}><table className={styles.table}><thead><tr>{header("code", "原料编号 / 来源")}{header("previous", "上版价格")}{header("current", "本版价格")}{header("change", "涨跌变化")}</tr></thead><tbody>{priceItems.map(item => { const comparison = detail.comparison?.items[item.material_id]; const source=detail.snapshot_sources?.[item.material_id]; return <tr key={item.material_id}><td><strong>{item.code} · {item.unit}</strong><span>{source?.price_date ?? "未定价"}{source?.sheet ? ` · ${source.sheet}!${source.cell ?? "—"}` : ""}</span></td><td>{price(comparison?.previous_raw ?? comparison?.previous)}</td><td><strong>{price(source?.raw_price ?? item.latest_price)}</strong>{source && source.price_kind!=="number" && source.price_kind!=="missing" && <small>原文异常，不参与精确涨跌</small>}</td><td><Movement value={comparison?.change == null ? null : comparison.change * 100} /></td></tr>; })}</tbody></table></div>
       </div>
       <div className={styles.versionPane} id="version-panel-changes" role="tabpanel" aria-labelledby="version-tab-changes" tabIndex={0} hidden={tab !== "changes"}>
         {!detail.changes?.length ? <p className={styles.batchMeta}>此版本没有可关联的逐次修改记录。</p> : <ol className={styles.changeTimeline}>{detail.changes.map(change => <li key={change.id}><div><strong>{updateEventLabel(change.event)}</strong><time>{formatShanghaiDateTime(change.created_at)}</time></div><p>{change.actor}</p>{change.reason && <p>{change.reason}</p>}<ChangePrices items={change.items ?? []} /></li>)}</ol>}
@@ -1147,10 +1162,4 @@ function today() { const value = new Date(); return `${value.getFullYear()}-${St
 function futureLocalInput() { const value = new Date(Date.now() + 60 * 60 * 1000); value.setMinutes(Math.ceil(value.getMinutes() / 5) * 5, 0, 0); return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}T${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`; }
 function updateStatusLabel(status: ProcurementUpdate["status"]) { return ({ draft: "录入价格", returned: "继续修改", submitted: "待启用", scheduled: "等待定时启用", revalidation_required: "需要重新确认", published: "已启用", cancelled: "已取消" } as const)[status]; }
 function updateEventLabel(event: string) { return ({ prices_adjusted: "批量编辑价格", cancelled: "取消本轮", created: "创建本轮更新", imported: "导入价格", price_adjusted: "修正价格", submitted: "提交复核", returned: "退回修改", risk_reviewed: "确认高风险变动", scheduled: "安排定时启用", activated: "启用", revalidation_required: "要求重新确认", schedule_cancelled: "撤销排期", copied_from_schedule: "复制为新草稿", migrated: "迁移现有工作稿" } as Record<string, string>)[event] ?? event; }
-function materialChange(item: ProcurementMaterial) {
-  if (item.published_price == null || item.previous_published_price == null) return null;
-  const current = Number(item.published_price); const previous = Number(item.previous_published_price);
-  if (!Number.isFinite(current) || !Number.isFinite(previous) || previous === 0) return current === previous ? 0 : null;
-  return ((current - previous) / Math.abs(previous)) * 100;
-}
 function importIssueLabel(issue: string) { return ({ missing_price: "缺价", duplicate_code: "重复编码", unit_conflict: "单位冲突", price_spike: "价格波动" } as Record<string, string>)[issue] ?? issue; }

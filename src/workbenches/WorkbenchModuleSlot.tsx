@@ -1,14 +1,18 @@
 import { Component, lazy, Suspense, type ErrorInfo, type ReactNode } from "react";
 import { ShieldCheck } from "lucide-react";
-import type { CurrentUser, ProcurementPage, WorkbenchId } from "../types";
+import type { CurrentUser, ResearchPage, ProcurementPage, WorkbenchId } from "../types";
 
 const ProcurementWorkbench = lazy(() => import("./ProcurementWorkbench").then((module) => ({ default: module.ProcurementWorkbench })));
+
+const ResearchWorkbench = lazy(() => import("./ResearchWorkbench").then(module => ({ default: module.ResearchWorkbench })));
 
 type Props = {
   workbenchId: WorkbenchId;
   title: string;
   currentUser: CurrentUser;
   view: "preview" | "full";
+  researchPage: ResearchPage;
+  onResearchPageChange: (page: ResearchPage) => void;
   procurementPage: ProcurementPage;
   onProcurementPageChange: (page: ProcurementPage) => void;
   onEnter: () => void;
@@ -20,7 +24,7 @@ export function WorkbenchModuleSlot(props: Props) {
     <ModuleBoundary title={props.title}>
       {props.workbenchId === "procurement"
         ? <Suspense fallback={<Loading title={props.title} />}><ProcurementWorkbench accessLevel={accessLevel} view={props.view} page={props.procurementPage} onPageChange={props.onProcurementPageChange} onEnter={props.onEnter} /></Suspense>
-        : <Pending title={props.title} />}
+        : props.workbenchId === "research" ? <Suspense fallback={<Loading title={props.title} />}><ResearchWorkbench accessLevel={accessLevel} userId={props.currentUser.id} view={props.view} page={props.researchPage} onPageChange={props.onResearchPageChange} onEnter={props.onEnter} /></Suspense> : <Pending title={props.title} />}
     </ModuleBoundary>
   );
 }

@@ -24,7 +24,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
           <ol><li><strong>选择工作台</strong><p>从左侧选择工作台，查看概览后点击“进入工作台”。</p></li><li><strong>找到需要的数据</strong><p>使用搜索和筛选定位记录，点击原料编号查看详情。</p></li><li><strong>按权限操作</strong><p>可用操作以页面显示为准；需要调整权限时，请联系管理员。</p></li></ol>
         </SettingsGroup>
         <SettingsGroup id="help-procurement" icon={<Boxes size={16} />} title="采购工作台" description="查看原料、更新价格和部门分流。" summary="">
-          <ul><li><strong>原料台账</strong><p>集中查看原料价格、变化和历史记录。点击原料编号可打开详情。</p></li><li><strong>价格更新</strong><p>保存价格修改后，不会立即替换当前生效价格；由有启用权限的人员确认启用后生效。</p></li><li><strong>数据分流</strong><p>按部门查看关联原料。调整范围只改变部门与原料的关联，不删除原料或历史记录。</p></li></ul>
+          <ul><li><strong>原料价格</strong><p>集中查看原料价格、变化和历史记录。点击原料编号可打开详情。</p></li><li><strong>价格更新</strong><p>保存价格修改后，不会立即替换当前生效价格；由有启用权限的人员确认启用后生效。</p></li><li><strong>数据分流</strong><p>按部门查看关联原料。调整范围只改变部门与原料的关联，不删除原料或历史记录。</p></li></ul>
         </SettingsGroup>
         <SettingsGroup id="help-account" icon={<UserRound size={16} />} title="我的账号" description="查看权限和修改密码。" summary="">
           <ul><li>点击左下角账号，打开“我的账号”，查看已授权范围或修改密码。</li><li>姓名、部门及访问权限由管理员在“用户管理”中维护。</li><li>密码安全性提示仅供参考。修改成功后，需要重新登录。</li></ul>

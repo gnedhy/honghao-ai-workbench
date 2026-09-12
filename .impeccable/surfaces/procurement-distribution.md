@@ -1,0 +1,14 @@
+# Procurement distribution surface brief
+
+- Target: `src/workbenches/ProcurementDistribution.tsx`; related shared renderer: `ProcurementWorkbench.tsx#Materials` and its CSS module.
+- Route: evolve / operate / medium. Existing procurement ledger is the visual authority. No global design or dependency change.
+- Approval: user explicitly requested that distribution tables reuse the supplied ledger screenshot, with only department scope differing, and integrate the existing range controls into this table. This authorizes the current adaptation; no new visual direction.
+- Goal: read the department's formal prices using the same columns, inventory display, price comparisons, sorting, personnel and movement filters, display preferences, row height, table scrolling and paging as the ledger.
+- Default composition: department heading with membership count and return button; shared ledger toolbar with 调整范围 at the end; one table and pagination footer. Stock quantity and prices preserve the confirmed ledger definitions.
+- Range edit: keep the ledger columns, prepend a selection column, show all active materials, and replace 调整范围 with 重置选择 / 取消编辑 / 保存范围. A compact band counts selected, added and removed entries and explains cross-page selection. Material codes stay readable as normal text while detail navigation is disabled.
+- State: scope selections live in the department component and survive search, sorting, filters and pagination. Failed save retains inputs; existing retry, reset, cancel and return confirmation remain. Save uses the same authorized department-membership endpoint; prices and other departments are unaffected.
+- Department reads explicitly exclude the active price draft. No edit/import/publish controls appear in the shared department view. Existing material drawer and refresh/focus behavior are retained. Catalog management permission gates range changes.
+- Mobile Web: shared wrapping toolbar, stacked heading actions, and table-local horizontal scrolling. Confirmed at 390×844; desktop at 1749×1272. Native touch and browser zoom are not claimed.
+- Validation: 35 existing backend tests, 28 frontend tests, typecheck, isolated build, security gate and detector pass. Browser tests compare all 107 RD5 rows against all 194 ledger rows, then check filtering/sorting/display preferences, cross-page add/remove, failed save/retry, reset/cancel, read-only permission, empty scope, simulated price draft isolation and main-ledger editing column order. Business writes occur only on a data copy.
+- Independent review: passed; no blocking findings. `.impeccable/review/procurement-distribution/20260911-ledger/independent-review.md`.
+- Current evidence: `.impeccable/review/procurement-distribution/current.json`. Local production frontend updated after backup and verified in the user's authenticated browser; production memberships and pricing data remain unchanged. No backend restart, commit or push.

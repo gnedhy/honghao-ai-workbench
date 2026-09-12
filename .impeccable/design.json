@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-09-12",
+  "designDoc": "DESIGN.md",
+  "designDocSha256": "e70df8837dc22d011a8dccc94a4e53cf29b6f60a33e15ed0cf488c8789b429af",
+  "authority": {
+    "source": "user-approved research workbench annotations",
+    "approvedAt": "2026-09-12",
+    "scope": "Global segmented selection controls only; preserve all other existing design decisions"
+  },
+  "components": {
+    "segmentedSelection": {
+      "selectors": [
+        ".sliding-segments",
+        ".segmented-control"
+      ],
+      "selectedBackground": "#ffffff",
+      "track": "Existing light-gray track remains unchanged",
+      "shadow": "Light shadow matching the feedback control; existing inset border retained",
+      "indicatorSelectors": [
+        ".sliding-segments::before",
+        ".segmented-control__indicator"
+      ],
+      "selectedButtonBackground": "transparent",
+      "selectedButtonShadow": "none",
+      "motion": "Preserve existing 200ms indicator translation and reduced-motion support",
+      "sourceFiles": [
+        "src/styles.css",
+        "src/components/FeedbackDialog.css"
+      ]
+    }
+  }
+}

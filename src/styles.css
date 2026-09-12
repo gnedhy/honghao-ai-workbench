@@ -112,7 +112,7 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .round-action { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 50%; color: #fff; background: var(--primary); cursor: pointer; transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease, transform var(--motion-press) var(--ease-out); }
 
 .segmented-control { position: relative; display: inline-flex; align-items: center; gap: 2px; padding: 3px; border-radius: 20px; background: #f1f1f1; }
-.segmented-control__indicator { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 8px) / 2); border-radius: 17px; background: var(--selected); box-shadow: inset 0 0 0 1px var(--selected-border); transition: transform 200ms var(--ease-out); }
+.segmented-control__indicator { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 8px) / 2); border-radius: 17px; background: #fff; box-shadow: 0 1px 3px rgba(28,34,38,.10), inset 0 0 0 1px rgba(218,223,227,.6); transition: transform 200ms var(--ease-out); }
 .segmented-control[data-active-index="1"] .segmented-control__indicator { transform: translateX(calc(100% + 2px)); }
 .segmented-control__item { z-index: 1; min-width: 82px; min-height: 34px; padding: 6px 14px; border-radius: 17px; color: var(--muted); background: transparent; font-size: calc(14px + var(--ui-font-offset)); cursor: pointer; transition: color 160ms ease; }
 .segmented-control__item.is-active { color: var(--text); }
@@ -120,9 +120,9 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .sliding-segments:has(> :nth-child(3)){--segment-count:3}
 .sliding-segments:has(> :nth-child(2)[aria-pressed=true]),.sliding-segments:has(> :nth-child(2) input:checked){--segment-index:1}
 .sliding-segments:has(> :nth-child(3)[aria-pressed=true]){--segment-index:2}
-.sliding-segments::before{content:"";position:absolute;z-index:0;left:3px;top:3px;bottom:3px;width:calc((100% - 6px - (var(--segment-count) - 1)*4px)/var(--segment-count));border-radius:6px;background: var(--selected);box-shadow: inset 0 0 0 1px var(--selected-border);transform:translateX(calc(var(--segment-index)*(100% + 4px)));transition:transform 200ms var(--ease-out);pointer-events:none}
+.sliding-segments::before{content:"";position:absolute;z-index:0;left:3px;top:3px;bottom:3px;width:calc((100% - 6px - (var(--segment-count) - 1)*4px)/var(--segment-count));border-radius:6px;background:#fff;box-shadow:0 1px 3px rgba(28,34,38,.10),inset 0 0 0 1px rgba(218,223,227,.6);transform:translateX(calc(var(--segment-index)*(100% + 4px)));transition:transform 200ms var(--ease-out);pointer-events:none}
 .sliding-segments>button,.sliding-segments>label{position:relative;z-index:1;flex:1;white-space:nowrap;text-align:center}
-.sliding-segments>button[aria-pressed=true],.feedback-dialog .sliding-segments>label:has(input:checked){background:transparent;box-shadow:none}
+.sliding-segments>button[aria-pressed=true],.sliding-segments>label:has(input:checked){background:transparent!important;box-shadow:none!important}
 .sliding-segments>button:focus:where(html:not([data-input-modality="pointer"]) *):not(:focus-visible:where(html:not([data-input-modality="pointer"]) *)),.segmented-control__item:focus:where(html:not([data-input-modality="pointer"]) *):not(:focus-visible:where(html:not([data-input-modality="pointer"]) *)){outline:none}
 @media(prefers-reduced-motion:reduce){.sliding-segments::before{transition:none!important}}
 

@@ -11,7 +11,7 @@ import {
 import { useEffect } from "react";
 import { TopBar, type ScreenChromeProps } from "../components/TopBar";
 import { WorkbenchModuleSlot } from "../workbenches/WorkbenchModuleSlot";
-import { PROCUREMENT_PAGE_LABELS, type CurrentUser, type ProcurementPage, type WorkbenchId, type WorkbenchStatus } from "../types";
+import { PROCUREMENT_PAGE_LABELS, RESEARCH_PAGE_LABELS, type ResearchPage, type CurrentUser, type ProcurementPage, type WorkbenchId, type WorkbenchStatus } from "../types";
 
 export const workbenches = [
   {
@@ -31,8 +31,8 @@ export const workbenches = [
   {
     id: "procurement",
     department: "采购部",
-    title: "原料成本管理",
-    summary: "归集供应商报价与采购附加费用，形成可追溯的原料成本基线。",
+    title: "原料价格管理",
+    summary: "维护原料采购价格，跟踪价格波动与历史版本。",
     icon: Boxes,
     metrics: [["跟踪原料", "18 种", "当前纳入成本基线"], ["待比价", "4 项", "需要补充有效报价"], ["本月波动", "+2.8%", "示例综合变动"]],
     columns: ["原料", "当前参考价", "较上月", "报价状态"],
@@ -46,7 +46,7 @@ export const workbenches = [
     id: "research",
     department: "研发部",
     title: "产品成本计算",
-    summary: "将配方、原料基线与制造损耗组合为可复核的产品成本测算。",
+    summary: "按最新价格与库存价格分别核算配方原料成本，计入各层收率。",
     icon: FlaskConical,
     metrics: [["在用配方", "12 个", "按当前配方版本统计"], ["测算成本", "¥6,840", "每吨示例成本"], ["待确认", "2 项", "原料或损耗参数"]],
     columns: ["成本项", "测算口径", "金额 / 吨", "占比"],
@@ -82,11 +82,13 @@ type WorkbenchScreenProps = ScreenChromeProps & {
   onSelectedIdChange: (id: WorkbenchId) => void;
   openedWorkbenchId: WorkbenchId | null;
   onOpenedWorkbenchIdChange: (id: WorkbenchId | null) => void;
+  researchPage: ResearchPage;
+  onResearchPageChange: (page: ResearchPage) => void;
   procurementPage: ProcurementPage;
   onProcurementPageChange: (page: ProcurementPage) => void;
 };
 
-export function WorkbenchScreen({ currentUser, statuses, dataState, selectedId, onSelectedIdChange, openedWorkbenchId, onOpenedWorkbenchIdChange, procurementPage, onProcurementPageChange, ...chrome }: WorkbenchScreenProps) {
+export function WorkbenchScreen({ currentUser, statuses, dataState, selectedId, onSelectedIdChange, openedWorkbenchId, onOpenedWorkbenchIdChange, procurementPage, onProcurementPageChange, researchPage, onResearchPageChange, ...chrome }: WorkbenchScreenProps) {
   const modes = new Map(statuses.map((status) => [status.id, status.mode]));
   const visibleWorkbenches = dataState === "ready"
     ? workbenches.filter((item) => {
@@ -110,7 +112,7 @@ export function WorkbenchScreen({ currentUser, statuses, dataState, selectedId, 
 
   return (
     <main className="app-main">
-      <TopBar {...chrome} title={procurementOpen ? "采购工作台" : "工作台"} subtitle={procurementOpen ? PROCUREMENT_PAGE_LABELS[procurementPage] : subtitle} tabs={null} contextEnabled={false} />
+      <TopBar {...chrome} title={procurementOpen ? "采购工作台" : openedWorkbenchId === "research" ? "研发工作台" : "工作台"} subtitle={procurementOpen ? PROCUREMENT_PAGE_LABELS[procurementPage] : openedWorkbenchId === "research" ? RESEARCH_PAGE_LABELS[researchPage] : subtitle} tabs={null} contextEnabled={false} />
       <section className={`workspace-layout workspace-layout--workbench${openedWorkbenchId ? " is-module-open" : ""}`}>
         {!openedWorkbenchId && <aside className="workspace-list-panel workbench-index">
           <div className="workspace-panel-title">
@@ -153,6 +155,8 @@ export function WorkbenchScreen({ currentUser, statuses, dataState, selectedId, 
                 title={selected.title}
                 currentUser={currentUser}
                 view={openedWorkbenchId === selected.id ? "full" : "preview"}
+                researchPage={researchPage}
+                onResearchPageChange={onResearchPageChange}
                 procurementPage={procurementPage}
                 onProcurementPageChange={onProcurementPageChange}
                 onEnter={() => onOpenedWorkbenchIdChange(selected.id)}

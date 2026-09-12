@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { HelpDialog } from "./HelpDialog";
-import { PROCUREMENT_PAGE_LABELS, type Conversation, type CurrentUser, type ModuleVisibility, type ProcurementPage, type Project, type RuntimeEnvironment, type Section, type WorkbenchId } from "../types";
+import { PROCUREMENT_PAGE_LABELS, RESEARCH_PAGE_LABELS, type ResearchPage, type Conversation, type CurrentUser, type ModuleVisibility, type ProcurementPage, type Project, type RuntimeEnvironment, type Section, type WorkbenchId } from "../types";
 
 type SidebarProps = {
   currentUser: CurrentUser;
@@ -37,6 +37,8 @@ type SidebarProps = {
   enabledModules: ModuleVisibility;
   environment: RuntimeEnvironment | null;
   openedWorkbenchId: WorkbenchId | null;
+  researchPage: ResearchPage;
+  onResearchPageChange: (page: ResearchPage) => void;
   procurementPage: ProcurementPage;
   onProcurementPageChange: (page: ProcurementPage) => void;
   onSectionChange: (section: Section) => void;
@@ -81,6 +83,8 @@ export function Sidebar({
   enabledModules,
   environment,
   openedWorkbenchId,
+  researchPage,
+  onResearchPageChange,
   procurementPage,
   onProcurementPageChange,
   onSectionChange,
@@ -159,7 +163,7 @@ export function Sidebar({
               onClick={() => id === "chat" ? onNewConversation() : selectSection(id)}
             >
               {id === "workbench" && openedWorkbenchId ? <ArrowLeft size={18} strokeWidth={1.7} /> : <Icon size={18} strokeWidth={1.7} />}
-              <span>{id === "workbench" && openedWorkbenchId ? "返回工作台" : label}</span>
+              <span>{id === "workbench" && openedWorkbenchId ? "返回主页" : label}</span>
             </button>
           ))}
         </nav>
@@ -175,6 +179,10 @@ export function Sidebar({
               ))}
             </SidebarGroup>
           )}
+          {activeSection === "workbench" && openedWorkbenchId === "research" && <SidebarGroup title="研发工作台">{(["dashboard", "products", "formulas", "history"] as const).map(id => {
+            const Icon = id === "dashboard" ? LayoutDashboard : id === "products" ? Database : id === "formulas" ? Columns2 : PackageCheck;
+            return <button className={`workbench-page-row${researchPage === id ? " is-active" : ""}`} type="button" key={id} aria-current={researchPage === id ? "page" : undefined} onClick={() => { onResearchPageChange(id); onMobileClose(); }}><Icon size={15} strokeWidth={1.7} /><span>{RESEARCH_PAGE_LABELS[id]}</span></button>;
+          })}</SidebarGroup>}
           {enabledModules.chat && <>
             <SidebarGroup title="置顶"><p className="sidebar-empty">暂无置顶会话</p></SidebarGroup>
             <SidebarGroup title="项目" action={<button className="sidebar-group__action" type="button" aria-label="新建项目" onClick={() => setProjectCreateOpen((open) => !open)}><Plus size={14} /></button>}>

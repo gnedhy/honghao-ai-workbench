@@ -21,14 +21,15 @@ from api.settings import Settings
 from api import procurement_collaboration as collaboration
 
 
-PROCUREMENT_SCHEMA_VERSION = 5
+PROCUREMENT_SCHEMA_VERSION = 7
 SHANGHAI = timezone(timedelta(hours=8), "Asia/Shanghai")
 EDITABLE_UPDATE_STATUSES = ("draft", "returned", "submitted")
-DEFAULT_LEDGER_COLUMNS = ["unit", "latest_price", "previous_latest_price", "change", "price_date", "modifier", "status"]
-ALLOWED_LEDGER_COLUMNS = set(DEFAULT_LEDGER_COLUMNS) | {"in_transit_price", "inventory_price", "suggested_price"}
+DEFAULT_LEDGER_COLUMNS = ["inventory_quantity", "unit", "latest_price", "inventory_price", "change", "price_date", "modifier", "status"]
+ALLOWED_LEDGER_COLUMNS = set(DEFAULT_LEDGER_COLUMNS) | {"in_transit_price", "previous_latest_price", "suggested_price"}
 PRICE_FIELD_ID = "procurement.material_unit_price"
 PRICE_KEYS = {
     "comparison": PRICE_FIELD_ID,
+    "ledger_comparison": PRICE_FIELD_ID,
     "raw_price": PRICE_FIELD_ID,
     "previous_raw": PRICE_FIELD_ID,
     "before": PRICE_FIELD_ID,
@@ -48,6 +49,7 @@ PRICE_KEYS = {
     "flat_count": PRICE_FIELD_ID,
     "missing_count": PRICE_FIELD_ID,
     "inventory_price": PRICE_FIELD_ID,
+    "inventory_quantity": PRICE_FIELD_ID,
     "in_transit_price": PRICE_FIELD_ID,
     "suggested_price": PRICE_FIELD_ID,
     "recommended_price": PRICE_FIELD_ID,
@@ -261,6 +263,14 @@ class ProcurementStore:
                 collaboration.initialize(connection)
                 connection.execute("UPDATE schema_metadata SET value=5 WHERE key='workbench_procurement_schema_version'")
                 version = (5,)
+            if int(version[0]) == 5:
+                from api.procurement_inventory import initialize
+                initialize(connection)
+                version = (6,)
+            if int(version[0]) == 6:
+                from api.procurement_rd5 import initialize
+                initialize(connection)
+                version = (7,)
             if int(version[0]) != PROCUREMENT_SCHEMA_VERSION:
                 raise RuntimeError("Unsupported procurement workbench schema version")
 
@@ -644,6 +654,9 @@ class ProcurementStore:
 
     def overview(self) -> dict[str, Any]:
         with sqlite3.connect(self.path) as connection:
+            inventory = {row[0]: row[1:] for row in connection.execute(
+                "SELECT material_id, quantity, price FROM procurement_inventory"
+            )}
             material_rows = connection.execute(
                 """
                 SELECT materials.id, materials.code, materials.name, materials.unit,
@@ -697,6 +710,7 @@ class ProcurementStore:
         published_prices = {str(row[0]): row[1] for row in published_rows}
         previous_published_prices = {str(row[0]): row[1] for row in previous_published_rows}
         published_price_date = str(batch_rows[0][4]) if batch_rows and batch_rows[0][4] else None
+        ledger_comparison = self.batch_comparison(current_batch_id, preserve_catalog=True) if current_batch_id else None
         active_update = self.current_update()
         scheduled_update = self.scheduled_update()
         sources = collaboration.snapshot_sources(self.path, current_batch_id)
@@ -708,8 +722,11 @@ class ProcurementStore:
         pending_authors = authorship["updates"].get(pending["id"], {}) if pending else {}
         pending_prices = {item["material_id"]: item["draft_price"] for item in pending["items"]} if pending else {}
         for material in materials:
+            material["inventory_quantity"] = None
+            if material["id"] in inventory:
+                material["inventory_quantity"], material["inventory_price"] = inventory[material["id"]]
             material["published_price"] = published_prices.get(material["id"])
-            material["previous_published_price"] = previous_published_prices.get(material["id"])
+            material["previous_published_price"] = ledger_comparison["items"].get(material["id"], {}).get("previous") if ledger_comparison else previous_published_prices.get(material["id"])
             material["published_price_date"] = published_price_date if material["published_price"] is not None else None
             if material["id"] in sources:
                 material["published_price_date"] = sources[material["id"]]["price_date"]
@@ -735,6 +752,7 @@ class ProcurementStore:
                 "published_batch_count": len(batch_rows),
             },
             "materials": materials,
+            "ledger_comparison": ledger_comparison,
             "issues": issues,
             "batches": [
                 {
@@ -1121,6 +1139,7 @@ class ProcurementStore:
         latest = rows[-1] if rows else None
         previous = rows[-2] if len(rows) > 1 else None
         return {
+            "comparison": self.batch_comparison(official[-1][0], preserve_catalog=True)["items"].get(material_id) if official else None,
             "material": {"id": str(material[0]), "code": str(material[1]), "name": str(material[2]), "unit": str(material[3]), "archived": material[4] is not None, "updated_at": material[5]},
             "latest_price": latest["latest_price"] if latest else material[6],
             "previous_price": previous["latest_price"] if previous else None,
@@ -1660,6 +1679,8 @@ class ProcurementStore:
             self._event(connection, scheduled_id, "revalidation_required", None, "正式基线已更新")
         for (draft_id,) in connection.execute("SELECT id FROM procurement_updates WHERE status IN ('draft','returned','submitted','revalidation_required') AND id != ?", (update_id,)).fetchall():
             self._refresh_update_issues(connection, str(draft_id), now)
+        from api.research import enqueue
+        enqueue(connection, "采购正式价格更新")
         return {"id": batch_id, "version": version, "published_at": now, "activated_at": now, "item_count": len(rows)}
 
     def publish_update(
@@ -1803,11 +1824,16 @@ class ProcurementStore:
         result["copied_update"] = self.get_update(copied_id) if copied_id else None
         return result
 
-    def batch_comparison(self, batch_id: str) -> dict[str, Any]:
+    def batch_comparison(self, batch_id: str, *, preserve_catalog: bool = False) -> dict[str, Any]:
         with sqlite3.connect(self.path) as connection:
             previous = connection.execute("SELECT id, version FROM procurement_price_batches WHERE version < (SELECT version FROM procurement_price_batches WHERE id=?) ORDER BY version DESC LIMIT 1", (batch_id,)).fetchone()
             old = dict(connection.execute("SELECT material_id, latest_price FROM procurement_price_batch_items WHERE batch_id=?", (previous[0] if previous else None,)).fetchall())
             current = connection.execute("SELECT material_id, latest_price FROM procurement_price_batch_items WHERE batch_id=?", (batch_id,)).fetchall()
+            batch = connection.execute("SELECT version,update_id FROM procurement_price_batches WHERE id=?", (batch_id,)).fetchone()
+            reported = {row[0] for row in connection.execute("SELECT material_id FROM procurement_saved_changes WHERE update_id=?", (batch[1],))} if batch else set()
+            supplement = bool(previous) and bool(reported) and reported.isdisjoint(old)
+        # Catalog supplementation must not replace existing materials' comparison baselines.
+        inherited = self.batch_comparison(previous[0], preserve_catalog=True)["items"] if preserve_catalog and supplement else {}
         current_sources = collaboration.snapshot_sources(self.path, batch_id)
         old_sources = collaboration.snapshot_sources(self.path, previous[0] if previous else None)
         counts = dict(up=0, down=0, unchanged=0, first=0, missing=0, incomparable=0)
@@ -1816,9 +1842,14 @@ class ProcurementStore:
             before = old.get(material_id)
             unusual = current_sources.get(material_id, {}).get('price_kind') in ('range','invalid') or old_sources.get(material_id, {}).get('price_kind') in ('range','invalid')
             kind = 'incomparable' if unusual else 'missing' if value is None else 'first' if before is None else 'up' if Decimal(value) > Decimal(before) else 'down' if Decimal(value) < Decimal(before) else 'unchanged'
-            counts[kind] += 1
-            items[material_id] = {"previous": before, "previous_raw": old_sources.get(material_id, {}).get("raw_price"), "change": None if unusual else _change(value, before), "kind": kind}
-        return {"previous_version": previous[1] if previous else None, **counts, "items": items}
+            entry = {"previous": before, "previous_raw": old_sources.get(material_id, {}).get("raw_price"), "change": None if unusual else _change(value, before), "kind": kind}
+            if preserve_catalog:
+                entry.update(version=batch[0], previous_version=previous[1] if previous else None)
+                if kind == 'unchanged' and material_id not in reported and material_id in inherited:
+                    entry = inherited[material_id]
+            counts[entry["kind"]] += 1
+            items[material_id] = entry
+        return {"previous_version": previous[1] if previous else None, **counts, "items": items, "added_material_ids": sorted(reported) if supplement else []}
 
     def get_batch(self, batch_id: str) -> dict[str, Any] | None:
         with sqlite3.connect(self.path) as connection:

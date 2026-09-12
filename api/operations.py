@@ -21,6 +21,7 @@ from api.identity import IDENTITY_SCHEMA_VERSION, IdentityStore
 from api.knowledge import KNOWLEDGE_SCHEMA_VERSION, KnowledgeStore
 from api.modules import load_persisted_module_modes
 from api.procurement import PROCUREMENT_SCHEMA_VERSION, ProcurementStore
+from api.research import ResearchStore
 from api.settings import Settings
 from api.workbenches import load_persisted_workbench_modes
 from scripts.backup_database import backup_database
@@ -55,6 +56,9 @@ def migrate_data(settings: Settings, *, include_workbenches: bool = True) -> dic
             settings,
             backup_before_migration=database_preexisted,
         )
+    if include_workbenches and settings.workbench_modes["research"] == "active":
+        ResearchStore(settings.database_path).initialize()
+        versions["research"] = 2
     return versions
 
 
@@ -218,6 +222,9 @@ def doctor(settings: Settings) -> list[tuple[str, str, bool | None]]:
     if settings.workbench_modes["procurement"] == "active":
         procurement_version = versions.get("workbench_procurement_schema_version")
         checks.append(("采购工作台", f"schema {procurement_version or '未初始化'}", procurement_version == PROCUREMENT_SCHEMA_VERSION))
+    if settings.workbench_modes["research"] == "active":
+        research_version = versions.get("workbench_research_schema_version")
+        checks.append(("研发工作台", f"schema {research_version or '未初始化'}", research_version == 2))
     try:
         from pypdf import PdfReader  # noqa: F401
 
@@ -248,6 +255,8 @@ def readiness_checks(settings: Settings) -> dict[str, str]:
             versions = _schema_versions(settings.database_path)
             if _core_schema_versions_valid(versions):
                 checks["schema_versions"] = "ok"
+            if settings.workbench_modes["research"] == "active":
+                checks["research_schema"] = "ok" if versions.get("workbench_research_schema_version") == 2 else "failed"
         except (OSError, sqlite3.Error, RuntimeError):
             pass
     try:
@@ -403,12 +412,13 @@ def _schema_versions(database_path: Path) -> dict[str, int]:
         "authorization_schema_version",
         "knowledge_schema_version",
         "workbench_procurement_schema_version",
+        "workbench_research_schema_version",
     )
     with closing(sqlite3.connect(database_path)) as connection:
         return {
             str(key): int(value)
             for key, value in connection.execute(
-                "SELECT key, value FROM schema_metadata WHERE key IN (?, ?, ?, ?, ?)",
+                "SELECT key, value FROM schema_metadata WHERE key IN (?, ?, ?, ?, ?, ?)",
                 keys,
             )
         }

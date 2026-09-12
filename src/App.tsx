@@ -4,7 +4,7 @@ import { createConversationSubmission, createProject, fetchConversations, fetchM
 import { ContextSidebar } from "./components/ContextSidebar";
 import { SettingsDialog, type UiFontSize } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
-import { FeedbackDialog } from "./components/FeedbackDialog";
+import { FeedbackDialog, emptyFeedbackDraft } from "./components/FeedbackDialog";
 import { ProfileDialog } from "./components/ProfileDialog";
 import { knowledgeItems, skills, workflows } from "./data";
 import { AutomationScreen } from "./screens/AutomationScreen";
@@ -12,7 +12,7 @@ import { ConversationScreen } from "./screens/ConversationScreen";
 import { KnowledgeScreen } from "./screens/KnowledgeScreen";
 import { TaskBoardScreen } from "./screens/TaskBoardScreen";
 import { workbenches, WorkbenchScreen } from "./screens/WorkbenchScreen";
-import type { Conversation, ConversationMessage, ConversationView, CurrentUser, ModuleStatus, ModuleVisibility, ProcurementPage, Project, Section, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
+import type { Conversation, ConversationMessage, ConversationView, CurrentUser, ModuleStatus, ModuleVisibility, ResearchPage, ProcurementPage, Project, Section, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
 import { PROCUREMENT_PAGE_LABELS } from "./types";
 
 type AppProps = {
@@ -82,6 +82,7 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
   const [workbenchRegistryState, setWorkbenchRegistryState] = useState<"loading" | "ready" | "error">("loading");
   const [selectedWorkbenchId, setSelectedWorkbenchId] = useState<WorkbenchId>("management");
   const [openedWorkbenchId, setOpenedWorkbenchId] = useState<WorkbenchId | null>(null);
+  const [researchPage, setResearchPage] = useState<ResearchPage>("dashboard");
   const [procurementPage, setProcurementPage] = useState<ProcurementPage>("dashboard");
   const [knowledgeScope, setKnowledgeScope] = useState<"个人" | "公共">("个人");
   const [selectedKnowledgeTitle, setSelectedKnowledgeTitle] = useState(knowledgeItems[0].title);
@@ -91,6 +92,7 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [serviceConnection, setServiceConnection] = useState<ServiceConnection>({ state: "checking" });
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackDraft, setFeedbackDraft] = useState(emptyFeedbackDraft);
   const [feedbackUnread, setFeedbackUnread] = useState<number | null>(null);
   const [feedbackRevision, setFeedbackRevision] = useState(0);
   useEffect(() => {
@@ -371,6 +373,8 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
         enabledModules={enabledModules}
         environment={runtimeEnvironment}
         openedWorkbenchId={openedWorkbenchId}
+        researchPage={researchPage}
+        onResearchPageChange={(next) => { if (allowProcurementLeave()) setResearchPage(next); }}
         procurementPage={procurementPage}
         onProcurementPageChange={(next) => { if (allowProcurementLeave()) setProcurementPage(next); }}
         onSectionChange={(nextSection) => { if (!allowProcurementLeave()) return; setSection(nextSection); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
@@ -391,7 +395,7 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
       {section === "chat" && enabledModules.chat && <ConversationScreen {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversationId) { const update = projectUpdatePromise.current.catch(() => undefined).then(async () => { const updated = await setConversationProject(selectedConversationId, projectId); setConversations((current) => current.map((conversation) => conversation.id === updated.id ? updated : conversation)); }); projectUpdatePromise.current = update; void update.catch(() => setWorkbenchDataState("error")); } else { setCurrentProjectId(projectId); } }} messages={messages} messagesState={messagesState} onSubmit={submitMessage} />}
       {section === "knowledge" && enabledModules.knowledge && <KnowledgeScreen {...screenChrome} scopeTab={knowledgeScope} onScopeTabChange={setKnowledgeScope} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
       {section === "automation" && enabledModules.automation && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
-      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} currentUser={currentUser} statuses={workbenchStatuses} dataState={workbenchRegistryState} selectedId={selectedWorkbenchId} onSelectedIdChange={(id) => { if (!allowProcurementLeave()) return; setSelectedWorkbenchId(id); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); }} openedWorkbenchId={openedWorkbenchId} onOpenedWorkbenchIdChange={(next) => { if (allowProcurementLeave()) setOpenedWorkbenchId(next); }} procurementPage={procurementPage} onProcurementPageChange={setProcurementPage} />}
+      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} currentUser={currentUser} statuses={workbenchStatuses} dataState={workbenchRegistryState} selectedId={selectedWorkbenchId} onSelectedIdChange={(id) => { if (!allowProcurementLeave()) return; setSelectedWorkbenchId(id); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); }} openedWorkbenchId={openedWorkbenchId} onOpenedWorkbenchIdChange={(next) => { if (allowProcurementLeave()) setOpenedWorkbenchId(next); }} researchPage={researchPage} onResearchPageChange={(next) => { if (allowProcurementLeave()) setResearchPage(next); }} procurementPage={procurementPage} onProcurementPageChange={setProcurementPage} />}
       {section === "tasks" && enabledModules.tasks && <TaskBoardScreen {...screenChrome} tasks={tasks} projects={projects} conversations={conversations} dataState={workbenchDataState} selectedTask={selectedTask} onSelectedTaskChange={(task) => setSelectedTaskId(task.id)} />}
       <ContextSidebar
         section={section}
@@ -457,7 +461,7 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
         }}
       />
       {settingsOpen && <SettingsDialog currentUser={currentUser} onUserChanged={onUserChanged} serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} workbenchStatuses={workbenchStatuses} workbenchRegistryState={workbenchRegistryState} uiFontSize={uiFontSize} onUiFontSizeChange={setUiFontSize} onClose={() => setSettingsOpen(false)} onOpenProfile={() => { setSettingsOpen(false); setPersonalProfileOpen(true); }} />}
-      {feedbackOpen && <FeedbackDialog currentUser={currentUser} context={openedWorkbenchId ? `${workbenches.find(item => item.id === openedWorkbenchId)?.title ?? "工作台"}${openedWorkbenchId === "procurement" ? ` / ${PROCUREMENT_PAGE_LABELS[procurementPage]}` : ""}` : ({chat:"新聊天",knowledge:"知识库",automation:"自动化",workbench:"工作台",tasks:"任务看板"})[section]} version={serviceConnection.state === "online" ? serviceConnection.health.api_version : "未知"} onClose={() => setFeedbackOpen(false)} onUnreadChanged={() => setFeedbackRevision(value => value + 1)} />}
+      {feedbackOpen && <FeedbackDialog draft={feedbackDraft} onDraftChange={setFeedbackDraft} currentUser={currentUser} context={openedWorkbenchId ? `${workbenches.find(item => item.id === openedWorkbenchId)?.title ?? "工作台"}${openedWorkbenchId === "procurement" ? ` / ${PROCUREMENT_PAGE_LABELS[procurementPage]}` : ""}` : ({chat:"新聊天",knowledge:"知识库",automation:"自动化",workbench:"工作台",tasks:"任务看板"})[section]} version={serviceConnection.state === "online" ? serviceConnection.health.api_version : "未知"} onClose={() => setFeedbackOpen(false)} onUnreadChanged={() => setFeedbackRevision(value => value + 1)} />}
       {personalProfileOpen && <ProfileDialog onClose={() => setPersonalProfileOpen(false)} onUserChanged={onUserChanged} onPasswordChanged={onPasswordChanged} beforePasswordChange={allowProcurementLeave} />}
     </div>
   );
@@ -596,5 +600,5 @@ export default App;
 
 
 function allowProcurementLeave() {
-  return window.dispatchEvent(new Event("procurement-before-leave", { cancelable: true }));
+  return window.dispatchEvent(new Event("procurement-before-leave", { cancelable: true })) && window.dispatchEvent(new Event("research-before-leave", { cancelable: true }));
 }
