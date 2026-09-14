@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form, status
+from fastapi import APIRouter, HTTPException, Request, Query, UploadFile, File, Form, status
 from pydantic import BaseModel, Field
 
 from api.authorization import AuthorizationStore
@@ -2067,10 +2067,10 @@ def create_procurement_router(
         return visible_payload(result, user)
 
     @router.get("/activation-grants")
-    def list_activation_grants(request: Request):
+    def list_activation_grants(request: Request, offset: int = Query(0, ge=0), limit: int = Query(10, ge=1, le=50)):
         user = actor(request, 3)
         require_activation(user, manage=True)
-        return collaboration.grants(store.path)
+        return collaboration.grants(store.path, offset=offset, limit=limit)
 
     @router.put("/activation-grants/{user_id}")
     def set_activation_grant(user_id: str, payload: ActivationGrantRequest, request: Request):

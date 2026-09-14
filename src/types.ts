@@ -28,10 +28,12 @@ export type CurrentUser = {
 };
 
 export type PersonalProfile = CurrentUser & {
+  research_capabilities: { can_edit: boolean; can_activate: boolean; can_manage_grants: boolean };
   procurement_capabilities: { can_edit: boolean; can_activate: boolean; can_manage_grants: boolean };
 };
 
 export type AdminModuleSetting = {
+  can_change?: boolean;
   can_reactivate?: boolean;
   id: Section;
   current_mode: ModuleMode;
@@ -39,6 +41,7 @@ export type AdminModuleSetting = {
 };
 
 export type AdminWorkbenchSetting = {
+  can_change?: boolean;
   can_reactivate?: boolean;
   id: WorkbenchId;
   current_mode: WorkbenchMode;

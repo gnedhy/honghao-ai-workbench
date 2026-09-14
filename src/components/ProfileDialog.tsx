@@ -26,6 +26,7 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
   const [profile, setProfile] = useState<PersonalProfile | null>(null);
   const [loadError, setLoadError] = useState("");
   const [reload, setReload] = useState(0);
+  useEffect(() => { const refresh = () => setReload(n => n + 1); window.addEventListener("activation-grants-changed", refresh); return () => window.removeEventListener("activation-grants-changed", refresh); }, []);
   const [expanded, setExpanded] = useState(false);
   const [instant, setInstant] = useState(false);
   const [passwords, setPasswords] = useState({ current_password: "", new_password: "", confirm_password: "" });
@@ -103,8 +104,8 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
             {[{ id: "modules", title: "功能模块", scopes: ["knowledge"] }, { id: "workbenches", title: "职能工作台", scopes: ["procurement", "research", "sales", "management"] }].map(group => ({ ...group, scopes: group.scopes.filter(scope => profile.is_system_admin || (profile.scope_levels[scope as keyof typeof profile.scope_levels] ?? 0) >= 2) })).filter(group => group.scopes.length > 0).map(group => <SettingsGroup key={group.id} id={"my-permissions-" + group.id} title={group.title} description={group.id === "modules" ? "查看各功能模块的访问权限。" : "查看各工作台的业务操作权限。"} summary={`${group.scopes.length} 项已授权`}>
               {group.scopes.map(scope => <div className="personal-account-scope" key={scope}>
                 <div className="personal-account-scope-heading"><span>{SCOPE_NAMES[scope]}</span><span>{profile.is_system_admin ? "管理" : LEVEL_NAMES[profile.scope_levels[scope as keyof typeof profile.scope_levels]!] || "未授权"}</span></div>
-                {scope === "procurement" && <div className="personal-capabilities">
-                  {[{ id: "activate", label: "价格启用", allowed: profile.procurement_capabilities.can_activate, help: "将已确认的采购价格启用为当前价格。录入、修改价格以工作台授权等级为准。" }, { id: "grants", label: "启用权分配", allowed: profile.procurement_capabilities.can_manage_grants, help: "授予或撤销其他人的价格启用权，不包含账号管理或其他业务授权。" }].map(item => <div className="personal-capability" key={item.id}>
+                {(scope === "procurement" || scope === "research") && <div className="personal-capabilities">
+                  {[{ id: "activate", label: scope === "research" ? "成本启用" : "价格启用", allowed: profile[scope === "research" ? "research_capabilities" : "procurement_capabilities"].can_activate, help: scope === "research" ? "核对并启用研发成本和配方，可启用本人或他人保存的草稿。不包含停用配方权限。" : "将已确认的采购价格启用为当前价格。录入、修改价格以工作台授权等级为准。" }, { id: "grants", label: "启用权分配", allowed: profile[scope === "research" ? "research_capabilities" : "procurement_capabilities"].can_manage_grants, help: "授予或撤销其他人在本工作台的启用权，不包含账号管理或其他业务授权。" }].map(item => <div className="personal-capability" key={item.id}>
                     <div className="personal-capability-row"><span>{item.label}<button type="button" className="personal-capability-help" aria-label={item.label + "说明：" + item.help} title={item.help}><Info size={13} /></button></span><span>{item.allowed ? "已授权" : "未授权"}</span></div>
                   </div>)}
                 </div>}

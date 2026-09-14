@@ -17,3 +17,7 @@ output/
 # Local browser evidence and data-bearing prototypes; retain on this machine.
 .impeccable/review/
 .impeccable/mocks/
+
+# Retired originals remain local; curated Markdown lives in docs/history.
+/开工文档/
+/设计概念/

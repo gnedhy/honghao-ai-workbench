@@ -27,7 +27,7 @@ def new_body(store, name):
 def editable(store, key):
     detail = store.detail(key)
     formula = detail['draft']['formula'] if detail['draft'] else next(r for r in detail['recipes'] if r['id'] == key)
-    return {'formula': copy.deepcopy(formula), 'draft_revision': detail['draft_revision']}
+    return {'formula': dict(copy.deepcopy(formula), adjustment_reason='配方优化', adjustment_note=''), 'draft_revision': detail['draft_revision']}
 
 
 def populated(store, key):

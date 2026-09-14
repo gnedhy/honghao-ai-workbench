@@ -74,6 +74,7 @@ class ModuleStatusResponse(BaseModel):
 
 
 class AdminModuleStatusResponse(BaseModel):
+    can_change: bool = False
     id: ModuleId
     current_mode: ModuleMode
     pending_mode: ModuleMode
@@ -81,6 +82,7 @@ class AdminModuleStatusResponse(BaseModel):
 
 
 class AdminWorkbenchStatusResponse(BaseModel):
+    can_change: bool = False
     id: WorkbenchId
     current_mode: WorkbenchMode
     pending_mode: WorkbenchMode
@@ -157,6 +159,7 @@ class UserUpdate(BaseModel):
 
 class ProfileResponse(CurrentUserResponse):
     procurement_capabilities: dict[str, bool]
+    research_capabilities: dict[str, bool]
 
 
 class ProfileUpdate(BaseModel):
@@ -524,7 +527,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     @app.get("/api/me/profile", response_model=ProfileResponse)
     def me_profile(request: Request) -> ProfileResponse:
         user = current_user(request)
-        return ProfileResponse(**user, procurement_capabilities=capabilities(runtime_settings.database_path, user))
+        return ProfileResponse(**user, procurement_capabilities=capabilities(runtime_settings.database_path, user), research_capabilities=capabilities(runtime_settings.database_path, user, "research"))
 
     @app.patch("/api/me/profile", response_model=UserResponse)
     def update_me_profile(update: ProfileUpdate, request: Request) -> UserResponse:
@@ -680,7 +683,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
 
     @app.get("/api/admin/module-settings", response_model=AdminModuleSettingsResponse)
     def get_admin_module_settings(request: Request) -> AdminModuleSettingsResponse:
-        require_system_admin(request)
+        actor = require_system_admin(request)
         pending_modes = load_persisted_module_modes(
             runtime_settings.data_dir,
             runtime_settings.environment,
@@ -696,6 +699,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             modules=[
                 AdminModuleStatusResponse(
                     id=module_id,
+                    can_change=(runtime_settings.module_modes[module_id] == "active" and pending_modes[module_id] == "active"),
                     current_mode=runtime_settings.module_modes[module_id],
                     pending_mode=pending_modes[module_id],
                     can_reactivate=reusable_activation_review(runtime_settings.data_dir, "runtime-config.json", module_id) is not None,
@@ -705,6 +709,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             workbenches=[
                 AdminWorkbenchStatusResponse(
                     id=workbench_id,
+                    can_change=workbench_id != "management",
                     current_mode=runtime_settings.workbench_modes[workbench_id],
                     pending_mode=pending_workbench_modes[workbench_id],
                     can_reactivate=reusable_activation_review(runtime_settings.data_dir, "workbench-runtime-config.json", workbench_id) is not None,
@@ -725,6 +730,9 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         actor = require_system_admin(request)
         if module_id not in MODULE_IDS:
             raise HTTPException(status_code=404, detail="Module not found")
+        pending_modes = load_persisted_module_modes(runtime_settings.data_dir, runtime_settings.environment, runtime_settings.module_modes)
+        if (runtime_settings.module_modes[module_id] != "active" or pending_modes[module_id] != "active"):
+            raise HTTPException(status_code=403, detail="未启用的功能模块已锁定，暂不开放操作")
         previous_review = reusable_activation_review(runtime_settings.data_dir, "runtime-config.json", module_id)
         if (
             runtime_settings.environment == "production"
@@ -771,6 +779,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         )
         return AdminModuleStatusResponse(
             id=typed_module_id,
+            can_change=(runtime_settings.module_modes[typed_module_id] == "active" and update.mode == "active"),
             current_mode=runtime_settings.module_modes[typed_module_id],
             pending_mode=update.mode,
             can_reactivate=previous_review is not None or (runtime_settings.environment == "production" and update.mode == "active"),
@@ -788,6 +797,8 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         actor = require_system_admin(request)
         if workbench_id not in WORKBENCH_IDS:
             raise HTTPException(status_code=404, detail="Workbench not found")
+        if workbench_id == "management":
+            raise HTTPException(status_code=403, detail="总经办工作台已锁定，暂不开放操作")
         previous_review = reusable_activation_review(runtime_settings.data_dir, "workbench-runtime-config.json", workbench_id)
         if (
             runtime_settings.environment == "production"
@@ -831,6 +842,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         )
         return AdminWorkbenchStatusResponse(
             id=typed_workbench_id,
+            can_change=typed_workbench_id != "management",
             current_mode=runtime_settings.workbench_modes[typed_workbench_id],
             pending_mode=update.mode,
             can_reactivate=previous_review is not None or (runtime_settings.environment == "production" and update.mode == "active"),

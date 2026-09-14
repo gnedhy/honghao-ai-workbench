@@ -96,10 +96,10 @@ export function fetchProcurementOverview(signal?: AbortSignal): Promise<Procurem
   return fetchJson<ProcurementOverview>("/api/workbenches/procurement/overview", { signal });
 }
 
-export type ActivationGrants = { users: Array<{ id: string; name: string; eligible: boolean; granted: boolean; role_granted: boolean; manager: boolean }>; events: Array<{ id: string; actor: string; action: string; target_id: string; created_at: string }> };
-export function fetchActivationGrants(): Promise<ActivationGrants> { return fetchJson("/api/workbenches/procurement/activation-grants"); }
-export function saveActivationGrant(id: string, enabled: boolean, manager?: boolean): Promise<ActivationGrants> {
-  return fetchJson(`/api/workbenches/procurement/activation-grants/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({enabled, manager}) });
+export type ActivationGrants = { total:number; has_more:boolean; users: Array<{ id: string; name: string; eligible: boolean; granted: boolean; role_granted: boolean; manager: boolean }>; events: Array<{ id: string; actor: string; action: string; target_id: string; target_name:string; created_at: string; detail?: {manager?:boolean|null} }> };
+export function fetchActivationGrants(scope: "procurement" | "research" = "procurement", offset=0, limit=10): Promise<ActivationGrants> { return fetchJson(`/api/workbenches/${scope}/activation-grants?offset=${offset}&limit=${limit}`); }
+export function saveActivationGrant(id: string, enabled: boolean, manager?: boolean, scope: "procurement" | "research" = "procurement"): Promise<ActivationGrants> {
+  return fetchJson(`/api/workbenches/${scope}/activation-grants/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({enabled, manager}) });
 }
 export function saveDepartmentMaterials(id: string, material_ids: string[]): Promise<ProcurementOverview> {
   return fetchJson(`/api/workbenches/procurement/departments/${id}/materials`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({material_ids}) });

@@ -307,7 +307,7 @@ def calculate(package: dict, prices: dict, *, source_mode: bool = False, price_p
             if kind != "material":
                 nested = visit(ref, (*stack, key))
                 price = Decimal(nested["cost"]) if nested["cost"] is not None else None
-                absent = nested["missing_materials"]
+                absent = nested["missing_materials"] if price is None else []
                 basis = kind
             elif source_mode:
                 price_text = line.get("source_price_override", source_materials[ref]["source_calculation_price"])
@@ -332,7 +332,12 @@ def calculate(package: dict, prices: dict, *, source_mode: bool = False, price_p
                 "amount": decimal_text(quantity * price) if price is not None else None, "missing_materials": absent})
         number(amount, recipe["name"] + "总投料量", positive=True)
         cost = None if missing else weighted / amount / yield_
-        result = {"cost": decimal_text(cost), "missing_materials": sorted(missing), "total_input": decimal_text(amount),
+        manual = None if source_mode else recipe.get("manual_costs", {}).get(price_policy)
+        manual = number(manual, "手动成本") if manual is not None else None
+        result = {"cost": decimal_text(manual if manual is not None else cost), "auto_cost": decimal_text(cost),
+            "manual_cost": decimal_text(manual), "cost_source": "manual" if manual is not None else "auto",
+            "difference": decimal_text(manual - cost) if manual is not None and cost is not None else None,
+            "missing_materials": sorted(missing), "total_input": decimal_text(amount),
             "output_quantity": decimal_text(amount * yield_), "yield": recipe["yield"], "lines": lines}
         results[key] = result
         return result

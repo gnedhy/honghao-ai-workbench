@@ -44,7 +44,7 @@ def ready(trial_data):
 def body_for(store, key=K):
     detail = store.detail(key)
     formula = next(r for r in detail['recipes'] if r['id'] == key)
-    return {'formula': copy.deepcopy(formula), 'draft_revision': detail['draft_revision']}
+    return {'formula': dict(copy.deepcopy(formula), adjustment_reason='配方优化', adjustment_note=''), 'draft_revision': detail['draft_revision']}
 
 
 def saved(store, actor, body=None, key=K):
@@ -424,3 +424,217 @@ def test_composite_detail_never_calls_pending_or_failed_results_current(ready, m
 def test_two_decimal_comparison_supports_large_valid_costs():
     assert research.comparison_price("1000000000000000000000000000") == Decimal("1000000000000000000000000000.00")
     assert research.comparison("1200000000000000000000000000", {"latest_cost": "1000000000000000000000000000"})["percent"] == 20
+
+
+def test_independent_ratios_survive_draft_activation_and_history(ready):
+    settings, _, actor, store = ready
+    body = body_for(store)
+    old_cost = store.detail(K)['product']['latest_cost']
+    body['formula'].update(ratio_linked=False, ratio_base='100')
+    for line in body['formula']['lines']:
+        line['ratio'] = '120'
+    trial, receipt = saved(store, actor, body)
+    reopened = ResearchStore(settings.database_path)
+    assert reopened.detail(K)['draft']['formula']['lines'][0]['ratio'] == '120'
+    reopened.activate(K, receipt, actor)
+    reopened.process_events()
+    current = reopened.detail(K)
+    assert current['product']['latest_cost'] == old_cost
+    assert current['history'][0]['formula']['lines'][0]['ratio'] == '120'
+    assert current['history'][0]['formula']['ratio_linked'] is False
+
+
+@pytest.mark.parametrize('ratio', ['-1', 'NaN', 'Infinity'])
+def test_invalid_ratio_is_rejected(ready, ratio):
+    _, _, actor, store = ready
+    body = body_for(store)
+    body['formula']['lines'][0]['ratio'] = ratio
+    with pytest.raises(ValueError, match='配方比例'):
+        saved(store, actor, body)
+
+
+def test_delete_only_unused_new_formula(ready):
+    settings, client, actor, store = ready
+    owner = store.detail(K)['product']['owner']
+    created = store.create_formula({'name':'DELETE-TEST','owner':owner}, actor)
+    key = created['id']
+    with pytest.raises(RuntimeError):
+        store.delete_formula(key, {'revision':99})
+    with pytest.raises(ValueError):
+        store.delete_formula(K, {'revision':store.detail(K)['draft_revision']})
+    response = client.request('DELETE', PREFIX + '/products/' + quote(key, safe=''), json={'revision':0})
+    assert response.status_code == 200, response.text
+    with pytest.raises(KeyError):
+        store.detail(key)
+
+
+def test_formula_owner_saved_and_activated(ready):
+    settings, client, actor, store = ready
+    body = body_for(store)
+    owner = '另一负责人'
+    with sqlite3.connect(settings.database_path) as db:
+        db.execute("UPDATE research_formulas SET formula=json_set(formula,'$.owner',?) WHERE id=?", (owner,RH))
+    body['formula']['owner'] = owner
+    for line in body['formula']['lines']:
+        line['ratio'] = '10'
+    trial, receipt = saved(store, actor, body)
+    assert store.detail(K)['draft']['formula']['owner'] == owner
+    store.activate(K, receipt, actor)
+    store.process_events()
+    assert store.detail(K)['product']['owner'] == owner
+    body['formula']['owner'] = 'INVALID OWNER'
+    body['draft_revision'] = store.detail(K)['draft_revision']
+    with pytest.raises(ValueError, match='负责人'):
+        store.simulate(K, body)
+
+
+def test_saved_trial_snapshot_reopens(ready):
+    settings, client, actor, store = ready
+    trial, receipt = saved(store, actor)
+    snapshot = ResearchStore(settings.database_path).detail(K)['draft']['simulation']
+    assert snapshot['latest'] == trial['latest']
+    assert snapshot['inventory'] == trial['inventory']
+    assert snapshot['simulation_token'] == receipt['simulation_token']
+
+
+@pytest.mark.parametrize('policy', ['latest', 'inventory'])
+def test_manual_cost_propagates_and_procurement_keeps_override(ready, tmp_path, policy):
+    _, _, actor, store = ready
+    body = body_for(store)
+    body['formula']['manual_costs'] = {policy: '0'}
+    trial, receipt = saved(store, actor, body)
+    assert trial[policy]['cost'] == '0'
+    assert Decimal(trial[policy]['auto_cost']) > 0
+    assert {r['id'] for r in trial['affected']} >= {K, RH}
+    store.activate(K, dict(revision=receipt['revision'], simulation_token=receipt['simulation_token']), actor)
+    store.process_events()
+    before = records(store.path)
+    values = research.evaluate(frozen(store))
+    assert values[policy][K]['cost'] == '0'
+    assert values[policy][RH]['cost'] == '0'
+    update_stock(ready, tmp_path, 'B', 20)
+    store.process_events()
+    after = research.evaluate(frozen(store))
+    assert after[policy][K]['cost'] == '0'
+    assert after[policy][K]['auto_cost'] != values[policy][K]['auto_cost']
+    assert records(store.path)[:len(before)] == before
+    body = body_for(store)
+    body['formula']['manual_costs'] = {policy: None}
+    trial, receipt = saved(store, actor, body)
+    assert trial[policy]['cost'] == trial[policy]['auto_cost']
+    store.activate(K, dict(revision=receipt['revision'], simulation_token=receipt['simulation_token']), actor)
+    store.process_events()
+    assert store.detail(K)[policy]['cost_source'] == 'auto'
+
+
+@pytest.mark.parametrize('value', ['-1', 'NaN', 'Infinity', '', 'abc'])
+def test_manual_cost_rejects_invalid_amount(ready, value):
+    _, client, _, store = ready
+    body = body_for(store)
+    body['formula']['manual_costs'] = {'latest': value}
+    assert client.post(f'{PREFIX}/products/{quote(K)}/simulate', json=body).status_code == 422
+
+
+def test_reason_and_manual_changes_invalidate_confirmation(ready):
+    _, client, actor, store = ready
+    body = body_for(store)
+    for reason, note in [('', ''), ('其他', ''), ('not-valid', '说明')]:
+        body['formula'].update(adjustment_reason=reason, adjustment_note=note)
+        assert client.post(f'{PREFIX}/products/{quote(K)}/simulate', json=body).status_code == 422
+    body['formula'].update(adjustment_reason='其他', adjustment_note='核对测试', manual_costs={'latest':'12.3456789','inventory':'0'})
+    trial = store.simulate(K, body)
+    assert trial['latest']['cost'] == '12.3456789'
+    body['formula']['adjustment_note'] = '说明变化'
+    with pytest.raises(RuntimeError):
+        store.save(K, dict(body, simulation_token=trial['simulation_token']), actor)
+    body['formula']['adjustment_note'] = '核对测试'
+    body['formula']['manual_costs']['latest'] = '13'
+    with pytest.raises(RuntimeError):
+        store.save(K, dict(body, simulation_token=trial['simulation_token']), actor)
+
+
+def test_manual_cost_missing_price_and_cycle_validation(ready):
+    _, _, _, store = ready
+    inputs = frozen(store)
+    recipe = next(r for r in inputs['package']['recipes'] if r['id'] == K)
+    recipe['manual_costs'] = {'latest':'0'}
+    inputs['prices']['B'] = {'latest_price':None,'inventory_price':None}
+    values = research.evaluate(inputs)
+    assert values['latest'][K]['auto_cost'] is None
+    assert values['latest'][K]['cost'] == '0'
+    assert 'B' in values['latest'][K]['missing_materials']
+    assert values['latest'][RH]['cost'] == '0'
+    assert values['inventory'][RH]['cost'] is None
+    recipe['lines'][0].update(kind='recipe',ref=K)
+    with pytest.raises(ValueError, match='循环'):
+        research.evaluate(inputs)
+
+
+
+def test_rd5_accounts_reuse_passwords_and_own_activation(ready):
+    from scripts.configure_rd5_accounts import configure, PEOPLE
+    settings, _, actor, store = ready
+    identities = IdentityStore(settings.database_path)
+    existing = identities.create_user(username='existing-lin', display_name='林菲菲',
+        department=None, password='Existing-Password-2026', scope_levels={'research':2})
+    configure(settings.database_path, actor, True)
+    configure(settings.database_path, actor, True)
+    assert identities.login('existing-lin', 'Existing-Password-2026', 3600)
+    users = identities.list_users()
+    assert len([u for u in users if u['display_name'] == '林菲菲']) == 1
+    assert set(name for _, name, _ in PEOPLE) <= set(store.formulas()['owners'])
+    for username, name, level in PEOPLE:
+        user = next(u for u in users if u['display_name'] == name)
+        assert user['department'] == '研发五部'
+        assert user['scope_levels']['research'] == level
+        with TestClient(create_app(settings)) as client:
+            password = 'Existing-Password-2026' if user['id'] == existing['id'] else '123456'
+            assert client.post('/api/login', json={'username':user['username'], 'password':password}).status_code == 200
+            body = body_for(store)
+            trial = client.post(f'{PREFIX}/products/{quote(K)}/simulate', json=body)
+            assert trial.status_code == 200
+            receipt = client.put(f'{PREFIX}/products/{quote(K)}/draft', json=dict(body,simulation_token=trial.json()['simulation_token']))
+            assert receipt.status_code == 200
+            activation = client.post(f'{PREFIX}/products/{quote(K)}/activate', json=receipt.json())
+            assert activation.status_code == (200 if level == 4 else 403)
+            store.process_events()
+    with sqlite3.connect(store.path) as db:
+        formula = json.loads(db.execute('SELECT formula FROM research_formulas WHERE id=?',(K,)).fetchone()[0])
+    assert formula['edited_by'] == existing['id'] == formula['activated_by']
+
+
+
+def test_three_layer_mixed_manual_policies_use_final_upstream_cost(ready):
+    _, _, _, store = ready
+    inputs = frozen(store)
+    recipes = inputs['package']['recipes']
+    upstream = next(r for r in recipes if r['id'] == K)
+    middle = next(r for r in recipes if r['id'] == RH)
+    upstream['manual_costs'] = {'latest':'12'}
+    middle['manual_costs'] = {'latest':'9','inventory':'7'}
+    recipes.append(dict(id='recipe:downstream', name='downstream', kind='recipe',
+        **{'yield':'0.5'}, lines=[dict(kind='recipe',ref=RH,code='RH',quantity='100',source_row=None)]))
+    values = research.evaluate(inputs)
+    assert values['latest'][RH]['auto_cost'] == '3'
+    assert values['latest'][RH]['cost'] == '9'
+    assert values['latest']['recipe:downstream']['cost'] == '18'
+    assert values['inventory']['recipe:downstream']['cost'] == '14'
+    assert values['inventory'][K]['cost_source'] == 'auto'
+
+
+def test_missing_prices_only_allow_effective_manual_policy_and_stale_price_token(ready):
+    _, _, actor, store = ready
+    body = body_for(store)
+    body['formula']['manual_costs'] = {'latest':'1','inventory':'2'}
+    trial = store.simulate(K,body)
+    with sqlite3.connect(store.path) as db:
+        db.execute("UPDATE procurement_inventory SET price='200' WHERE material_id=(SELECT id FROM procurement_materials WHERE code='B')")
+    with pytest.raises(RuntimeError):
+        store.save(K,dict(body,simulation_token=trial['simulation_token']),actor)
+    with sqlite3.connect(store.path) as db:
+        db.execute("UPDATE procurement_inventory SET price=NULL WHERE material_id=(SELECT id FROM procurement_materials WHERE code='B')")
+    trial = store.simulate(K,body)
+    assert not trial['blocking']
+    assert trial['latest']['auto_cost'] is None
+    body['formula']['manual_costs']['inventory'] = None
+    assert store.simulate(K,body)['blocking']

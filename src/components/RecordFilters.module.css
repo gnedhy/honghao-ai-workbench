@@ -1,0 +1,6 @@
+.root { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 14px; margin-bottom: 6px; border-bottom: 1px solid var(--border); }
+.root button { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 7px 12px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: calc(12px + var(--ui-font-offset)); cursor: pointer; }
+.root button:hover { background: #f4f5f6; color: var(--text); }
+.root button[aria-pressed="true"] { background: var(--selected); border-color: var(--selected-border); color: var(--text); font-weight: 600; }
+.root span { min-width: 20px; padding: 1px 5px; border-radius: 4px; background: #edf0f2; font-size: calc(11px + var(--ui-font-offset)); font-variant-numeric: tabular-nums; text-align: center; }
+.root button[aria-pressed="true"] span { background: #fff; }

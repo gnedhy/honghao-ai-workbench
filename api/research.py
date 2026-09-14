@@ -14,10 +14,13 @@ from decimal import Decimal, ROUND_HALF_UP, localcontext
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, ConfigDict, Field
 
+from api import procurement_collaboration as activation_grants
 from api.research_formulas import calculate, number, decimal_text
+
+ADJUSTMENT_REASONS = ("配方优化", "实际投料修正", "收率修正", "成本核对修正", "临时成本测算", "其他")
 
 
 def packed(value):
@@ -75,7 +78,9 @@ def signature(inputs, results, key, *, include_basis=True):
                 item["inputs"] = visit(left["ref"]) if left["kind"] != "material" else [
                     [line["unit_cost"], {"historical_latest":"latest", "current_latest_fallback":"latest", "current_inventory_fallback":"inventory"}.get(line["basis"],line["basis"])] if include_basis else line['unit_cost'] for line in (left, right)]
             lines.append(item)
-        cache[ref] = digest({"yield": recipe["yield"], "lines": lines})
+        cache[ref] = digest({"yield": recipe["yield"], "lines": lines,
+            **({"adjustment": {k:recipe.get(k) for k in ("manual_costs", "adjustment_reason", "adjustment_note", "edited_by", "activated_by")}} if "adjustment_reason" in recipe else {}),
+            **({"owner": recipe.get("owner"), "ratios": [line.get("ratio") for line in recipe["lines"]], "ratio_linked": recipe.get("ratio_linked", True), "ratio_base": recipe.get("ratio_base")} if any("ratio" in line for line in recipe["lines"]) else {})})
         return cache[ref]
     return visit(key)
 
@@ -112,6 +117,8 @@ class ResearchStore:
     def initialize(self):
         with sqlite3.connect(self.path) as db:
             db.execute("BEGIN IMMEDIATE")
+            db.execute("CREATE TABLE IF NOT EXISTS research_activation_grants (user_id TEXT PRIMARY KEY, manager INTEGER NOT NULL DEFAULT 0, granted_by TEXT NOT NULL, granted_at TEXT NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS research_admin_events (id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL)")
             version = db.execute("SELECT value FROM schema_metadata WHERE key='workbench_research_schema_version'").fetchone()
             if version and str(version[0]) not in {"1", "2"}:
                 raise ValueError("研发存储版本不兼容")
@@ -125,6 +132,8 @@ class ResearchStore:
                 "CREATE INDEX IF NOT EXISTS research_product_history ON research_cost_records(product_id,sequence)",
             ):
                 db.execute(sql)
+            if 'simulation' not in {r[1] for r in db.execute('PRAGMA table_info(research_drafts)')}:
+                db.execute("ALTER TABLE research_drafts ADD COLUMN simulation TEXT")
             if 'lifecycle' not in {r[1] for r in db.execute('PRAGMA table_info(research_formulas)')}:
                 db.execute("ALTER TABLE research_formulas ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'active' CHECK(lifecycle IN ('active','draft','inactive'))")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS research_formula_name ON research_formulas(trim(json_extract(formula,'$.name')) COLLATE NOCASE)")
@@ -205,7 +214,8 @@ class ResearchStore:
             JOIN procurement_departments d ON d.id=dm.department_id
             WHERE d.name='研发五部' AND m.archived_at IS NULL AND m.code NOT IN ('CF020C','CF401B') ORDER BY m.code""")]
         formulas = [json.loads(r[0]) for r in db.execute("SELECT formula FROM research_formulas WHERE lifecycle='active' ORDER BY position")]
-        return {"materials": materials, **{name: [{"id": r["id"], "name": r["name"]} for r in formulas if r["kind"] == kind]
+        owners = {r[0] for r in db.execute("SELECT u.display_name FROM identity_users u JOIN organization_memberships m ON m.user_id=u.id JOIN organization_departments d ON d.id=m.department_id WHERE d.name='研发五部' AND u.is_active=1")}
+        return {"owners": sorted(owners | {json.loads(r[0])["owner"] for r in db.execute("SELECT formula FROM research_formulas") if json.loads(r[0])["kind"] == "recipe" and json.loads(r[0]).get("owner")}), "materials": materials, **{name: [{"id": r["id"], "name": r["name"]} for r in formulas if r["kind"] == kind]
                 for name, kind in (("recipes", "recipe"), ("composites", "composite"))}}
 
     def _rows(self, db):
@@ -217,6 +227,7 @@ class ResearchStore:
                 continue
             record = db.execute("SELECT payload FROM research_cost_records WHERE product_id=? ORDER BY sequence DESC LIMIT 1", (formula["id"],)).fetchone()
             payload = json.loads(record[0]) if record else dict(formula, latest_cost=None,inventory_cost=None,change={"percent":None,"reason":"首次核算中"},missing_materials=[])
+            payload["cost_details"] = {p: {k:payload.get(p, {}).get(k) for k in ("cost_source", "auto_cost", "difference")} for p in ("latest", "inventory")}
             for key in ("graph", "calculations", "formula", "latest", "inventory"):
                 payload.pop(key, None)
             payload.update(has_draft=bool(has_draft), revision=formula["revision"])
@@ -254,7 +265,7 @@ class ResearchStore:
                         if draft:
                             formula=json.loads(draft[0])
                     rows.append(dict(formula,lifecycle=lifecycle,revision=revision,has_draft=bool(has_draft) or lifecycle=='draft'))
-            return {'formulas':rows,'owners':sorted({r['owner'] for r in rows if r['owner']})}
+            return {'formulas':rows,'owners':self._options(db)['owners']}
 
     def create_formula(self, body, actor):
         name,owner=body['name'].strip(),body['owner'].strip()
@@ -264,7 +275,7 @@ class ResearchStore:
             raise ValueError('该内编属于停购原料或已确认复配，不能另建产品配方')
         with sqlite3.connect(self.path) as db:
             db.execute('BEGIN IMMEDIATE')
-            owners={json.loads(r[0])['owner'] for r in db.execute('SELECT formula FROM research_formulas') if json.loads(r[0])['kind']=='recipe'}
+            owners=self._options(db)['owners']
             if owner not in owners:
                 raise ValueError('请选择已有负责人')
             if db.execute("SELECT 1 FROM research_formulas WHERE trim(json_extract(formula,'$.name'))=? COLLATE NOCASE",(name,)).fetchone():
@@ -278,6 +289,24 @@ class ResearchStore:
     def _references(self, db, key):
         return [{'id':r['id'],'name':r['name']} for raw, in db.execute("SELECT formula FROM research_formulas WHERE lifecycle='active' AND id!=?",(key,))
                 for r in [json.loads(raw)] if any(line['kind']!='material' and line['ref']==key for line in r['lines'])]
+
+    def delete_formula(self, key, body):
+        with sqlite3.connect(self.path) as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT revision,draft_sequence,lifecycle,formula FROM research_formulas WHERE id=?', (key,)).fetchone()
+            if not row:
+                raise KeyError('产品不存在')
+            if row[1] != body['revision']:
+                raise RuntimeError('草稿已变化，请重新核对')
+            if row[0] != 0 or row[2] != 'draft' or json.loads(row[3])['kind'] != 'recipe' or db.execute('SELECT 1 FROM research_formula_versions WHERE id=?', (key,)).fetchone():
+                raise ValueError('仅可删除从未启用的新配方')
+            for raw, in db.execute('SELECT formula FROM research_formulas WHERE id!=? UNION ALL SELECT formula FROM research_drafts WHERE id!=?', (key,key)):
+                recipe = json.loads(raw)
+                if any(line['kind'] != 'material' and line['ref'] == key for line in recipe['lines']):
+                    raise ValueError('仍被配方或草稿引用，不能删除：' + recipe['name'])
+            db.execute('DELETE FROM research_drafts WHERE id=?', (key,))
+            db.execute('DELETE FROM research_formulas WHERE id=?', (key,))
+        return {'status':'deleted'}
 
     def deactivate(self, key, body, actor):
         with sqlite3.connect(self.path) as db:
@@ -312,7 +341,7 @@ class ResearchStore:
             if pending:
                 product["status"] = "failed" if pending[0] == "failed" else "updating"
             product.update(lifecycle=row[2],revision=formula['revision'])
-            draft = db.execute("SELECT revision,formula,simulation_token FROM research_drafts WHERE id=?", (key,)).fetchone()
+            draft = db.execute("SELECT revision,formula,simulation_token,simulation FROM research_drafts WHERE id=?", (key,)).fetchone()
             product['has_draft']=bool(draft) or row[2]=='draft'
             inputs = capture(db)
             if not any(r['id']==key for r in inputs['package']['recipes']):
@@ -322,7 +351,7 @@ class ResearchStore:
             live = evaluate(inputs) if row[2]=='active' and not pending else None
             return {"product": product, "latest": current.get("latest"), "inventory": current.get("inventory"),
                 "recipes": inputs["package"]["recipes"], "prices": {k:v for k,v in inputs["prices"].items() if k in visible_codes}, "history": history,
-                "draft_revision": row[1], "draft": {"revision": draft[0],"formula":json.loads(draft[1]),"simulation_token":draft[2]} if draft else None,
+                "draft_revision": row[1], "draft": {"revision": draft[0],"formula":json.loads(draft[1]),"simulation_token":draft[2],"simulation":json.loads(draft[3]) if draft[3] else None} if draft else None,
                 "options": options,"referenced_by":self._references(db,key),
                 **({'latest':live['latest'][key],'inventory':live['inventory'][key]} if live else {})}
 
@@ -347,9 +376,29 @@ class ResearchStore:
         if original["kind"] != "recipe":
             raise ValueError("已确认复配方案不可在产品编辑中修改")
         formula = deepcopy(original)
+        reason = body["formula"].get("adjustment_reason", "").strip()
+        note = body["formula"].get("adjustment_note", "").strip()
+        if reason not in ADJUSTMENT_REASONS or (reason == "其他" and not note):
+            raise ValueError("请选择调整原因；选择其他时须填写说明")
+        if len(note) > 1000:
+            raise ValueError("调整说明不能超过1000字")
+        manual = body["formula"].get("manual_costs", {})
+        if not isinstance(manual, dict) or set(manual) - {"latest", "inventory"}:
+            raise ValueError("无效成本口径")
+        formula.update(adjustment_reason=reason, adjustment_note=note,
+            manual_costs={p: decimal_text(number(v, "手动成本")) if v is not None else None for p,v in manual.items()})
         formula["yield"] = decimal_text(number(body["formula"]["yield"], "收率", positive=True))
+        formula["ratio_linked"] = body["formula"].get("ratio_linked", True)
+        base = body["formula"].get("ratio_base")
+        if base is not None:
+            formula["ratio_base"] = decimal_text(number(base, "联动基准投料", positive=True))
         formula["lines"] = []
         options = self._options(db)
+        owner = body["formula"].get("owner")
+        if owner is not None:
+            if owner not in options["owners"]:
+                raise ValueError("请选择已有负责人")
+            formula["owner"] = owner
         allowed = {"material": {r["code"] for r in options["materials"]}, "recipe": {r["id"] for r in options["recipes"]}, "composite":{r["id"] for r in options["composites"]}}
         if not 1 <= len(body["formula"]["lines"]) <= 500:
             raise ValueError("投料明细应为1至500条")
@@ -363,6 +412,11 @@ class ResearchStore:
             line = deepcopy(old) if (old.get("kind"),old.get("ref")) == (kind,ref) else {"source_row":None,"source_cells":{}}
             name = ref if kind == "material" else next(r["name"] for r in options["recipes"]+options["composites"] if r["id"] == ref)
             line.update(kind=kind,ref=ref,code=name,quantity=quantity)
+            ratio = raw.get("ratio")
+            if ratio is not None:
+                line["ratio"] = decimal_text(number(ratio, "配方比例"))
+            else:
+                line.pop("ratio", None)
             formula["lines"].append(line)
         inputs = capture(db)
         before = evaluate(inputs)
@@ -381,7 +435,7 @@ class ResearchStore:
         for r in inputs["package"]["recipes"]:
             if r["kind"] == "recipe" and uses(r,key,set()):
                 affected.append({"id":r["id"],"name":r["name"]})
-        blocking = sorted(set(m for r in affected for policy in after for m in after[policy][r["id"]]["missing_materials"]))
+        blocking = sorted(set(m for r in affected for policy in after if after[policy][r["id"]]["cost"] is None for m in after[policy][r["id"]]["missing_materials"]))
         token = digest({"inputs":inputs,"draft_revision":row[2]})
         blank={'cost':None,'yield':original['yield'],'total_input':'0','output_quantity':'0','lines':[],'missing_materials':[]}
         return {"latest":after["latest"][key],"inventory":after["inventory"][key],"current_latest":before["latest"].get(key,blank),"current_inventory":before["inventory"].get(key,blank),
@@ -402,8 +456,8 @@ class ResearchStore:
             db.execute("UPDATE research_formulas SET draft_sequence=? WHERE id=?", (revision,key))
             # New revision produces a new review token; activation checks it against current frozen inputs.
             result = self._simulate(db,key,dict(body,draft_revision=revision))
-            db.execute("INSERT INTO research_drafts VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,formula=excluded.formula,simulation_token=excluded.simulation_token,actor=excluded.actor,updated_at=excluded.updated_at",
-                       (key,revision,packed(result["formula"]),result["simulation_token"],actor,now()))
+            db.execute("INSERT INTO research_drafts(id,revision,formula,simulation_token,actor,updated_at,simulation) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,formula=excluded.formula,simulation_token=excluded.simulation_token,actor=excluded.actor,updated_at=excluded.updated_at,simulation=excluded.simulation",
+                       (key,revision,packed(result["formula"]),result["simulation_token"],actor,now(),packed({k:v for k,v in result.items() if k != "formula"})))
             return {"revision":revision,"simulation_token":result["simulation_token"]}
 
     def discard(self, key, revision):
@@ -419,7 +473,8 @@ class ResearchStore:
     def activate(self, key, body, actor):
         with sqlite3.connect(self.path) as db:
             db.execute("BEGIN IMMEDIATE")
-            draft = db.execute("SELECT revision,formula FROM research_drafts WHERE id=?", (key,)).fetchone()
+            activation_grants.require_current(self.path, actor, "can_activate", "research")
+            draft = db.execute("SELECT revision,formula,actor FROM research_drafts WHERE id=?", (key,)).fetchone()
             if not draft or draft[0] != body["revision"]:
                 raise RuntimeError("草稿已变化，请重新核对")
             result = self._simulate(db,key,{"formula":json.loads(draft[1]),"draft_revision":draft[0]})
@@ -428,6 +483,10 @@ class ResearchStore:
             if result["blocking"]:
                 raise ValueError("缺少价格，不能启用：" + "、".join(result["blocking"]))
             formula = result["formula"]
+            formula.update(edited_by=draft[2], activated_by=actor)
+            for field, user_id in (("editor_name", draft[2]), ("activator_name", actor)):
+                person = db.execute("SELECT display_name FROM identity_users WHERE id=?", (user_id,)).fetchone()
+                formula[field] = person[0] if person else user_id
             db.execute("UPDATE research_formulas SET revision=?,formula=?,draft_sequence=draft_sequence+1,lifecycle='active' WHERE id=?", (formula["revision"],packed(formula),key))
             db.execute("INSERT INTO research_formula_versions VALUES(?,?,?,?,?)", (key,formula["revision"],packed(formula),actor,now()))
             db.execute("DELETE FROM research_drafts WHERE id=?", (key,))
@@ -441,11 +500,18 @@ class FormulaLine(BaseModel):
     ref: str = Field(min_length=1,max_length=250)
     code: str = Field(default="",max_length=250)
     quantity: str = Field(max_length=64)
+    ratio: str | None = Field(default=None,max_length=64)
     source_row: int | None = None
 
 
 class FormulaBody(BaseModel):
     model_config = ConfigDict(extra="ignore")
+    owner: str | None = Field(default=None,max_length=100)
+    adjustment_reason: str = Field(default="",max_length=100)
+    adjustment_note: str = Field(default="",max_length=1000)
+    manual_costs: dict[str, str | None] = Field(default_factory=dict)
+    ratio_linked: bool = True
+    ratio_base: str | None = Field(default=None,max_length=64)
     yield_: str = Field(alias="yield",max_length=64)
     lines: list[FormulaLine] = Field(min_length=1,max_length=500)
 
@@ -461,6 +527,17 @@ class RevisionBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     revision: int = Field(ge=1)
     simulation_token: str = Field(default="",max_length=64)
+
+
+class DeleteFormulaBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=0)
+
+
+class ActivationGrantBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+    manager: bool | None = None
 
 
 class NewFormulaBody(BaseModel):
@@ -485,12 +562,25 @@ def create_research_router(store, settings):
     def run(fn,*args):
         try:
             return fn(*args)
+        except PermissionError as error:
+            raise HTTPException(403,str(error)) from error
         except KeyError as error:
             raise HTTPException(404,str(error)) from error
         except RuntimeError as error:
             raise HTTPException(409,str(error)) from error
         except (ValueError, ArithmeticError) as error:
             raise HTTPException(422,str(error)) from error
+    @router.get("/activation-grants")
+    def grants(request:Request, offset:int=Query(0,ge=0), limit:int=Query(10,ge=1,le=50)):
+        user=actor(request,3)
+        if not activation_grants.capabilities(store.path,user,"research")["can_manage_grants"]:
+            raise HTTPException(403,"无启用授权管理权限")
+        return activation_grants.grants(store.path,"research",offset,limit)
+    @router.put("/activation-grants/{user_id}")
+    def set_grant(user_id:str,body:ActivationGrantBody,request:Request):
+        user=actor(request,3)
+        run(activation_grants.set_grant,store.path,user,user_id,body.enabled,body.manager,"research")
+        return activation_grants.grants(store.path,"research")
     @router.get("/products")
     def products(request:Request):
         actor(request)
@@ -511,10 +601,14 @@ def create_research_router(store, settings):
     def overview(request:Request):
         actor(request)
         return {**store.listing(),**store.history()}
+    @router.delete("/products/{key}")
+    def delete_formula(key:str,body:DeleteFormulaBody,request:Request):
+        actor(request,3)
+        return run(store.delete_formula,key,body.model_dump())
     @router.get("/products/{key}")
     def detail(key:str,request:Request):
-        actor(request)
-        return run(store.detail,key)
+        user=actor(request)
+        return {**run(store.detail,key),"capabilities":activation_grants.capabilities(store.path,user,"research")}
     @router.get("/history")
     def history(request:Request):
         actor(request)
@@ -541,6 +635,8 @@ def create_research_router(store, settings):
         return run(store.discard,key,body.revision)
     @router.post("/products/{key}/activate")
     def activate(key:str,body:RevisionBody,request:Request):
-        user=actor(request,4)
+        user=actor(request,3)
+        if not activation_grants.capabilities(store.path,user,"research")["can_activate"]:
+            raise HTTPException(403,"没有研发成本启用权限")
         return run(store.activate,key,body.model_dump(),user["id"])
     return router

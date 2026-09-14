@@ -4,7 +4,7 @@ from api.settings import Settings
 from tests.helpers import authenticated_client
 
 
-@pytest.mark.parametrize("route,target,group", [("module", "workbench", "modules"), ("workbench", "procurement", "workbenches")])
+@pytest.mark.parametrize("route,target,group", [("workbench", "procurement", "workbenches"), ("workbench", "research", "workbenches")])
 def test_checkbox_confirmation_and_restore(tmp_path, monkeypatch, route, target, group):
     settings = Settings.from_data_dir(tmp_path / "production", environment="production")
     path = f"/api/admin/{route}-settings/{target}"

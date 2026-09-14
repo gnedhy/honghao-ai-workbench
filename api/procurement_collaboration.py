@@ -45,14 +45,18 @@ def initialize(db: sqlite3.Connection) -> None:
     """)
 
 
-def capabilities(path: Path, user: dict) -> dict:
+def capabilities(path: Path, user: dict, scope="procurement") -> dict:
+    if scope not in {"procurement", "research"}:
+        raise ValueError("无效授权范围")
     admin = user.get("is_system_admin", False)
-    write = bool(user.get("is_active", True)) and AuthorizationStore(path).can_write_field("procurement.material_unit_price", admin, user["scope_levels"])
+    write = bool(user.get("is_active", True)) and (AuthorizationStore(path).can_write_field(
+        "procurement.material_unit_price", admin, user["scope_levels"]) if scope == "procurement"
+        else admin or user["scope_levels"].get(scope, 0) >= 3)
     with sqlite3.connect(path) as db:
-        initialized = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='procurement_activation_grants'").fetchone()
-        grant = db.execute("SELECT manager FROM procurement_activation_grants WHERE user_id=?", (user["id"],)).fetchone() if initialized else None
+        initialized = db.execute(f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{scope}_activation_grants'").fetchone()
+        grant = db.execute(f"SELECT manager FROM {scope}_activation_grants WHERE user_id=?", (user["id"],)).fetchone() if initialized else None
     manager = bool(write and (admin or grant and grant[0]))
-    catalog_manager = bool(write and (admin or user["scope_levels"].get("procurement", 0) >= 4))
+    catalog_manager = bool(write and (admin or user["scope_levels"].get(scope, 0) >= 4))
     return {"can_edit": bool(write), "can_activate": bool(write and (catalog_manager or grant)),
             "can_manage_grants": manager, "can_cancel_round": manager,
             "can_manage_catalog": catalog_manager}
@@ -63,10 +67,10 @@ def can_activate(path: Path, user_id: str) -> bool:
     return bool(user and user["is_active"] and capabilities(path, user)["can_activate"])
 
 
-def require_current(path: Path, user_id: str, capability: str) -> None:
+def require_current(path: Path, user_id: str, capability: str, scope="procurement") -> None:
     # Called after BEGIN IMMEDIATE: grants and account changes cannot race this write.
     user = IdentityStore(path).get_user(user_id)
-    if not user or not user["is_active"] or not capabilities(path, user)[capability]:
+    if not user or not user["is_active"] or not capabilities(path, user, scope)[capability]:
         raise ValueError("账号权限已变化，请刷新后重试")
 
 
@@ -82,57 +86,61 @@ def pause_schedules(db, user_id: str):
         db.execute("INSERT INTO procurement_update_events VALUES (?,?,?,?,?,?)", (str(uuid4()),id_,"revalidation_required",None,"启用账号权限发生变化",now))
 
 
-def admin_event(db, actor_id, action, target_id, detail):
-    db.execute("INSERT INTO procurement_admin_events VALUES (?,?,?,?,?,?)",
+def admin_event(db, actor_id, action, target_id, detail, scope="procurement"):
+    db.execute(f"INSERT INTO {scope}_admin_events VALUES (?,?,?,?,?,?)",
                (str(uuid4()), actor_id, action, target_id, json.dumps(detail, ensure_ascii=False), datetime.now(UTC).isoformat()))
 
 
-def grants(path: Path) -> dict:
+def grants(path: Path, scope="procurement", offset=0, limit=10) -> dict:
     with sqlite3.connect(path) as db:
-        assigned = {r[0]: r[1:] for r in db.execute("SELECT user_id,manager,granted_by,granted_at FROM procurement_activation_grants")}
-        events = db.execute("SELECT e.action,e.target_id,e.detail,e.created_at,u.display_name,e.id FROM procurement_admin_events e LEFT JOIN identity_users u ON u.id=e.actor_id WHERE action LIKE 'grant.%' ORDER BY e.created_at DESC LIMIT 50").fetchall()
+        assigned = {r[0]: r[1:] for r in db.execute(f"SELECT user_id,manager,granted_by,granted_at FROM {scope}_activation_grants")}
+        total = db.execute(f"SELECT COUNT(*) FROM {scope}_admin_events WHERE action LIKE 'grant.%'").fetchone()[0]
+        events = db.execute(f"SELECT e.action,e.target_id,e.detail,e.created_at,COALESCE(u.display_name,e.actor_id),e.id,t.display_name FROM {scope}_admin_events e LEFT JOIN identity_users u ON u.id=e.actor_id LEFT JOIN identity_users t ON t.id=e.target_id WHERE action LIKE 'grant.%' ORDER BY e.created_at DESC,e.rowid DESC LIMIT ? OFFSET ?", (limit,offset)).fetchall()
     users = []
     for user in IdentityStore(path).list_users():
-        cap = capabilities(path, user)
-        if not user["is_system_admin"] and (user["scope_levels"].get("procurement", 0) >= 2 or user["id"] in assigned):
+        cap = capabilities(path, user, scope)
+        if not user["is_system_admin"] and (user["scope_levels"].get(scope, 0) >= 2 or user["id"] in assigned):
             grant = assigned.get(user["id"])
             users.append({"id": user["id"], "name": user["display_name"], "active": user["is_active"],
                           "eligible": cap["can_edit"], "granted": bool(grant), "manager": bool(grant and grant[0]),
-                          "role_granted": bool(user["is_active"] and user["scope_levels"].get("procurement", 0) >= 4),
+                          "role_granted": bool(user["is_active"] and user["scope_levels"].get(scope, 0) >= 4),
                           "granted_by": grant[1] if grant else None, "granted_at": grant[2] if grant else None})
-    return {"users": users, "events": [{"id": r[5], "action": r[0], "target_id": r[1], "detail": json.loads(r[2]), "created_at": r[3], "actor": r[4]} for r in events]}
+    return {"users": users, "total": total, "has_more": offset + len(events) < total, "events": [{"target_name": json.loads(r[2]).get("name") or r[6] or r[1], "id": r[5], "action": r[0], "target_id": r[1], "detail": json.loads(r[2]), "created_at": r[3], "actor": r[4]} for r in events]}
 
 
-def set_grant(path: Path, actor: dict, target_id: str, enabled: bool, manager: bool | None = None) -> None:
-    if not capabilities(path, actor)["can_manage_grants"]:
+def set_grant(path: Path, actor: dict, target_id: str, enabled: bool, manager: bool | None = None, scope="procurement") -> None:
+    if not capabilities(path, actor, scope)["can_manage_grants"]:
         raise PermissionError("无启用授权管理权限")
     if manager is not None and not actor["is_system_admin"]:
         raise PermissionError("只有管理员可设置授权管理人员")
     target = IdentityStore(path).get_user(target_id)
     if not target or target["is_system_admin"]:
-        raise ValueError("请选择普通采购账号，管理员权限不在此处调整")
-    if enabled and not capabilities(path, target)["can_edit"]:
-        raise ValueError("账号须已启用并具备采购编辑权限")
+        raise ValueError("请选择普通业务账号，管理员权限不在此处调整")
+    if enabled and not capabilities(path, target, scope)["can_edit"]:
+        raise ValueError("账号须已启用并具备相应工作台编辑权限")
     with sqlite3.connect(path) as db:
         db.execute("BEGIN IMMEDIATE")
-        require_current(path, actor["id"], "can_manage_grants")
+        require_current(path, actor["id"], "can_manage_grants", scope)
         actor = IdentityStore(path).get_user(actor["id"])
         if manager is not None and not actor["is_system_admin"]:
             raise PermissionError("只有管理员可设置授权管理人员")
+        target = IdentityStore(path).get_user(target_id)
+        if not target or target["is_system_admin"]:
+            raise ValueError("请选择普通业务账号，管理员权限不在此处调整")
         if enabled:
-            require_current(path, target_id, "can_edit")
-        old = db.execute("SELECT manager FROM procurement_activation_grants WHERE user_id=?", (target_id,)).fetchone()
+            require_current(path, target_id, "can_edit", scope)
+        old = db.execute(f"SELECT manager FROM {scope}_activation_grants WHERE user_id=?", (target_id,)).fetchone()
         if old and old[0] and not actor["is_system_admin"]:
             raise PermissionError("只有管理员可调整授权管理人员")
         if enabled:
-            db.execute("INSERT INTO procurement_activation_grants VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET manager=excluded.manager,granted_by=excluded.granted_by,granted_at=excluded.granted_at",
+            db.execute(f"INSERT INTO {scope}_activation_grants VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET manager=excluded.manager,granted_by=excluded.granted_by,granted_at=excluded.granted_at",
                        (target_id, int(manager if manager is not None else bool(old and old[0])), actor["id"], datetime.now(UTC).isoformat()))
         else:
-            db.execute("DELETE FROM procurement_activation_grants WHERE user_id=?", (target_id,))
+            db.execute(f"DELETE FROM {scope}_activation_grants WHERE user_id=?", (target_id,))
             target = IdentityStore(path).get_user(target_id)
-            if not (target and target["is_active"] and target["scope_levels"].get("procurement", 0) >= 4):
+            if scope == "procurement" and not (target and target["is_active"] and target["scope_levels"].get(scope, 0) >= 4):
                 pause_schedules(db, target_id)
-        admin_event(db, actor["id"], "grant.enabled" if enabled else "grant.revoked", target_id, {"name": target["display_name"], "manager": manager})
+        admin_event(db, actor["id"], "grant.enabled" if enabled else "grant.revoked", target_id, {"name": target["display_name"], "manager": manager}, scope)
 
 
 def record_changes(db, event_id, update_id, actor_id, price_date, items):

@@ -1,7 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { rankCostGaps, priceCents, priceChange } from "../src/workbenches/researchAnalytics.ts";
+import { rankCostGaps, priceCents, priceChange, compareCostPeriods } from "../src/workbenches/researchAnalytics.ts";
 const row = (name: string, latest_cost: string | null, inventory_cost: string | null, status = "ready") => ({ name, latest_cost, inventory_cost, status });
+
+test("历史比较相邻期，同价不延续台账涨跌，正式成本接续独立编号", () => {
+  const version = (record_type: string, purchase_version: number | undefined, latest_cost: string) => ({ record_type, purchase_version, products: [{ id:"A", latest_cost, change:{percent:10} }] });
+  const source = [version("formal",undefined,"1.101"),version("backfill",21,"1.10"),version("backfill",20,"1.10"),version("backfill",19,"1.00")];
+  const result = compareCostPeriods(source);
+  assert.deepEqual(result.map(v => v.products[0].period_change.direction), ["stable","stable","up","none"]);
+  assert.deepEqual(result.map(v => v.cost_version), [22,21,20,19]);
+  assert.equal(result[2].products[0].period_change.percent,10);
+  assert.equal(result[0].products[0].change.percent,10);
+  assert.equal("period_change" in source[0].products[0],false);
+  assert.equal(compareCostPeriods([version("formal",undefined,"1.20"),...source])[0].cost_version,23);
+});
+
+test("历史比较按产品匹配，区分零价同价、零基数涨价、新品和缺价", () => {
+  const result = compareCostPeriods([{products:[{id:"B",latest_cost:"1"},{id:"A",latest_cost:"0.004"},{id:"new",latest_cost:"3"},{id:"missing",latest_cost:null}]},{products:[{id:"A",latest_cost:"0"},{id:"B",latest_cost:"0"},{id:"missing",latest_cost:"2"}]}]);
+  assert.deepEqual(result[0].products.map(row => [row.period_change.direction,row.period_change.percent]),[["up",null],["stable",0],["none",null],["none",null]]);
+});
+
+test("正式记录仅含变化产品时，比较上一期仍有效的成本", () => {
+  const result = compareCostPeriods([{products:[{id:"A",latest_cost:"2"}]},{products:[{id:"B",latest_cost:"3"}]},{products:[{id:"A",latest_cost:"1"},{id:"B",latest_cost:"2"}]}]);
+  assert.equal(result[0].products[0].period_change.percent,100);
+});
 
 test("双成本差异按金额绝对值排列，保留正负方向及稳定内编顺序", () => {
   const rows = [row("P10", "10", "8"), row("P2", "2", "0"), row("P3", "1", "5"), row("same", "1", "1")];

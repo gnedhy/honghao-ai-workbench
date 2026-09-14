@@ -1,3 +1,7 @@
+import { useMoverPaging } from "./useMoverPaging";
+import { LedgerPagination } from "../components/LedgerPagination";
+import { RecordFilters } from "../components/RecordFilters";
+import { createPortal } from "react-dom";
 import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, ArrowUpDown, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, Columns3, Ellipsis, FileUp, Info, Minus, PackageCheck, Pencil, Plus, RefreshCw, Search, SlidersHorizontal, TrendingDown, TrendingUp, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -250,26 +254,20 @@ function PriceDistributionPanel({ data }: { data: ProcurementOverview }) {
 }
 
 function PriceMovers({ batches, cache, compact = false }: { batches: ProcurementOverview["batches"]; cache: React.RefObject<MoverHistoryCache>; compact?: boolean }) {
+  const [selectedMaterial, setSelectedMaterial] = useState<string | null>(null);
+  const materialTrigger = useRef<HTMLButtonElement | null>(null);
   const [history, setHistory] = useState<ProcurementBatchDetail[] | null>(() => cache.current?.history ?? null);
   const historyKey = JSON.stringify(batches);
   const { period, range, setPeriod } = usePriceDateRange(batches);
   const rows = useMemo(() => history ? buildVersionMovers(history, { start: range.start, end: range.end }) : null, [history, range.start, range.end]);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
-  const [page, setPage] = useState(0);
-  const [instant, setInstant] = useState(true);
-  const [previousPage, setPreviousPage] = useState<number | null>(null);
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const keyboardInteraction = useRef(false);
-  const [reduced, setReduced] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  const [hidden, setHidden] = useState(document.hidden);
   const [ranking, setRanking] = useState<"up" | "down">("up");
   const matchingRows = rows?.filter(row => ranking === "up" ? row.changePercent > 0 : row.changePercent < 0) ?? [];
   const rankedRows = matchingRows.slice(0, compact ? 10 : 30);
   const pageSize = 10;
   const pages = Math.ceil(rankedRows.length / pageSize);
-  const rotating = pages > 1 && !hovered && !focused && !reduced && !hidden;
+  const { page, previousPage, instant, reduced, rotating, controls, interaction, setPage, setPreviousPage, setInstant } = useMoverPaging(pages, `${ranking}-${range.start}-${range.end}`, !!selectedMaterial);
 
   useEffect(() => {
     if (cache.current?.key === historyKey && retry === 0) return;
@@ -284,32 +282,20 @@ function PriceMovers({ batches, cache, compact = false }: { batches: Procurement
     return () => controller.abort();
   }, [historyKey, retry]);
 
-  useEffect(() => {
-    const pointer = () => { keyboardInteraction.current = false; setFocused(false); };
-    const keyboard = () => { keyboardInteraction.current = true; };
-    document.addEventListener("pointerdown", pointer, true);
-    document.addEventListener("keydown", keyboard, true);
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const motion = () => setReduced(media.matches);
-    const visibility = () => setHidden(document.hidden);
-    media.addEventListener("change", motion);
-    document.addEventListener("visibilitychange", visibility);
-    return () => { media.removeEventListener("change", motion); document.removeEventListener("visibilitychange", visibility); document.removeEventListener("pointerdown", pointer, true); document.removeEventListener("keydown", keyboard, true); };
-  }, []);
 
-  return <section className={`${styles.dashboardPanel} ${styles.moversPanel}${compact ? ` ${styles.compactMovers}` : ""}`} aria-label="价格变动排行" aria-roledescription={compact ? undefined : "轮播"} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} onFocusCapture={() => setFocused(keyboardInteraction.current)} onKeyDownCapture={() => setFocused(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}>
+
+  return <section className={`${styles.dashboardPanel} ${styles.moversPanel}${compact ? ` ${styles.compactMovers}` : ""}`} aria-label="价格变动排行" aria-roledescription={compact ? undefined : "轮播"} {...interaction}>
     <div className={styles.panelHeading}><div><span>区间涨跌幅</span><h2>价格变动排行</h2></div><div className={styles.moverActions}><PriceDateRangeMenu period={period} range={range} onChange={value => { setPeriod(value); setPage(0); setPreviousPage(null); setInstant(true); }} /><div className={styles.moverSwitch} role="group" aria-label="排行方向">{(["up", "down"] as const).map(value => <button key={value} type="button" aria-pressed={ranking === value} onClick={() => { setRanking(value); setPage(0); setPreviousPage(null); setInstant(true); }}>{value === "up" ? "涨幅" : "降幅"}</button>)}</div></div></div>
     {failed && history !== null && <p role="status">排行刷新失败，暂显示上次结果。<button type="button" onClick={() => setRetry(value => value + 1)}>重试</button></p>}
     {failed && history === null ? <div className={styles.chartEmpty}><strong>价格排行读取失败</strong><button type="button" className="secondary-button" onClick={() => setRetry(value => value + 1)}>重新加载</button></div> : rows === null ? <ChartEmpty title="正在读取价格排行" detail="正在核对各版本价格快照。" /> : !rankedRows.length ? <ChartEmpty title={ranking === "up" ? "暂无涨价原料" : "暂无降价原料"} detail="该范围内暂无符合条件的原料；缺少期初价格不参与排行。" /> : <>
       <div key={`${ranking}-${range.start}-${range.end}`} className={styles.moverPages} data-instant={instant || reduced} aria-live={rotating ? "off" : "polite"}>
         {Array.from({ length: pages }, (_, index) => <div key={index} data-active={page === index} data-retiring={previousPage === index} aria-hidden={page !== index} inert={page !== index} className={styles.moverList} role="group" aria-roledescription={compact ? undefined : "排行页"} aria-label={compact ? "排行结果" : `第 ${index + 1} 页，共 ${pages} 页`}>
-          {rankedRows.slice(index * pageSize, (index + 1) * pageSize).map((row, rowIndex) => { const Icon = row.changePercent > 0 ? TrendingUp : TrendingDown; return <div key={`${row.batchId}-${row.materialId}`} style={{ transitionDelay: `${Math.floor(rowIndex / 2) * 30}ms` }}><Icon size={16} /><span><span className={styles.moverLine}><strong>{row.item.code}</strong><span className={styles.moverPrices} title={`比较日期：${formatPriceDate(row.previousDate)} → ${formatPriceDate(row.date)}`}><span>{price(row.previous)}</span><ArrowRight size={12} /><b>{price(row.item.latest_price)}</b><Movement value={row.changePercent} /></span></span><small className={styles.moverVersions}><span>v{row.version}</span>{" · "}<span>{formatPriceDate(row.date)}</span></small></span></div>; })}
+          {rankedRows.slice(index * pageSize, (index + 1) * pageSize).map((row, rowIndex) => { const Icon = row.changePercent > 0 ? TrendingUp : TrendingDown; return <div key={`${row.batchId}-${row.materialId}`} style={{ transitionDelay: `${Math.floor(rowIndex / 2) * 30}ms` }}><Icon size={16} /><span><span className={styles.moverLine}><strong><button type="button" className={styles.materialLink} onClick={event => { materialTrigger.current = event.currentTarget; setSelectedMaterial(row.materialId); }}><span><strong title={row.item.code}>{row.item.code}</strong></span><ChevronRight size={16} aria-hidden="true"/></button></strong><span className={styles.moverPrices} title={`比较日期：${formatPriceDate(row.previousDate)} → ${formatPriceDate(row.date)}`}><span>{price(row.previous)}</span><ArrowRight size={12} /><b>{price(row.item.latest_price)}</b><Movement value={row.changePercent} /></span></span><small className={styles.moverVersions}><span>v{row.version}</span>{" · "}<span>{formatPriceDate(row.date)}</span></small></span></div>; })}
         </div>)}
       </div>
-      <footer className={styles.moverCaption}><span>本期{ranking === "up" ? "上涨" : "下降"} {matchingRows.length} 项{compact && matchingRows.length > rankedRows.length && ` · 显示前 ${rankedRows.length} 项`}</span>{pages > 1 && <div key={`${ranking}-${range.start}-${range.end}`} className={styles.moverControls} aria-label="排行分页" data-paused={!rotating} data-reduced={reduced}>
-      {Array.from({ length: pages }, (_, index) => <button key={index} type="button" className={styles.moverDot} aria-label={`查看排行第 ${index + 1} 页`} aria-current={page === index ? "page" : undefined} title="每 8 秒切换，悬停暂停" onClick={event => { if (index !== page) { setInstant(event.detail === 0); setPreviousPage(page); setPage(index); } }} onAnimationEnd={() => { if (page === index && !reduced) { setInstant(false); setPreviousPage(index); setPage((index + 1) % pages); } }}><i /></button>)}
-    </div>}</footer>
+      <footer className={styles.moverCaption}><span>本期{ranking === "up" ? "上涨" : "下降"} {matchingRows.length} 项{compact && matchingRows.length > rankedRows.length && ` · 显示前 ${rankedRows.length} 项`}</span>{controls}</footer>
     </>}
+    {selectedMaterial && createPortal(<MaterialDrawer batches={batches} materialId={selectedMaterial} canEdit={false} canManage={false} onClose={() => { setSelectedMaterial(null); requestAnimationFrame(() => materialTrigger.current?.focus({preventScroll:true})); }}/>, document.body)}
   </section>;
 }
 
@@ -633,7 +619,7 @@ function Materials({ department, onOpenDepartmentMaterial, data, accessLevel, on
         {current && expanded === item.id && risk && <tr className={styles.ledgerReviewRow}><td colSpan={columns.length + 1}><div id={`ledger-review-${item.id}`} className={styles.ledgerReview} role="region" aria-label={`${item.code}价格波动确认`}>{risk.status === "reviewed" ? <div className={styles.ledgerReviewCopy}><strong>已确认价格波动</strong><p>确认依据：{risk.review_reason}</p></div> : canConfirm ? <><div className={styles.reviewControl}><ReasonSelect label={`${item.code}确认依据`} options={REVIEW_REASONS} placeholder="请选择确认依据" value={reviewReasons[risk.id]} disabled={busy} onChange={value => setReviewReasons(reasons => ({ ...reasons, [risk.id]: value }))} /><button type="button" disabled={busy || !resolveReason(reviewReasons[risk.id])} onClick={() => void review(risk.id, item.id)}>{busy ? "正在确认" : "确认波动"}</button></div>{reviewError && <p className={styles.error} role="alert">{reviewError}</p>}</> : <p>等待采购员确认。</p>}<button className={styles.ledgerTextAction} type="button" disabled={busy} onClick={() => { setExpanded(null); document.getElementById(`ledger-material-${item.id}`)?.focus(); }}>收起</button></div></td></tr>}
       </Fragment>;
     })}</tbody></table></div>}
-    {ledgerView === "paged" && rows.length > 0 && <div className={styles.paginationBar}><span>{(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, rows.length)} / {rows.length} 条</span><div className={styles.pageNavigation}><button type="button" disabled={safePage === 1} onClick={() => setPage(safePage - 1)}><ChevronLeft size={14} />上一页</button><span>第 {safePage} / {pageCount} 页</span><button type="button" disabled={safePage === pageCount} onClick={() => setPage(safePage + 1)}>下一页<ChevronRight size={14} /></button></div></div>}
+    {ledgerView === "paged" && <LedgerPagination total={rows.length} page={safePage} pageSize={pageSize} onPageChange={setPage}/>}
     </div>
     {current && panel && <LedgerPanel title="本轮操作记录" busy={busy} onClose={closePanel}>
       <p>{formatPriceDate(current.price_date)} · {current.input_items.length} 项原料</p>
@@ -892,12 +878,14 @@ function Movement({ value }: { value: number | null }) {
 
 
 function PriceHistory({ published }: { published: ProcurementOverview["batches"] }) {
+  const [recordFilter, setRecordFilter] = useState("all");
   const [selected, setSelected] = useState<string | null>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
-  const rows = [...published].sort((a, b) => b.version - a.version);
+  const rows = published.filter(row => recordFilter === "all" || (recordFilter === "active" ? row.status === "active" : row.status !== "active")).sort((a, b) => b.version - a.version);
   const close = () => { setSelected(null); window.requestAnimationFrame(() => trigger.current?.focus({ preventScroll: true })); };
   return <>
-    {!rows.length && <Empty title="还没有价格版本" detail="启用价格后，版本及其修改记录将在这里显示。" />}
+    <RecordFilters label="价格版本分类" value={recordFilter} onChange={setRecordFilter} options={[{value:"all",label:"全部版本",count:published.length},{value:"active",label:"当前生效",count:published.filter(row => row.status === "active").length},{value:"history",label:"历史版本",count:published.filter(row => row.status !== "active").length}]}/>
+    {!rows.length && <Empty title="该分类暂无价格版本" detail="启用价格后，版本及其修改记录将在这里显示。" />}
     <ol className={styles.historyTimeline}>{rows.map(row => <li key={row.id}>
       <i aria-hidden="true" />
       <button type="button" aria-label={`v${row.version} · 价格日期 ${row.price_date || "未记录"}`} onClick={event => { trigger.current = event.currentTarget; setSelected(row.id); }}>
@@ -1163,3 +1151,5 @@ function futureLocalInput() { const value = new Date(Date.now() + 60 * 60 * 1000
 function updateStatusLabel(status: ProcurementUpdate["status"]) { return ({ draft: "录入价格", returned: "继续修改", submitted: "待启用", scheduled: "等待定时启用", revalidation_required: "需要重新确认", published: "已启用", cancelled: "已取消" } as const)[status]; }
 function updateEventLabel(event: string) { return ({ prices_adjusted: "批量编辑价格", cancelled: "取消本轮", created: "创建本轮更新", imported: "导入价格", price_adjusted: "修正价格", submitted: "提交复核", returned: "退回修改", risk_reviewed: "确认高风险变动", scheduled: "安排定时启用", activated: "启用", revalidation_required: "要求重新确认", schedule_cancelled: "撤销排期", copied_from_schedule: "复制为新草稿", migrated: "迁移现有工作稿" } as Record<string, string>)[event] ?? event; }
 function importIssueLabel(issue: string) { return ({ missing_price: "缺价", duplicate_code: "重复编码", unit_conflict: "单位冲突", price_spike: "价格波动" } as Record<string, string>)[issue] ?? issue; }
+
+export { Movement as PriceMovement };

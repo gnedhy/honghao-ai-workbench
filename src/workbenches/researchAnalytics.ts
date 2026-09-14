@@ -15,6 +15,21 @@ export function priceChange(current: string | null, previous: string | null): nu
   return left == null || right == null || right === 0 ? null : (left - right) / right * 100;
 }
 
+// History compares adjacent periods; the ledger keeps its last-price-movement comparison.
+export function compareCostPeriods<T extends { record_type?: string; purchase_version?: number; products: { id: string; latest_cost: string | null }[] }>(versions: T[]) {
+  let costVersion = Math.max(0, ...versions.map(version => version.purchase_version ?? 0));
+  const previous = new Map<string, string | null>();
+  return [...versions].reverse().map(version => {
+    return { ...version, cost_version: version.record_type === "backfill" ? version.purchase_version : ++costVersion, products: version.products.map(row => {
+      const before = previous.get(row.id), current = priceCents(row.latest_cost), prior = priceCents(before);
+      previous.set(row.id, row.latest_cost);
+      const direction = current == null || prior == null ? "none" : current === prior ? "stable" : current > prior ? "up" : "down";
+      const reason = direction === "none" ? "本期或上期缺少成本记录，暂无对比" : `较上一期最新优先成本（元/kg）：${(prior! / 100).toFixed(2)} → ${(current! / 100).toFixed(2)}${prior === 0 && current !== 0 ? "；上期为零，无法计算百分比" : ""}`;
+      return { ...(row as T["products"][number]), period_change: { direction, percent: direction === "stable" ? 0 : priceChange(row.latest_cost, before ?? null), reason } };
+    }) };
+  }).reverse();
+}
+
 export function rankCostGaps<T extends { name: string; status: string; latest_cost: string | null; inventory_cost: string | null }>(products: T[], direction: CostGapDirection) {
   return products.flatMap(product => {
     if (product.status !== "ready" || product.latest_cost == null || product.inventory_cost == null) return [];

@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import create_app
-from api.modules import default_module_modes
+from api.modules import create_activation_review_record, default_module_modes, save_persisted_module_modes
 from api.settings import Settings
 from tests.helpers import authenticated_client
 
@@ -36,17 +36,17 @@ def test_admin_can_read_environment_and_pending_module_settings(tmp_path: Path) 
     assert response.json() == {
         "environment": "test",
         "modules": [
-            {"id": "chat", "current_mode": "off", "pending_mode": "off", "can_reactivate": False},
-            {"id": "knowledge", "current_mode": "off", "pending_mode": "off", "can_reactivate": False},
-            {"id": "automation", "current_mode": "off", "pending_mode": "off", "can_reactivate": False},
-            {"id": "workbench", "current_mode": "active", "pending_mode": "active", "can_reactivate": False},
-            {"id": "tasks", "current_mode": "off", "pending_mode": "off", "can_reactivate": False},
+            {"id": "chat", "current_mode": "off", "pending_mode": "off", "can_reactivate": False, "can_change": False},
+            {"id": "knowledge", "current_mode": "off", "pending_mode": "off", "can_reactivate": False, "can_change": False},
+            {"id": "automation", "current_mode": "off", "pending_mode": "off", "can_reactivate": False, "can_change": False},
+            {"id": "workbench", "current_mode": "active", "pending_mode": "active", "can_reactivate": False, "can_change": True},
+            {"id": "tasks", "current_mode": "off", "pending_mode": "off", "can_reactivate": False, "can_change": False},
         ],
         "workbenches": [
-            {"id": "management", "current_mode": "prototype", "pending_mode": "prototype", "can_reactivate": False},
-            {"id": "procurement", "current_mode": "prototype", "pending_mode": "prototype", "can_reactivate": False},
-            {"id": "research", "current_mode": "prototype", "pending_mode": "prototype", "can_reactivate": False},
-            {"id": "sales", "current_mode": "prototype", "pending_mode": "prototype", "can_reactivate": False},
+            {"id": "management", "current_mode": "prototype", "pending_mode": "prototype", "can_reactivate": False, "can_change": False},
+            {"id": "procurement", "current_mode": "prototype", "pending_mode": "prototype", "can_reactivate": False, "can_change": True},
+            {"id": "research", "current_mode": "prototype", "pending_mode": "prototype", "can_reactivate": False, "can_change": True},
+            {"id": "sales", "current_mode": "prototype", "pending_mode": "prototype", "can_reactivate": False, "can_change": True},
         ],
     }
 
@@ -54,37 +54,40 @@ def test_admin_can_read_environment_and_pending_module_settings(tmp_path: Path) 
 def test_module_mode_change_is_pending_until_restart(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     settings = Settings.from_data_dir(data_dir, environment="test")
-
     with authenticated_client(settings) as client:
-        changed = client.put(
-            "/api/admin/module-settings/knowledge",
-            json={"mode": "active", "reviews": []},
-        )
+        changed = client.put("/api/admin/module-settings/workbench", json={"mode": "off"})
         running = client.get("/api/modules")
+        assert changed.status_code == 200
+        assert changed.json() == {
+            "id": "workbench", "current_mode": "active", "pending_mode": "off",
+            "can_reactivate": False, "can_change": False,
+        }
+        assert next(item for item in running.json() if item["id"] == "workbench")["mode"] == "active"
+        assert client.put("/api/admin/module-settings/workbench", json={"mode": "active"}).status_code == 403
 
-    assert changed.status_code == 200
-    assert changed.json() == {
-        "id": "knowledge",
-        "current_mode": "off",
-        "pending_mode": "active", "can_reactivate": False,
-    }
-    assert next(item for item in running.json() if item["id"] == "knowledge")["mode"] == "off"
-
-    restarted_settings = Settings.from_data_dir(data_dir, environment="test")
-    with authenticated_client(restarted_settings) as restarted_client:
-        restarted = restarted_client.get("/api/modules")
-        applied = restarted_client.get("/api/admin/module-settings")
-
-    assert next(item for item in restarted.json() if item["id"] == "knowledge")["mode"] == "active"
-    assert next(item for item in applied.json()["modules"] if item["id"] == "knowledge") == {
-        "id": "knowledge",
-        "current_mode": "active",
-        "pending_mode": "active", "can_reactivate": False,
-    }
+    with authenticated_client(Settings.from_data_dir(data_dir, environment="test")) as client:
+        restarted = client.get("/api/modules")
+        applied = client.get("/api/admin/module-settings")
+        assert next(item for item in restarted.json() if item["id"] == "workbench")["mode"] == "off"
+        assert next(item for item in applied.json()["modules"] if item["id"] == "workbench") == {
+            "id": "workbench", "current_mode": "off", "pending_mode": "off",
+            "can_reactivate": False, "can_change": False,
+        }
+        assert client.put("/api/admin/module-settings/workbench", json={"mode": "active"}).status_code == 403
 
 
-def test_production_activation_requires_and_records_all_four_reviews(tmp_path: Path) -> None:
+def test_active_module_review_renewal_requires_and_records_all_four_reviews(tmp_path: Path) -> None:
     data_dir = tmp_path / "production"
+    # Already deployed module whose review revision is now stale; locked modules cannot be enabled.
+    previous = create_activation_review_record(
+        ["business", "security", "code", "rollback"],
+        reviewed_by="00000000-0000-4000-8000-000000000001", issue_url="", pull_request_url="",
+    )
+    previous["activation_revision"] = 0
+    save_persisted_module_modes(
+        data_dir, "production", {**default_module_modes("production"), "knowledge": "active"},
+        approved_module="knowledge", approved_review_record=previous,
+    )
     settings = Settings.from_data_dir(data_dir, environment="production")
 
     with authenticated_client(settings) as client:
@@ -274,7 +277,7 @@ def test_runtime_configuration_cannot_be_reused_by_another_environment(tmp_path:
 
     with authenticated_client(settings) as client:
         response = client.put(
-            "/api/admin/module-settings/knowledge",
+            "/api/admin/module-settings/workbench",
             json={"mode": "prototype", "reviews": []},
         )
 
@@ -313,7 +316,7 @@ def test_module_mode_change_audit_distinguishes_target_mode(tmp_path: Path) -> N
 
     with authenticated_client(settings) as client:
         changed = client.put(
-            "/api/admin/module-settings/knowledge",
+            "/api/admin/module-settings/workbench",
             json={"mode": "prototype", "reviews": []},
         )
         events = client.get("/api/admin/audit-events")
@@ -321,7 +324,7 @@ def test_module_mode_change_audit_distinguishes_target_mode(tmp_path: Path) -> N
     assert changed.status_code == 200
     event = next(item for item in events.json() if item["action"] == "module.mode.prototype")
     assert event["target_type"] == "module"
-    assert event["target_id"] == "knowledge"
+    assert event["target_id"] == "workbench"
 
 
 def test_module_registry_reads_environment_modes(tmp_path: Path, monkeypatch) -> None:
