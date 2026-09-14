@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import styles from "../workbenches/ProcurementWorkbench.module.css";
+import styles from "./WorkbenchSurface.module.css";
 
 export function LedgerPagination({ total, page, pageSize, onPageChange }: { total: number; page: number; pageSize: number; onPageChange: (page: number) => void }) {
   const pages = Math.max(1, Math.ceil(total / pageSize));

@@ -170,12 +170,11 @@
 .formulaDetailsTable th, .formulaDetailsTable td { text-align: left; }
 .formulaDetailsTable th:nth-child(6), .formulaDetailsTable td:nth-child(6) { text-align: left; padding-left: 24px; }
 
-.formulaSettings { display: flex; align-items: center; gap: 24px; padding: 20px 0; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
-.yieldSetting { flex: none; padding-right: 24px; border-right: 1px solid var(--border); }
-.yieldSetting small { display: block; margin-top: 8px; color: var(--muted); }
-.linkSetting { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex: 1; min-width: 0; }
+.formulaSettings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center; gap: 24px; padding: 20px 0; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+.yieldSetting { min-width: 0; }
+.linkSetting { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .linkSetting strong { font-size: calc(13px + var(--ui-font-offset)); font-weight: 500; }
-.linkSetting p { margin: 8px 0 0; font-size: calc(12px + var(--ui-font-offset)); color: var(--muted); line-height: 1.5; }
+.linkHelp [role="tooltip"] { left: auto; right: 0; grid-template-columns: minmax(0, 1fr); width: 260px; font-size: calc(12px + var(--ui-font-offset)); }
 .inputHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 16px; }
 .inputHeading h3 { margin: 0; font-size: calc(14px + var(--ui-font-offset)); }
 .inputHeading span { font-size: calc(12px + var(--ui-font-offset)); color: var(--muted); font-weight: 400; }
@@ -183,7 +182,7 @@
 .editTable th:nth-child(3), .editTable td:nth-child(3), .editTable th:nth-child(4), .editTable td:nth-child(4) { text-align: left; }
 .yieldInput input, .editTable input { font-variant-numeric: tabular-nums; text-align: left; font-size: calc(13px + var(--ui-font-offset)); }
 @media (max-width: 600px) {
-  .formulaSettings { align-items: stretch; flex-direction: column; gap: 20px; }
+  .formulaSettings { grid-template-columns: 1fr; gap: 20px; }
   .yieldSetting { border-right: 0; padding-right: 0; }
   .inputHeading { align-items: baseline; flex-wrap: wrap; }
 }
@@ -220,13 +219,13 @@
 .footerNext { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-left: auto; }
 @media (max-width: 600px) { .footerButtons { flex-wrap: wrap; } .footerNext { flex: 1 0 100%; } }
 .drawerTitle { display: flex; align-items: center; gap: 8px; }
-.ownerSetting { display: flex; align-items: center; gap: 12px; margin-top: 16px; font-size: calc(13px + var(--ui-font-offset)); }
+.ownerSetting { display: flex; flex: none; align-items: center; gap: 12px; font-size: calc(13px + var(--ui-font-offset)); }
 .ownerSetting summary { min-width: 120px; justify-content: space-between; }
 .lockedFields :is(input, summary, button) { color: var(--muted); background-color: #f3f4f5; opacity: .6; cursor: default; }
 .lockedFields .dragHandle { opacity: .35; }
 .reasonFields { display: grid; gap: 12px; margin: 16px 0; }
 .reasonFields > :is(label,div) { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
-.reasonFields textarea { resize: vertical; min-height: 56px; width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 8px; color: var(--text); background: var(--surface); font: inherit; }
+.reasonFields textarea { resize: none; height: 80px; min-height: 80px; max-height: 80px; overflow-y: auto; width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 8px; color: var(--text); background: var(--surface); font: inherit; }
 .costSettings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; padding: 16px 0; border-bottom: 1px solid var(--border); }
 .costSettings > div { display: flex; align-items: flex-start; flex-direction: column; gap: 10px; }
 .costSettings label { font-size: 13px; }
@@ -240,3 +239,5 @@ dialog:has(> .reasonFields) { width: min(480px, calc(100vw - 32px)); max-height:
 .reasonOptions > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .reasonOptions button { border: 1px solid var(--border); border-radius: 6px; }
 .reasonOptions button[aria-pressed="true"] { border-color: #555; background: #f2f3f4; color: var(--text); }
+
+@media (max-width: 600px) { .linkHelp [role="tooltip"] { left: -72px; right: auto; } }

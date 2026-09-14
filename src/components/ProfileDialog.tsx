@@ -1,7 +1,7 @@
 import { Check, ChevronRight, Eye, EyeOff, Info, KeyRound, X } from "lucide-react";
 import { useEffect, useRef, useState, type InputHTMLAttributes } from "react";
 import { changeMyPassword, fetchPersonalProfile } from "../api";
-import { DiscardChangesDialog, SettingsGroup, useFadingScrollbars } from "./SettingsDialog";
+import { DiscardChangesDialog, SettingsGroup, useFadingScrollbars, useExitTransition } from "./Interaction";
 import type { CurrentUser, PersonalProfile } from "../types";
 
 const SCOPE_NAMES: Record<string, string> = { procurement: "采购工作台", research: "研发工作台", sales: "销售工作台", management: "总经办工作台", knowledge: "知识库" };
@@ -18,8 +18,9 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
   onClose: () => void;
   onUserChanged: (user: CurrentUser) => void;
   onPasswordChanged: (message: string) => void;
-  beforePasswordChange: () => boolean;
+  beforePasswordChange: () => Promise<boolean>;
 }) {
+  const exit = useExitTransition(onClose);
   const dialog = useRef<HTMLDialogElement>(null);
   useFadingScrollbars(dialog);
   const busy = useRef(false);
@@ -63,7 +64,7 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
   const close = () => {
     if (busy.current) return;
     if (dirty) { setDiscardOpen(true); return; }
-    onClose();
+    exit.close();
   };
 
   const submit = async (event: React.FormEvent) => {
@@ -71,7 +72,7 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
     if (busy.current) return;
     if (passwords.new_password !== passwords.confirm_password) { setError("两次新密码不一致，请重新核对。"); return; }
     if (passwords.current_password === passwords.new_password) { setError("新密码不能与当前密码相同。"); return; }
-    if (!beforePasswordChange()) return;
+    if (!await beforePasswordChange()) return;
     busy.current = true;
     setSubmitting(true);
     setError("");
@@ -83,16 +84,17 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
     finally { busy.current = false; setSubmitting(false); }
   };
 
-  return <dialog ref={dialog} className="settings-dialog personal-profile" aria-labelledby="personal-profile-title"
+  return <dialog inert={exit.closing} ref={dialog} className="settings-dialog personal-profile" data-closing={exit.closing || undefined} aria-labelledby="personal-profile-title"
     onCancel={(event) => { event.preventDefault(); if (discardOpen) { setDiscardOpen(false); dialog.current?.querySelector<HTMLButtonElement>("header button")?.focus(); } else close(); }}
     onKeyDown={(event) => { if (event.key === "Escape") event.stopPropagation(); }}
     onMouseDown={(event) => {
       if (event.target !== event.currentTarget) return;
+      event.preventDefault();
       const rect = event.currentTarget.getBoundingClientRect();
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) close();
     }}>
     <header><h1 id="personal-profile-title">我的账号</h1><button className="icon-button" type="button" aria-label="关闭我的账号" autoFocus disabled={submitting} onClick={close}><X size={18} /></button></header>
-    {discardOpen && <DiscardChangesDialog description="关闭后，未保存的密码输入将不会保留。" confirmLabel="放弃并关闭" onCancel={() => setDiscardOpen(false)} onDiscard={onClose} />}
+    {discardOpen && <DiscardChangesDialog description="关闭后，未保存的密码输入将不会保留。" confirmLabel="放弃并关闭" onCancel={() => setDiscardOpen(false)} onDiscard={() => { setDiscardOpen(false); exit.close(); }} />}
     <div className="personal-profile__body">
       {loadError ? <div role="alert"><p>{loadError}</p><button className="secondary-button" onClick={() => setReload((value) => value + 1)}>重新读取</button></div> : !profile ? <p role="status">正在读取我的账号…</p> : <>
         <div className="personal-profile__identity"><span className="avatar" aria-hidden="true">{Array.from(profile.display_name)[0]}</span><div><div className="personal-profile__name"><strong>{profile.display_name}</strong>{profile.is_system_admin && <span className="personal-profile__role">管理员</span>}</div><p><span aria-label={`登录账号：${profile.username}`}>{profile.username}</span><span aria-hidden="true"> · </span><span aria-label={`部门：${profile.department || "未分配"}`}>{profile.department || "未分配"}</span></p></div></div>

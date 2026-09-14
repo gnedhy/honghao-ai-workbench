@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import styles from "./ProcurementWorkbench.module.css";
+import styles from "./WorkbenchSurface.module.css";
 
 export function useMoverPaging(pages: number, resetKey: string, blocked = false) {
   const [page, setPage] = useState(0);

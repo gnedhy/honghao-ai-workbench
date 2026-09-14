@@ -1,3 +1,4 @@
+import { confirmWorkbenchLeave as allowProcurementLeave } from "./components/interactionNavigation";
 import { FolderClosed, FolderKanban, LibraryBig, MessageCircle, PanelsTopLeft, Search, WandSparkles, Workflow, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createConversationSubmission, createProject, fetchConversations, fetchMessages, fetchModules, fetchProjects, fetchServiceHealth, fetchTasks, fetchWorkbenches, setConversationProject, submitConversation, type ServiceConnection } from "./api";
@@ -374,12 +375,12 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
         environment={runtimeEnvironment}
         openedWorkbenchId={openedWorkbenchId}
         researchPage={researchPage}
-        onResearchPageChange={(next) => { if (allowProcurementLeave()) setResearchPage(next); }}
+        onResearchPageChange={async (next) => { if (await allowProcurementLeave()) setResearchPage(next); }}
         procurementPage={procurementPage}
-        onProcurementPageChange={(next) => { if (allowProcurementLeave()) setProcurementPage(next); }}
-        onSectionChange={(nextSection) => { if (!allowProcurementLeave()) return; setSection(nextSection); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
-        onNewConversation={() => { if (!allowProcurementLeave()) return; setSection("chat"); setConversationView("new"); setSelectedConversationId(null); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
-        onConversationOpen={(conversationId) => { if (!allowProcurementLeave()) return; setSection("chat"); setConversationView("existing"); setSelectedConversationId(conversationId); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
+        onProcurementPageChange={async (next) => { if (await allowProcurementLeave()) setProcurementPage(next); }}
+        onSectionChange={async (nextSection) => { if (!await allowProcurementLeave()) return; setSection(nextSection); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
+        onNewConversation={async () => { if (!await allowProcurementLeave()) return; setSection("chat"); setConversationView("new"); setSelectedConversationId(null); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
+        onConversationOpen={async (conversationId) => { if (!await allowProcurementLeave()) return; setSection("chat"); setConversationView("existing"); setSelectedConversationId(conversationId); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
         onProjectCreate={(title) => { void createProject(title).then((created) => { setProjects((current) => [...current, created]); setCurrentProjectId(created.id); }).catch(() => setWorkbenchDataState("error")); }}
         onSearchOpen={() => { setProfileOpen(false); setMobileOpen(false); setGlobalSearchOpen(true); }}
         feedbackUnread={feedbackUnread}
@@ -390,12 +391,12 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
         onMobileClose={() => setMobileOpen(false)}
         onOpenSettings={() => { setProfileOpen(false); setSettingsOpen(true); }}
         onOpenProfile={() => { setProfileOpen(false); setPersonalProfileOpen(true); }}
-        onLogout={async () => { if (allowProcurementLeave()) await onLogout(); }}
+        onLogout={async () => { if (await allowProcurementLeave()) await onLogout(); }}
       />
       {section === "chat" && enabledModules.chat && <ConversationScreen {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversationId) { const update = projectUpdatePromise.current.catch(() => undefined).then(async () => { const updated = await setConversationProject(selectedConversationId, projectId); setConversations((current) => current.map((conversation) => conversation.id === updated.id ? updated : conversation)); }); projectUpdatePromise.current = update; void update.catch(() => setWorkbenchDataState("error")); } else { setCurrentProjectId(projectId); } }} messages={messages} messagesState={messagesState} onSubmit={submitMessage} />}
       {section === "knowledge" && enabledModules.knowledge && <KnowledgeScreen {...screenChrome} scopeTab={knowledgeScope} onScopeTabChange={setKnowledgeScope} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
       {section === "automation" && enabledModules.automation && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
-      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} currentUser={currentUser} statuses={workbenchStatuses} dataState={workbenchRegistryState} selectedId={selectedWorkbenchId} onSelectedIdChange={(id) => { if (!allowProcurementLeave()) return; setSelectedWorkbenchId(id); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); }} openedWorkbenchId={openedWorkbenchId} onOpenedWorkbenchIdChange={(next) => { if (allowProcurementLeave()) setOpenedWorkbenchId(next); }} researchPage={researchPage} onResearchPageChange={(next) => { if (allowProcurementLeave()) setResearchPage(next); }} procurementPage={procurementPage} onProcurementPageChange={setProcurementPage} />}
+      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} currentUser={currentUser} statuses={workbenchStatuses} dataState={workbenchRegistryState} selectedId={selectedWorkbenchId} onSelectedIdChange={async (id) => { if (!await allowProcurementLeave()) return; setSelectedWorkbenchId(id); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); }} openedWorkbenchId={openedWorkbenchId} onOpenedWorkbenchIdChange={async (next) => { if (await allowProcurementLeave()) setOpenedWorkbenchId(next); }} researchPage={researchPage} onResearchPageChange={async (next) => { if (await allowProcurementLeave()) setResearchPage(next); }} procurementPage={procurementPage} onProcurementPageChange={setProcurementPage} />}
       {section === "tasks" && enabledModules.tasks && <TaskBoardScreen {...screenChrome} tasks={tasks} projects={projects} conversations={conversations} dataState={workbenchDataState} selectedTask={selectedTask} onSelectedTaskChange={(task) => setSelectedTaskId(task.id)} />}
       <ContextSidebar
         section={section}
@@ -422,8 +423,8 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
         tasks={tasks}
         workbenchStatuses={workbenchStatuses}
         onClose={() => setGlobalSearchOpen(false)}
-        onSelect={(result) => {
-          if (!allowProcurementLeave()) return;
+        onSelect={async (result) => {
+          if (!await allowProcurementLeave()) return;
           setProfileOpen(false);
           setMobileOpen(false);
           closeContext();
@@ -597,8 +598,3 @@ function SearchResultIcon({ kind }: { kind: SearchResultKind }) {
 }
 
 export default App;
-
-
-function allowProcurementLeave() {
-  return window.dispatchEvent(new Event("procurement-before-leave", { cancelable: true })) && window.dispatchEvent(new Event("research-before-leave", { cancelable: true }));
-}

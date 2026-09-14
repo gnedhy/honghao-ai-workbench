@@ -638,3 +638,28 @@ def test_missing_prices_only_allow_effective_manual_policy_and_stale_price_token
     assert trial['latest']['auto_cost'] is None
     body['formula']['manual_costs']['inventory'] = None
     assert store.simulate(K,body)['blocking']
+
+
+def test_first_formula_records_creation_without_adjustment_prompt(ready):
+    _, client, actor, store = ready
+    source = body_for(store)['formula']
+    created = store.create_formula({'name': 'FIRST-FORMULA', 'owner': source['owner']}, actor)
+    key = created['id']
+    body = body_for(store, key)
+    body['formula'].update(lines=copy.deepcopy(source['lines']), adjustment_reason='', adjustment_note='')
+    trial, receipt = saved(store, actor, body, key)
+    assert store.detail(key)['draft']['formula']['adjustment_reason'] == '新增配方'
+    store.activate(key, dict(revision=receipt['revision'], simulation_token=receipt['simulation_token']), actor)
+    store.process_events()
+    # After first activation, neither a blank reason nor a claimed creation bypasses adjustment control.
+    for reason in ['', '新增配方']:
+        body = body_for(store, key)
+        body['formula']['adjustment_reason'] = reason
+        assert client.post(f'{PREFIX}/products/{quote(key, safe="")}/simulate', json=body).status_code == 422
+
+
+def test_existing_formula_cannot_claim_creation_reason(ready):
+    _, client, _, store = ready
+    body = body_for(store)
+    body['formula']['adjustment_reason'] = '新增配方'
+    assert client.post(f'{PREFIX}/products/{quote(K, safe="")}/simulate', json=body).status_code == 422

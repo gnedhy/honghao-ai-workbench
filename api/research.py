@@ -367,7 +367,7 @@ class ResearchStore:
         return {"recipes":[dict(r, latest=package["source_replay"].get(r["id"])) for r in package["recipes"] if r["kind"] == "recipe" and r["id"] in historical]}
 
     def _simulate(self, db, key, body):
-        row = db.execute("SELECT formula,revision,draft_sequence FROM research_formulas WHERE id=?", (key,)).fetchone()
+        row = db.execute("SELECT formula,revision,draft_sequence,lifecycle FROM research_formulas WHERE id=?", (key,)).fetchone()
         if not row:
             raise KeyError("产品不存在")
         if body["draft_revision"] != row[2]:
@@ -378,7 +378,10 @@ class ResearchStore:
         formula = deepcopy(original)
         reason = body["formula"].get("adjustment_reason", "").strip()
         note = body["formula"].get("adjustment_note", "").strip()
-        if reason not in ADJUSTMENT_REASONS or (reason == "其他" and not note):
+        first_formula = row[1] == 0 and row[3] == "draft"
+        if first_formula and not reason:
+            reason = "新增配方"
+        if (reason not in ADJUSTMENT_REASONS and not (first_formula and reason == "新增配方")) or (reason == "其他" and not note):
             raise ValueError("请选择调整原因；选择其他时须填写说明")
         if len(note) > 1000:
             raise ValueError("调整说明不能超过1000字")

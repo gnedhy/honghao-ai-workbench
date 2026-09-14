@@ -17,3 +17,7 @@
 ### Domain docs
 
 采用单上下文结构：根目录 `CONTEXT.md` 与 `docs/adr/`。详见 `docs/agents/domain.md`。
+
+## 界面复用
+
+新增界面、调整同类控件或动效前，先查 [公共组件与交互约定](docs/components.md)，复用实现入口并验证实际消费者。权限、请求、计算及草稿由业务层负责；隔离验收通过后再申请正式替换。

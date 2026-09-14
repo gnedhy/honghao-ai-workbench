@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { fetchProcurementNews } from '../api';
-import styles from './ProcurementWorkbench.module.css';
+import styles from '../components/WorkbenchSurface.module.css';
 export type NewsItem = { title: string; source: string; url: string; published_at: string };
 export type NewsData = { items: NewsItem[]; total: number; page: number; page_size: number; updated_at: string | null; delayed: boolean; sources: { name: string; status: 'ok' | 'pending' | 'delayed'; last_success: string | null }[] };
 const updateTime = (value: string) => new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});

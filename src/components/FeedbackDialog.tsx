@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { ArrowLeft, X, ImagePlus, LockKeyhole, UserRound, Check, ChevronDown } from "lucide-react";
 import type { CurrentUser } from "../types";
-import { DiscardChangesDialog } from "./SettingsDialog";
+import { DiscardChangesDialog, useExitTransition } from "./Interaction";
 import "./FeedbackDialog.css";
-import procurementStyles from "../workbenches/ProcurementWorkbench.module.css";
+import procurementStyles from "./WorkbenchSurface.module.css";
 
 type Feedback = {
   id: string; owner_id: string; owner_name: string; kind: string; text: string;
@@ -27,12 +27,12 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
   draft: FeedbackDraft; onDraftChange: Dispatch<SetStateAction<FeedbackDraft>>;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const previousFocus = useRef(document.activeElement as HTMLElement | null);
   const backButton = useRef<HTMLButtonElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
   const fileSequence = useRef(0);
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [closing, setClosing] = useState(false);
+  const { closing, close } = useExitTransition(onClose);
   const [records, setRecords] = useState<Feedback[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -60,12 +60,12 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
     return rows;
   }
   useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
+    const previous = previousFocus.current;
     dialog.current?.showModal();
     let active = true;
     request<Feedback[]>().then(rows => { if (active) setRecords(rows); }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); });
     const element = dialog.current;
-    return () => { active = false; fileSequence.current++; if (closeTimer.current) clearTimeout(closeTimer.current); element?.close(); if (previous?.isConnected) previous.focus(); };
+    return () => { active = false; fileSequence.current++; element?.close(); if (previous?.isConnected) previous.focus(); };
   }, []);
   useEffect(() => {
     const prevent = (event: BeforeUnloadEvent) => { if (dirty) { event.preventDefault(); event.returnValue = ""; } };
@@ -77,12 +77,6 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
   function leave(action: () => void) {
     if (busyRef.current || imageLoading || closing) return;
     if (dirty && view === "detail") setPending(() => action); else action();
-  }
-  function close() {
-    if (closeTimer.current) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { onClose(); return; }
-    setClosing(true);
-    closeTimer.current = setTimeout(onClose, 150);
   }
   function list() { setView("list"); setError(""); void refresh().catch(e => setError(e.message)); }
   async function open(row: Feedback) {
@@ -133,7 +127,7 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
     } finally { busyRef.current = false; setBusy(false); }
   }
   const rows = records.filter(row => (admin || row.owner_id === currentUser.id) && (!onlyMine || row.owner_id === currentUser.id) && (filter === "全部" || row.status === filter));
-  return <dialog ref={dialog} className="feedback-dialog" data-closing={closing || undefined} aria-labelledby="feedback-title" onClick={event => { if (view === "list" && event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) leave(close); } }} onCancel={event => { if (event.target !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); if (!pending) leave(close); }} onKeyDown={event => { if (event.key === "Escape") event.stopPropagation(); }}>
+  return <dialog inert={closing} ref={dialog} className="feedback-dialog" data-closing={closing || undefined} aria-labelledby="feedback-title" onClick={event => { if (view === "list" && event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) leave(close); } }} onCancel={event => { if (event.target !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); if (!pending) leave(close); }} onKeyDown={event => { if (event.key === "Escape") event.stopPropagation(); }}>
     <div className="feedback-window" inert={!!pending || closing}>
       <header className="feedback-header">
         {view !== "list" && <button ref={backButton} className="feedback-icon" aria-label="返回列表" title="返回列表" disabled={busy || imageLoading} onClick={() => leave(list)}><ArrowLeft size={19} /></button>}

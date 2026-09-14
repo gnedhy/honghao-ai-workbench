@@ -1,3 +1,6 @@
+import { PageState } from "./WorkbenchLayout";
+import { Switch } from "./Switch";
+import { DiscardChangesDialog, SettingsGroup, useFadingScrollbars, useExitTransition, useMeasuredContent } from "./Interaction";
 import {
   Check,
   ChevronRight,
@@ -16,7 +19,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
-import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   createUser,
   fetchAdminModuleSettings,
@@ -48,8 +51,8 @@ import type {
   WorkbenchId,
   WorkbenchStatus,
 } from "../types";
-import { ProcurementActivationGrants } from "../workbenches/ProcurementDistribution";
-import procurementStyles from "../workbenches/ProcurementWorkbench.module.css";
+import { ProcurementActivationGrants } from "./ActivationGrants";
+import procurementStyles from "./WorkbenchSurface.module.css";
 import { DepartmentEditor, MembershipFields, OrganizationDirectory, departmentPath } from './OrganizationControls';
 import type { OrganizationDepartment, DepartmentMembership } from '../types';
 
@@ -132,59 +135,16 @@ type SettingsDialogProps = {
   onOpenProfile: () => void;
 };
 
-export function useFadingScrollbars(container: { current: HTMLElement | null }) {
-  useEffect(() => {
-    const body = container.current;
-    if (!body) return;
-    const timers = new Map<HTMLElement, ReturnType<typeof setTimeout>>();
-    const edgeSelector = ".admin-user-scroll,.personal-profile__scroll";
-    const updateEdges = () => {
-      body.querySelectorAll<HTMLElement>(edgeSelector).forEach(element => {
-        element.style.setProperty("--scroll-fade-top", element.scrollTop > 1 ? "14px" : "0px");
-        element.style.setProperty("--scroll-fade-bottom", element.scrollHeight - element.clientHeight - element.scrollTop > 1 ? "14px" : "0px");
-        element.style.setProperty("--scroll-gutter", `${Math.max(0, element.offsetWidth - element.clientWidth)}px`);
-      });
-    };
-    const observed = new Set<Element>();
-    const resize = new ResizeObserver(updateEdges);
-    const observeEdges = () => {
-      const targets = new Set<Element>();
-      body.querySelectorAll(edgeSelector).forEach(element => { targets.add(element); Array.from(element.children).forEach(child => targets.add(child)); });
-      observed.forEach(element => { if (!targets.has(element)) { resize.unobserve(element); observed.delete(element); } });
-      targets.forEach(element => { if (!observed.has(element)) { resize.observe(element); observed.add(element); } });
-      updateEdges();
-    };
-    const contentChanges = new MutationObserver(observeEdges);
-    contentChanges.observe(body, { childList: true, subtree: true, characterData: true });
-    observeEdges();
-    body.addEventListener("scroll", updateEdges, true);
-    const reveal = (event: Event) => {
-      let element = event.target instanceof HTMLElement ? event.target : null;
-      while (element && element !== body) {
-        if (element.scrollHeight > element.clientHeight && /auto|scroll/.test(getComputedStyle(element).overflowY)) {
-          clearTimeout(timers.get(element));
-          element.dataset.scrolling = "true";
-          const target = element;
-          timers.set(target, setTimeout(() => { delete target.dataset.scrolling; timers.delete(target); }, 3000));
-          break;
-        }
-        element = element.parentElement;
-      }
-    };
-    body.addEventListener("scroll", reveal, true);
-    body.addEventListener("wheel", reveal, { capture: true, passive: true });
-    return () => {
-      body.removeEventListener("scroll", updateEdges, true);
-      resize.disconnect();
-      contentChanges.disconnect();
-      body.removeEventListener("scroll", reveal, true);
-      body.removeEventListener("wheel", reveal, true);
-      timers.forEach((timer, element) => { clearTimeout(timer); delete element.dataset.scrolling; });
-    };
-  }, [container]);
-}
 
 export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, moduleStatuses, moduleRegistryState, workbenchStatuses, workbenchRegistryState, uiFontSize, onUiFontSizeChange, onClose, onOpenProfile }: SettingsDialogProps) {
+  const exit = useExitTransition(onClose);
+  const modal = useRef<HTMLDialogElement>(null);
+  const previousFocus = useRef(document.activeElement as HTMLElement | null);
+  useEffect(() => {
+    const element = modal.current;
+    element?.showModal();
+    return () => { element?.close(); if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true }); };
+  }, []);
   const scrollBody = useRef<HTMLDivElement>(null);
   useFadingScrollbars(scrollBody);
   const isAdmin = currentUser.is_system_admin;
@@ -371,9 +331,11 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
   ];
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) requestLeave(onClose); }}>
-      <section className="settings-dialog settings-dialog--admin" role="dialog" aria-modal="true" aria-labelledby="settings-title" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); if (pendingLeave) setPendingLeave(null); else requestLeave(onClose); } }}>
-        <header><div><h1 id="settings-title">系统设置</h1><p>{isAdmin ? "管理账号、访问边界和安全记录。" : "查看当前系统运行状态。"}</p></div><button className="icon-button" type="button" aria-label="关闭设置" disabled={saving} onClick={() => requestLeave(onClose)}><X size={18} /></button></header>
+    <dialog inert={exit.closing} ref={modal} className="settings-dialog settings-dialog--admin" data-closing={exit.closing || undefined} aria-labelledby="settings-title"
+      onCancel={event => { event.preventDefault(); event.stopPropagation(); if (!pendingLeave) requestLeave(exit.close); }}
+      onMouseDown={event => { if (event.target !== event.currentTarget) return;
+      event.preventDefault(); const bounds = event.currentTarget.getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) requestLeave(exit.close); }}>
+        <header><div><h1 id="settings-title">系统设置</h1><p>{isAdmin ? "管理账号、访问边界和安全记录。" : "查看当前系统运行状态。"}</p></div><button className="icon-button" type="button" aria-label="关闭设置" disabled={saving} onClick={() => requestLeave(exit.close)}><X size={18} /></button></header>
         <div className="settings-dialog__body" ref={scrollBody}>
           <nav aria-label="设置分类">{navItems.map(({ id, label, icon: Icon }) => <button className={tab === id ? "is-active" : ""} key={id} type="button" disabled={saving} onClick={() => { if (id !== tab) requestLeave(() => { resetDrafts(); setTab(id); }); }}><span><Icon size={15} />{label}</span><ChevronRight size={15} /></button>)}</nav>
           <article className={tab === "accounts" ? "settings-accounts-content" : tab === "audit" || tab === "about" ? "settings-log-content" : undefined}>
@@ -411,8 +373,7 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
             {tab === "about" && <AboutSystem connection={serviceConnection} />}
           </article>
         </div>
-      </section>
-    </div>
+    </dialog>
   );
 }
 
@@ -435,7 +396,8 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
       <div className="changelog-date"><time dateTime="2026-09-14">2026年9月14日</time></div>
       <div className="settings-timeline-content">
         <div><strong>配方编辑与草稿</strong><p>补齐配方比例与负责人，支持比例和投料自动换算或独立填写、拖拽排序。试算后调整实时更新；保存草稿锁定填写，重开先显示已存结果并核验价格，取消保存保留填写。</p></div>
-        <div><strong>受控成本调整</strong><p>手动编辑先记录调整原因，两种成本可分别自动核算或手动指定。采购更新继续计算自动对照，已启用手动值持续生效并传递到引用产品，历史保留原因和成本来源。</p></div>
+        <div><strong>受控成本调整</strong><p>修改已启用配方先记录调整原因；新配方直接填写。两种成本可分别自动核算或手动指定。采购更新继续计算自动对照，已启用手动值持续生效并传递到引用产品，历史保留原因和成本来源。</p></div>
+        <div><strong>界面与操作统一</strong><p>统一弹窗、抽屉、开关、表格及过渡效果，离开编辑时保留未保存提醒。负责人、收率和自动换算同行展示，换算说明通过提示图标查看；修正价格历史时间线对齐。</p></div>
         <div><strong>启用授权</strong><p>采购与研发统一授权确认和取消操作。研发编辑人员获得独立授权后可核对启用，授权管理人员负责分配；资料、用户管理和编辑入口同步实际权限。授权记录支持折叠、查看更多和按日期翻阅。</p></div>
         <div><strong>看板与排行</strong><p>研发涨跌排行补齐自动换页及进度指示，支持点击换页、悬停暂停。双成本差异说明更直观，采购与研发继续复用排行和表格控件。</p></div>
         <div><strong>人员与账号</strong><p>完善研发五部及总经办人员配置，负责人选择接入部门人员。研发编辑与核对启用按权限区分，部门和负责人不自动授予业务权限。</p></div>
@@ -580,47 +542,6 @@ function FontSizeSetting({ value, onChange }: { value: UiFontSize; onChange: (si
   return <section className="ui-preferences"><h2>常规设置</h2><div className="ui-font-setting"><div><strong id="ui-font-size-title">界面字号</strong><p>调整导航、正文、表格和表单文字大小。</p></div><div className="ui-font-control"><div className="ui-font-current" aria-live="polite"><span>当前</span><strong>{selected.label}</strong></div><input className="ui-font-range" type="range" min="1" max="5" step="1" value={value} aria-labelledby="ui-font-size-title" aria-valuetext={selected.label} style={sliderStyle} onChange={(event) => onChange(Number(event.currentTarget.value) as UiFontSize)} /><div className="ui-font-ticks" role="group" aria-label="字号档位">{UI_FONT_SIZES.map((option) => <button key={option.id} type="button" aria-pressed={value === option.id} onClick={() => onChange(option.id)}>{option.label}</button>)}</div></div></div></section>;
 }
 
-export function DiscardChangesDialog({ onCancel, onDiscard, title = "放弃未保存的修改？", description = "继续后，本次操作涉及的未保存修改将不会保留。", cancelLabel = "继续编辑", confirmLabel = "放弃修改", disabled = false, confirmDisabled = false, children, intent = "danger" }: { onCancel: () => void; onDiscard: () => void; title?: string; description?: ReactNode; cancelLabel?: string; confirmLabel?: string; disabled?: boolean; confirmDisabled?: boolean; children?: ReactNode; intent?: "danger" | "primary" }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    const element = dialog.current;
-    element?.showModal();
-    return () => { element?.close(); if (previous?.isConnected) previous.focus(); };
-  }, []);
-  return <dialog ref={dialog} className="settings-discard-dialog" role="alertdialog" aria-labelledby="settings-discard-title" aria-describedby="settings-discard-description"
-    onCancel={event => { event.preventDefault(); event.stopPropagation(); onCancel(); }}
-    onKeyDown={event => { if (event.key === "Escape") event.stopPropagation(); }}>
-    <h2 id="settings-discard-title">{title}</h2>
-    <p id="settings-discard-description">{description}</p>{children}
-    <div className="admin-form-actions"><button autoFocus type="button" className="secondary-button" disabled={disabled} onClick={onCancel}>{cancelLabel}</button><button type="button" className={intent === "primary" ? "primary-button" : "secondary-button settings-discard-action"} disabled={disabled || confirmDisabled} onClick={onDiscard}>{confirmLabel}</button></div>
-  </dialog>;
-}
-
-export function SettingsGroup({ id, title, description, summary, children, defaultOpen = false, icon }: { id: string; title: string; description: string; summary: string; children: ReactNode; defaultOpen?: boolean; icon?: ReactNode }) {
-  const [open, setOpen] = useState(defaultOpen);
-  const [instant, setInstant] = useState(false);
-  const [height, setHeight] = useState(0);
-  const contentRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const content = contentRef.current;
-    if (!content) return;
-    const measure = () => setHeight(content.getBoundingClientRect().height);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, []);
-  return <section className="module-settings settings-group" data-open={open} data-instant={instant} aria-labelledby={id + "-title"}>
-    <button type="button" id={id + "-title"} className="module-settings__heading settings-group-trigger" aria-label={title} aria-expanded={open} aria-controls={id + "-content"} onClick={event => { setInstant(event.detail === 0); setOpen(value => !value); }}>
-      <span className="settings-group-copy"><strong>{icon && <span className="settings-group-icon" aria-hidden="true">{icon}</span>}{title}</strong><span>{description}</span></span>
-      <span className="settings-group-summary">{summary}<ChevronRight size={15} /></span>
-    </button>
-    <div id={id + "-content"} className="settings-group-collapse" style={{ height: open ? height : 0 }} aria-hidden={!open} inert={!open}>
-      <div ref={contentRef}>{children}</div>
-    </div>
-  </section>;
-}
 
 function GeneralSettings({ serviceCopy, environment: serviceEnvironment, moduleStatuses, moduleRegistryState, workbenchStatuses, workbenchRegistryState, isAdmin, adminModuleSettings, onModeChange, onWorkbenchModeChange, canManageGrants, canManageResearchGrants, onGrantsChanged }: {
   serviceCopy: { label: string; detail: string };
@@ -665,10 +586,10 @@ function GeneralSettings({ serviceCopy, environment: serviceEnvironment, moduleS
       : onWorkbenchModeChange(activationTarget.id, "active", canRestore ? [] : reviews);
     void update.then(clearGate).catch(() => undefined).finally(() => { modeBusy.current = false; setChangingMode(false); });
   };
-  return <section className="admin-settings-section settings-general"><h2>常规设置</h2>{pendingCount > 0 && <p className="settings-availability-note" role="status">{pendingCount} 项设置待重启生效</p>}{isAdmin && <><h3 className="settings-section-label" id="module-panel-title">模块与工作台</h3><section className="settings-module-panel" aria-labelledby="module-panel-title"><SettingsGroup id="module-settings" title="功能模块" description="状态只影响当前服务器；关闭时入口和业务接口同时停用。" summary={moduleRegistryState === "ready" ? `${enabledCount} 个运行中` : moduleRegistryState === "loading" ? "读取中" : "状态不可用"}><div className="module-settings__list">{visibleModules.filter((item) => adminModuleSettings?.modules.find((module) => module.id === item.id)?.can_change === true).map((item) => { const Icon = item.icon; const publicMode = moduleStatuses.find((module) => module.id === item.id)?.mode ?? "off"; const managed = adminModuleSettings?.modules.find((module) => module.id === item.id); const currentMode = managed?.current_mode ?? publicMode; const pendingMode = managed?.pending_mode ?? currentMode; const hasPending = currentMode !== pendingMode; return <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><Icon size={16} /></span><div><strong>{item.label}</strong><p>{item.description}{hasPending ? ` · 当前${modeLabel(currentMode)}` : ""}</p></div>{isAdmin && adminModuleSettings ? <div className="settings-mode-control"><span>{hasPending ? `待重启 · ${modeLabel(pendingMode)}` : modeLabel(pendingMode)}</span><button type="button" role="switch" className="settings-mode-switch" aria-label={`${item.label}启用`} aria-checked={pendingMode !== "off"} disabled={changingMode || !managed?.can_change} onClick={() => chooseMode("module", item.id, pendingMode === "off" ? "active" : "off")}><span /></button></div> : <span className="module-mode-label" data-mode={currentMode}>{modeLabel(currentMode)}</span>}</div>; })}</div></SettingsGroup><SettingsGroup id="workbench-settings" title="职能工作台" description="每个工作台独立启用、停用和回退。" summary={workbenchRegistryState === "ready" ? `${visibleWorkbenches.length} 个工作台` : workbenchRegistryState === "loading" ? "读取中" : "状态不可用"}><div className="module-settings__list">{visibleWorkbenches.map((item) => { const managed = adminModuleSettings?.workbenches.find((workbench) => workbench.id === item.id); const currentMode = managed?.current_mode ?? workbenchStatuses.find((workbench) => workbench.id === item.id)?.mode ?? "off"; const pendingMode = managed?.pending_mode ?? currentMode; const hasPending = currentMode !== pendingMode; return <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><PanelsTopLeft size={16} /></span><div><strong>{item.label}</strong><p>{item.description}{hasPending ? ` · 当前${modeLabel(currentMode)}` : ""}</p></div>{isAdmin && adminModuleSettings ? <div className="settings-mode-control"><span>{hasPending ? `待重启 · ${modeLabel(pendingMode)}` : modeLabel(pendingMode)}</span><button type="button" role="switch" className="settings-mode-switch" aria-label={`${item.label}启用`} aria-checked={pendingMode !== "off"} disabled={changingMode || !managed?.can_change} onClick={() => chooseMode("workbench", item.id, pendingMode === "off" ? (item.id === "procurement" || currentMode === "active" ? "active" : "prototype") : "off")}><span /></button></div> : <span className="module-mode-label" data-mode={currentMode}>{modeLabel(currentMode)}</span>}{((item.id === "procurement" && canManageGrants) || (item.id === "research" && canManageResearchGrants)) && <ActivationGrantsEntry scope={item.id as "procurement" | "research"} isAdmin={isAdmin} onGrantsChanged={onGrantsChanged}/>}</div>; })}</div></SettingsGroup></section></>}{!isAdmin && <section className="module-settings" aria-labelledby="available-settings-title"><div className="module-settings__heading"><strong id="available-settings-title">可用功能</strong></div><div className="module-settings__list">{visibleModules.filter((item) => item.id !== "workbench").map((item) => { const Icon = item.icon; return <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><Icon size={16} /></span><div><strong>{item.label}</strong><p>{item.description}</p></div><span className="module-mode-label" data-mode="active">已启用</span></div>; })}{visibleWorkbenches.map((item) => <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><PanelsTopLeft size={16} /></span><div><strong>{item.label}</strong><p>{item.description}</p></div><span className="module-mode-label" data-mode="active">已启用</span>{((item.id === "procurement" && canManageGrants) || (item.id === "research" && canManageResearchGrants)) && <ActivationGrantsEntry scope={item.id as "procurement" | "research"} isAdmin={isAdmin} onGrantsChanged={onGrantsChanged}/>}</div>)}</div>{(moduleRegistryState !== "ready" || workbenchRegistryState !== "ready") ? <p className="settings-availability-note" role="status">{moduleRegistryState === "error" || workbenchRegistryState === "error" ? "可用功能暂时无法读取，请刷新重试。" : "正在读取可用功能…"}</p> : visibleModules.every((item) => item.id === "workbench") && visibleWorkbenches.length === 0 && <p className="settings-availability-note">暂无可用功能。</p>}</section>}{activationTarget && <div className="production-review-gate"><strong>{canRestore ? "确认恢复启用？" : "启用前，请确认以下事项"}</strong><p>{canRestore ? "沿用已有确认记录。未重启的关闭操作会被撤销，已关闭的模块将在重启后恢复。" : "请按实际情况勾选，系统自动记录确认人和时间，无需填写技术地址。"}</p>{!canRestore && <div>{([ ["business", "业务负责人已确认可以使用"], ["security", "已确认数据和人员访问范围合适"], ["code", "开发或维护人员已完成检查"], ["rollback", "已确认出现问题时可以恢复"] ] as const).map(([id, label]) => <label key={id}><input type="checkbox" checked={reviews.includes(id)} onChange={() => setReviews(toggleId(reviews, id) as ActivationReview[])} />{label}</label>)}</div>}<div className="admin-form-actions"><button className="secondary-button" type="button" onClick={clearGate}>取消</button><button className="primary-button" type="button" disabled={changingMode || (!canRestore && reviews.length !== 4)} onClick={confirmActivation}>{changingMode ? "正在保存…" : canRestore ? "确认恢复" : "确认启用"}</button></div></div>}<h3 id="settings-security-title" className="settings-section-label">运行与安全</h3><section className="settings-security" aria-labelledby="settings-security-title"><div className="settings-security-row"><span className="settings-security-icon"><Server size={19} /></span><div><strong>本地服务</strong><p>{serviceCopy.label === "已连接" ? "工作台与本地服务连接正常" : serviceCopy.label === "连接中" ? "正在检查工作台服务连接" : "服务尚未连接，请启动服务后刷新"}</p></div><span className={`setting-connection setting-connection--${serviceCopy.label === "已连接" ? "online" : serviceCopy.label === "连接中" ? "checking" : "offline"}`}><i />{serviceCopy.label}</span></div><div className="settings-security-row"><span className="settings-security-icon"><ShieldCheck size={19} /></span><div><strong>访问保护</strong><p>按账号权限限制查看和操作</p></div><span className="setting-enabled"><Check size={14} />已启用</span></div></section></section>;
+  return <section className="admin-settings-section settings-general"><h2>常规设置</h2>{pendingCount > 0 && <p className="settings-availability-note" role="status">{pendingCount} 项设置待重启生效</p>}{isAdmin && <><h3 className="settings-section-label" id="module-panel-title">模块与工作台</h3><section className="settings-module-panel" aria-labelledby="module-panel-title"><SettingsGroup id="module-settings" title="功能模块" description="状态只影响当前服务器；关闭时入口和业务接口同时停用。" summary={moduleRegistryState === "ready" ? `${enabledCount} 个运行中` : moduleRegistryState === "loading" ? "读取中" : "状态不可用"}><div className="module-settings__list">{visibleModules.filter((item) => adminModuleSettings?.modules.find((module) => module.id === item.id)?.can_change === true).map((item) => { const Icon = item.icon; const publicMode = moduleStatuses.find((module) => module.id === item.id)?.mode ?? "off"; const managed = adminModuleSettings?.modules.find((module) => module.id === item.id); const currentMode = managed?.current_mode ?? publicMode; const pendingMode = managed?.pending_mode ?? currentMode; const hasPending = currentMode !== pendingMode; return <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><Icon size={16} /></span><div><strong>{item.label}</strong><p>{item.description}{hasPending ? ` · 当前${modeLabel(currentMode)}` : ""}</p></div>{isAdmin && adminModuleSettings ? <div className="settings-mode-control"><span>{hasPending ? `待重启 · ${modeLabel(pendingMode)}` : modeLabel(pendingMode)}</span><Switch type="button" role="switch" className="settings-mode-switch" aria-label={`${item.label}启用`} aria-checked={pendingMode !== "off"} disabled={changingMode || !managed?.can_change} onClick={() => chooseMode("module", item.id, pendingMode === "off" ? "active" : "off")}><span /></Switch></div> : <span className="module-mode-label" data-mode={currentMode}>{modeLabel(currentMode)}</span>}</div>; })}</div></SettingsGroup><SettingsGroup id="workbench-settings" title="职能工作台" description="每个工作台独立启用、停用和回退。" summary={workbenchRegistryState === "ready" ? `${visibleWorkbenches.length} 个工作台` : workbenchRegistryState === "loading" ? "读取中" : "状态不可用"}><div className="module-settings__list">{visibleWorkbenches.map((item) => { const managed = adminModuleSettings?.workbenches.find((workbench) => workbench.id === item.id); const currentMode = managed?.current_mode ?? workbenchStatuses.find((workbench) => workbench.id === item.id)?.mode ?? "off"; const pendingMode = managed?.pending_mode ?? currentMode; const hasPending = currentMode !== pendingMode; return <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><PanelsTopLeft size={16} /></span><div><strong>{item.label}</strong><p>{item.description}{hasPending ? ` · 当前${modeLabel(currentMode)}` : ""}</p></div>{isAdmin && adminModuleSettings ? <div className="settings-mode-control"><span>{hasPending ? `待重启 · ${modeLabel(pendingMode)}` : modeLabel(pendingMode)}</span><Switch type="button" role="switch" className="settings-mode-switch" aria-label={`${item.label}启用`} aria-checked={pendingMode !== "off"} disabled={changingMode || !managed?.can_change} onClick={() => chooseMode("workbench", item.id, pendingMode === "off" ? (item.id === "procurement" || currentMode === "active" ? "active" : "prototype") : "off")}><span /></Switch></div> : <span className="module-mode-label" data-mode={currentMode}>{modeLabel(currentMode)}</span>}{((item.id === "procurement" && canManageGrants) || (item.id === "research" && canManageResearchGrants)) && <ActivationGrantsEntry scope={item.id as "procurement" | "research"} isAdmin={isAdmin} onGrantsChanged={onGrantsChanged}/>}</div>; })}</div></SettingsGroup></section></>}{!isAdmin && <section className="module-settings" aria-labelledby="available-settings-title"><div className="module-settings__heading"><strong id="available-settings-title">可用功能</strong></div><div className="module-settings__list">{visibleModules.filter((item) => item.id !== "workbench").map((item) => { const Icon = item.icon; return <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><Icon size={16} /></span><div><strong>{item.label}</strong><p>{item.description}</p></div><span className="module-mode-label" data-mode="active">已启用</span></div>; })}{visibleWorkbenches.map((item) => <div className="module-setting-row" key={item.id}><span className="module-setting-row__icon"><PanelsTopLeft size={16} /></span><div><strong>{item.label}</strong><p>{item.description}</p></div><span className="module-mode-label" data-mode="active">已启用</span>{((item.id === "procurement" && canManageGrants) || (item.id === "research" && canManageResearchGrants)) && <ActivationGrantsEntry scope={item.id as "procurement" | "research"} isAdmin={isAdmin} onGrantsChanged={onGrantsChanged}/>}</div>)}</div>{(moduleRegistryState !== "ready" || workbenchRegistryState !== "ready") ? <p className="settings-availability-note" role="status">{moduleRegistryState === "error" || workbenchRegistryState === "error" ? "可用功能暂时无法读取，请刷新重试。" : "正在读取可用功能…"}</p> : visibleModules.every((item) => item.id === "workbench") && visibleWorkbenches.length === 0 && <p className="settings-availability-note">暂无可用功能。</p>}</section>}{activationTarget && <div className="production-review-gate"><strong>{canRestore ? "确认恢复启用？" : "启用前，请确认以下事项"}</strong><p>{canRestore ? "沿用已有确认记录。未重启的关闭操作会被撤销，已关闭的模块将在重启后恢复。" : "请按实际情况勾选，系统自动记录确认人和时间，无需填写技术地址。"}</p>{!canRestore && <div>{([ ["business", "业务负责人已确认可以使用"], ["security", "已确认数据和人员访问范围合适"], ["code", "开发或维护人员已完成检查"], ["rollback", "已确认出现问题时可以恢复"] ] as const).map(([id, label]) => <label key={id}><input type="checkbox" checked={reviews.includes(id)} onChange={() => setReviews(toggleId(reviews, id) as ActivationReview[])} />{label}</label>)}</div>}<div className="admin-form-actions"><button className="secondary-button" type="button" onClick={clearGate}>取消</button><button className="primary-button" type="button" disabled={changingMode || (!canRestore && reviews.length !== 4)} onClick={confirmActivation}>{changingMode ? "正在保存…" : canRestore ? "确认恢复" : "确认启用"}</button></div></div>}<h3 id="settings-security-title" className="settings-section-label">运行与安全</h3><section className="settings-security" aria-labelledby="settings-security-title"><div className="settings-security-row"><span className="settings-security-icon"><Server size={19} /></span><div><strong>本地服务</strong><p>{serviceCopy.label === "已连接" ? "工作台与本地服务连接正常" : serviceCopy.label === "连接中" ? "正在检查工作台服务连接" : "服务尚未连接，请启动服务后刷新"}</p></div><span className={`setting-connection setting-connection--${serviceCopy.label === "已连接" ? "online" : serviceCopy.label === "连接中" ? "checking" : "offline"}`}><i />{serviceCopy.label}</span></div><div className="settings-security-row"><span className="settings-security-icon"><ShieldCheck size={19} /></span><div><strong>访问保护</strong><p>按账号权限限制查看和操作</p></div><span className="setting-enabled"><Check size={14} />已启用</span></div></section></section>;
 }
 
-function SettingsState({ copy, error = false }: { copy: string; error?: boolean }) { return <div className={error ? "settings-state is-error" : "settings-state"}>{copy}</div>; }
+function SettingsState({ copy, error = false }: { copy: string; error?: boolean }) { return <PageState error={error} className={error ? "settings-state is-error" : "settings-state"}>{copy}</PageState>; }
 function toggleId<T extends string>(ids: T[], id: T): T[] { return ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id]; }
 function setScopeLevel(levels: Partial<Record<AccessScope, AccessLevel>>, scopeId: AccessScope, level: AccessLevel | null) { const updated = { ...levels }; if (level === null) delete updated[scopeId]; else updated[scopeId] = level; return updated; }
 function formatDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value)); }
@@ -677,17 +598,7 @@ function ActivationGrantsEntry({scope,isAdmin,onGrantsChanged}: {scope:"procurem
   const [grantsLoaded, setGrantsLoaded] = useState(false);
   const [grantsOpen, setGrantsOpen] = useState(false);
   const [grantsInstant, setGrantsInstant] = useState(false);
-  const [grantsHeight, setGrantsHeight] = useState(0);
-  const grantsContent = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const content = grantsContent.current;
-    if (!content || !grantsLoaded) return;
-    const measure = () => setGrantsHeight(content.getBoundingClientRect().height);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, [grantsLoaded]);
+  const { contentRef: grantsContent, height: grantsHeight } = useMeasuredContent(grantsLoaded);
   return <div className="settings-grants" data-open={grantsOpen} data-instant={grantsInstant}><button id={`settings-${scope}-grants-entry`} type="button" className="settings-grants-entry" aria-expanded={grantsOpen} aria-controls={`settings-${scope}-grants-content`} onClick={(event) => { setGrantsInstant(event.detail === 0); setGrantsLoaded(true); setGrantsOpen((open) => !open); }}><ShieldCheck size={15} /><span>{scope === "research" ? "成本启用授权" : "价格启用授权"}</span><ChevronRight className="settings-grants-chevron" size={14} /></button><div id={`settings-${scope}-grants-content`} className="settings-grants-collapse" style={{ height: grantsOpen ? grantsHeight : 0 }} aria-hidden={!grantsOpen} inert={!grantsOpen}><div ref={grantsContent} className="settings-activation">{grantsLoaded && <ProcurementActivationGrants admin={isAdmin} scope={scope} onChanged={onGrantsChanged} />}</div></div></div>;
 }
 

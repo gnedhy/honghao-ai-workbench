@@ -195,7 +195,7 @@
 .moverPages .moverList { grid-area: 1 / 1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(5, minmax(var(--insight-row-height, 80px), auto)); column-gap: 32px; pointer-events: none; z-index: 0; }
 .moverPages .moverList[data-retiring="true"] { z-index: 1; }
 .moverPages .moverList[data-active="true"] { z-index: 2; pointer-events: auto; }
-.moverPages .moverList > div { min-width: 0; padding: 8px 0; background: #fff; opacity: 0; transform: perspective(600px) rotateX(90deg); transform-origin: center; backface-visibility: hidden; transition: transform 150ms var(--ease-out), opacity 150ms var(--ease-out); }
+.moverPages .moverList > div { min-width: 0; padding: 8px 0; background: #fff; opacity: 0; transform: perspective(600px) rotateX(90deg); transform-origin: center; backface-visibility: hidden; transition: transform var(--motion-exit) var(--ease-out), opacity var(--motion-exit) var(--ease-out); }
 .moverPages .moverList[data-retiring="true"] > div { transform: perspective(600px) rotateX(-90deg); }
 .moverPages .moverList[data-active="true"] > div { opacity: 1; transform: perspective(600px) rotateX(0deg); }
 .moverPages[data-instant="true"] .moverList > div { transition: none !important; }
@@ -515,10 +515,12 @@ dialog.materialCreate > header { display: flex; align-items: center; justify-con
 .historyTimeline { position: relative; display: grid; margin: 0; padding: 0 0 0 22px; list-style: none; }
 .historyTimeline::before { position: absolute; top: 20px; bottom: 20px; left: 6px; width: 1px; background: #dfe3e5; content: ""; }
 .historyTimeline li { position: relative; }
-.historyTimeline li > i { position: absolute; top: 25px; left: -20px; z-index: 1; width: 9px; height: 9px; border: 2px solid #fff; border-radius: 50%; background: #aeb5ba; box-shadow: 0 0 0 1px #cfd4d7; }
-.historyTimeline li:first-child > i { background: var(--green); box-shadow: 0 0 0 1px rgba(25,154,90,.28); }
+.historyTimeline > li > i { display: none; }
+.historyTimeline > li > button { position: relative; }
+.historyTimeline > li > button::before { position: absolute; top: 50%; transform: translateY(-50%); left: -20px; z-index: 1; width: 9px; height: 9px; border: 2px solid #fff; border-radius: 50%; background: #aeb5ba; box-shadow: 0 0 0 1px #cfd4d7; content: ""; }
+.historyTimeline > li:first-child > button::before { background: var(--green); box-shadow: 0 0 0 1px rgba(25,154,90,.28); }
 .historyTimeline button { display: grid; width: 100%; min-height: 66px; grid-template-columns: 150px minmax(170px, 1fr) minmax(300px, auto) 18px; align-items: center; gap: 16px; padding: 10px 14px; border-bottom: 1px solid var(--border); color: inherit; background: transparent; text-align: left; cursor: pointer; }
-.historyTimeline li:first-child button { border-top: 1px solid var(--border); }
+.historyTimeline > li:first-child > button { border-top: 0; }
 .historyTimeline button:hover { background: #fafbfb; }
 .historyTimeline button:focus-visible:where(html:not([data-input-modality="pointer"]) *) { position: relative; z-index: 2; border-radius: 8px; outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .historyTimeline button > svg { color: #8a9298; }
@@ -546,11 +548,11 @@ dialog.materialCreate > header { display: flex; align-items: center; justify-con
   .historyTimeline button > svg { grid-column: 3; grid-row: 1 / span 2; }
 }
 .drawerLayer { position: fixed; inset: 0; z-index: 20; overflow: clip; }
-.drawerLayer, :is(.newsDialog, dialog.drawer)::backdrop { background: rgba(33,39,43,.16); opacity: 1; transition: opacity 180ms cubic-bezier(.23,1,.32,1); }
+.drawerLayer, :is(.newsDialog, dialog.drawer)::backdrop { background: rgba(33,39,43,.16); opacity: 1; transition: opacity var(--motion-drawer) var(--ease-out); }
 .drawer { position: absolute; top: 0; right: 0; display: flex; width: min(520px, calc(100vw - 292px)); height: 100%; flex-direction: column; overflow: hidden; border-left: 1px solid var(--border); background: #fff; box-shadow: -12px 0 38px rgba(28,34,38,.08); }
-.drawer, :is(.newsDialog, dialog.drawer) { transform: translateX(0); transition: transform 180ms cubic-bezier(.32,.72,0,1); }
-.drawerLayer.closing, :is(.newsDialog, dialog.drawer).closing::backdrop { opacity: 0; transition-duration: 140ms; }
-.drawerLayer.closing .drawer, :is(.newsDialog, dialog.drawer).closing { transform: translateX(100%); transition-duration: 140ms; }
+.drawer, :is(.newsDialog, dialog.drawer) { transform: translateX(0); transition: transform var(--motion-drawer) var(--ease-drawer); }
+.drawerLayer.closing, :is(.newsDialog, dialog.drawer).closing::backdrop { opacity: 0; transition-duration: var(--motion-exit); }
+.drawerLayer.closing .drawer, :is(.newsDialog, dialog.drawer).closing { transform: translateX(100%); transition-duration: var(--motion-exit); }
 @starting-style { .drawerLayer, :is(.newsDialog, dialog.drawer)[open]::backdrop { opacity: 0; } .drawer, :is(.newsDialog, dialog.drawer)[open] { transform: translateX(100%); } }
 dialog.drawer:not([open]) { display: none; }
 .drawerHeader { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 16px; min-height: 68px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
@@ -625,8 +627,8 @@ dialog.drawer:not([open]) { display: none; }
 .adjustmentList span, .batchMeta { color: #8b939a; font-size: calc(10.5px + var(--ui-font-offset)); }
 .drawerSubpanelLayer { position: absolute; inset: 68px 0 0; z-index: 2; display: flex; align-items: flex-end; background: rgba(37,42,46,.12); opacity: 1; transition: opacity 180ms var(--ease-out); }
 .drawerSubpanel { width: 100%; max-height: min(620px, calc(100% - 18px)); overflow: auto; border-top: 1px solid var(--border); background: #fafbfb; box-shadow: 0 -12px 34px rgba(28,34,38,.08); transform: translateY(0); transition: transform 180ms var(--ease-drawer); }
-.drawerSubpanelLayer.panelClosing { opacity: 0; transition-duration: 140ms; }
-.drawerSubpanelLayer.panelClosing .drawerSubpanel { transform: translateY(16px); transition-duration: 140ms; }
+.drawerSubpanelLayer.panelClosing { opacity: 0; transition-duration: var(--motion-exit); }
+.drawerSubpanelLayer.panelClosing .drawerSubpanel { transform: translateY(16px); transition-duration: var(--motion-exit); }
 @starting-style { .drawerSubpanelLayer { opacity: 0; } .drawerSubpanel { transform: translateY(16px); } }
 .adjustmentForm { display: grid; gap: 12px; padding: 16px 18px max(18px, env(safe-area-inset-bottom)); }
 .adjustmentForm .panelHeading { display: flex; min-height: 28px; align-items: center; justify-content: space-between; gap: 12px; }
@@ -792,7 +794,7 @@ dialog.importPanel { position: fixed; inset: 0; margin: auto; padding: 0; width:
   .historyMetrics > div:nth-child(3) { border-left: 0; border-top: 1px solid var(--border); }
   .historyMetrics > div:nth-child(4) { border-top: 1px solid var(--border); }
   .historyTimeline { gap: 10px; padding-left: 0; }
-  .historyTimeline::before, .historyTimeline li > i { display: none; }
+  .historyTimeline::before, .historyTimeline > li > button::before { display: none; }
   .historyTimeline button { grid-template-columns: 1fr 18px; gap: 8px 12px; padding: 13px 14px; border: 1px solid var(--border); border-radius: 9px; background: #fff; }
   .historyTimeline li:first-child button { border-top: 1px solid var(--border); }
   .historyDate, .historySource, .historyBatchStats { grid-column: 1; }
@@ -921,3 +923,8 @@ dialog.importPanel { position: fixed; inset: 0; margin: auto; padding: 0; width:
 .grantBadge[data-status="granted"] { color: #18734b; background: #e9f5ee; }
 .grantBadge[data-status="none"] { color: #626b75; background: #f0f2f4; }
 .grantBadge[data-status="invalid"] { color: #965619; background: #fff3e3; }
+
+.drawerDialog { position: fixed; inset: 0 0 0 auto; max-width: 100%; height: 100dvh; max-height: 100dvh; margin: 0; padding: 0; border: 0; border-left: 1px solid var(--border); color: var(--text); }
+.drawerDialog[open] { display: flex; flex-direction: column; }
+.drawerTitle { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.drawerTitle h2 { white-space: normal; overflow-wrap: anywhere; }

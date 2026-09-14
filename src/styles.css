@@ -31,6 +31,8 @@
   --motion-press: 120ms;
   --motion-fast: 160ms;
   --motion-enter: 190ms;
+  --motion-exit: 140ms;
+  --motion-drawer: 180ms;
   --ui-font-offset: 1px;
   --shadow-soft: 0 8px 24px rgba(20, 28, 35, 0.07), 0 1px 2px rgba(20, 28, 35, 0.08);
   --shadow-composer: 0 10px 34px rgba(25,31,36,.055), 0 1px 3px rgba(25,31,36,.045);
@@ -1269,7 +1271,7 @@ input[type="checkbox"],input[type="radio"]{accent-color:var(--enabled-color)}
 @media (prefers-reduced-motion: reduce) {
   .settings-grants-collapse { transition: opacity 80ms ease !important; }
   .settings-grants-chevron { transition: none !important; }
-  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 80ms !important; }
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
   .auth-loading span { animation: none !important; }
   .app-shell, .context-sidebar, .sidebar, .segmented-control__indicator, .project-row__chevron { transition-duration: .01ms !important; }
   .profile-menu, .tool-select__menu, .tool-feedback, .composer__project-menu, .composer__add-menu,
@@ -1329,3 +1331,23 @@ input:focus-visible:where(html:not([data-input-modality="pointer"]) *),textarea:
 .personal-profile__password-form input:focus:where(html:not([data-input-modality="pointer"]) *){outline:2px solid var(--focus-ring);outline-offset:-2px;border-color:var(--focus-ring)}
 /* Native text fields may match focus-visible after a pointer click too. */
 html[data-input-modality="pointer"] :focus{outline:none!important}
+
+/* Shared interaction motion; business state never waits for these transitions. */
+.settings-mode-switch { transition: background-color var(--motion-fast) var(--ease-out); }
+.settings-mode-switch > span { transition: transform var(--motion-fast) var(--ease-out); }
+.settings-dialog[data-closing="true"], .modal-backdrop[data-closing="true"] {
+  animation: none !important; opacity: 0; transition: opacity var(--motion-exit) var(--ease-out); pointer-events: none;
+}
+.settings-dialog[data-closing="true"]::backdrop { opacity: 0; transition: opacity var(--motion-exit) var(--ease-out); }
+@media (prefers-reduced-motion: reduce) {
+  .settings-mode-switch > span { transition: none; }
+}
+
+dialog.settings-dialog--admin { margin: auto; padding: 0; width: min(1020px, calc(100vw - 48px)); color: var(--text); }
+dialog.settings-dialog--admin::backdrop { background: rgba(19,24,28,.28); animation: fade-in var(--motion-enter) var(--ease-out); }
+dialog.settings-dialog:not([open]) { display: none; }
+
+.ui-form-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.ui-form-footer__status { flex: 1 1 220px; min-width: 0; }
+.ui-form-footer__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; }
+@media (max-width: 600px) { .ui-form-footer__actions { flex-basis: 100%; } }

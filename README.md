@@ -52,4 +52,4 @@ docs/       使用、运维、决策与历史说明
 
 [更新日志](docs/更新日志-2026-09-14.md) · [当前交接](docs/当前交接.md) · [历史索引](docs/history/README.md)
 
-[产品范围](PRODUCT.md) · [领域模型](CONTEXT.md) · [设计约定](DESIGN.md) · [研发成本与授权](docs/研发受控成本调整-2026-09-14.md)
+[产品范围](PRODUCT.md) · [领域模型](CONTEXT.md) · [设计约定](DESIGN.md) · [组件复用](docs/components.md) · [研发成本与授权](docs/研发受控成本调整-2026-09-14.md)
