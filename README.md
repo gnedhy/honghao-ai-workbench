@@ -23,7 +23,7 @@ npm ci
 uv sync --group dev
 ```
 
-为当前进程配置 `HONGHAO_DATABASE_URL`、`HONGHAO_DATABASE_ENVIRONMENT` 和 `HONGHAO_DATA_DIR`。先用迁移账号执行 `python -m api.cli migrate`，再换应用账号创建管理员并运行 `npm run dev`；不要把连接密码写入命令、仓库或截图。配置与恢复步骤见 [运行与维护](docs/运行与维护.md)。
+按 [隔离启动步骤](docs/运行与维护.md#启动本地工作台)配置独立数据库、附件目录和端口。结构迁移使用 `uv run python -m api.cli migrate`，服务使用同库应用账号；连接凭据从受保护配置注入。默认开发代理指向 8000，与正式服务同机时使用文档中的临时代理配置。
 
 打开 [开发页面](http://127.0.0.1:4173/)，使用刚创建的管理员账号登录。新检出的代码不包含现有账号与业务数据；未配置数据库时服务保持不可用。
 
@@ -31,10 +31,9 @@ uv sync --group dev
 
 ```powershell
 npm run verify
-npm run serve
 ```
 
-`verify` 包含测试、类型检查、构建与安全扫描；接口测试要求独立 PostgreSQL 测试库，不能指向业务数据库。`serve` 提供构建后的单入口服务。
+`verify` 包含测试、类型检查、构建与安全扫描；接口测试要求独立 PostgreSQL 测试库，不能指向业务数据库。隔离构建和单入口启动见 [运行与维护](docs/运行与维护.md#构建后的单入口运行)。
 
 ## 项目结构
 

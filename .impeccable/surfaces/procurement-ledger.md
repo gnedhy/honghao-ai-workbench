@@ -1,5 +1,7 @@
 # Procurement ledger surface brief
 
+> 文档中的端口、构建号、测试结果与一次性授权为当次历史证据；不作为新任务授权。持续有效的界面约定按后续明确修订更新，现役入口见 [当前交接](../../docs/当前交接.md)。
+
 ## Draft price alignment fix — 2026-09-11
 
 - User reported the 待发布价 header no longer centered above its input. Route: evolve / operate / small, restoration of the existing approved column alignment.
