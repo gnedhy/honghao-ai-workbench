@@ -1,20 +1,21 @@
 """Read-only comparison of legacy field restrictions and scope-based access."""
 import argparse
 import json
-import sqlite3
-from pathlib import Path
+import sys
+
+import psycopg
 
 from api.authorization import FIELD_CATALOG
+from api.postgres import transaction
+from api.settings import Settings
 
 
-def compare(database):
-    with sqlite3.connect(Path(database).resolve().as_uri() + '?mode=ro', uri=True) as connection:
-        connection.execute('PRAGMA query_only=ON')
+def compare(database_url: str):
+    with transaction(database_url) as connection:
         users = connection.execute('SELECT id,username,display_name,is_active,access_level FROM identity_users').fetchall()
         scopes = connection.execute('SELECT user_id,scope_id,access_level FROM identity_user_scopes').fetchall()
         policies = {row[0]: row[1:] for row in connection.execute('SELECT field_id,read_min_level,write_min_level,read_scope_ids,write_scope_ids FROM authorization_field_policies')}
-        has_grants = connection.execute("SELECT 1 FROM sqlite_master WHERE name='procurement_activation_grants'").fetchone()
-        activation_grants = {row[0] for row in connection.execute('SELECT user_id FROM procurement_activation_grants')} if has_grants else set()
+        activation_grants = {row[0] for row in connection.execute('SELECT user_id FROM procurement_activation_grants')}
     changes = []
     for user_id, username, name, active, level in users:
         if level == 5:
@@ -47,7 +48,17 @@ def compare(database):
             '说明': '比较正式旧字段策略及采购业务操作；编辑可退回及查看归档，管理包含启用和目录管理。非当前启用工作台为未来影响。知识内容边界不变，未读取密码或会话。', '差异': changes}
 
 
+def main(argv=None):
+    parser = argparse.ArgumentParser(description='只读比较账号权限；数据库连接使用 HONGHAO_DATABASE_URL 环境变量。')
+    parser.parse_args(argv)
+    try:
+        settings = Settings.from_environment()
+        print(json.dumps(compare(settings.database_url), ensure_ascii=False, indent=2))
+        return 0
+    except (psycopg.Error, OSError, ValueError, RuntimeError):
+        print('权限比较失败，请检查数据库连接、权限和运行配置。', file=sys.stderr)
+        return 1
+
+
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('database', type=Path)
-    print(json.dumps(compare(parser.parse_args().database), ensure_ascii=False, indent=2))
+    raise SystemExit(main())

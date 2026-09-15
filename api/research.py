@@ -7,11 +7,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
+import psycopg
 from copy import deepcopy
 from datetime import UTC, datetime
 from decimal import Decimal, ROUND_HALF_UP, localcontext
-from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request, Query
@@ -19,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from api import procurement_collaboration as activation_grants
 from api.research_formulas import calculate, number, decimal_text
+from api.postgres import transaction
 
 ADJUSTMENT_REASONS = ("配方优化", "实际投料修正", "收率修正", "成本核对修正", "临时成本测算", "其他")
 
@@ -43,7 +43,7 @@ def capture(db):
     batch = db.execute("SELECT id FROM procurement_price_batches ORDER BY version DESC LIMIT 1").fetchone()
     prices = {r[0]: {"latest_price": r[1], "inventory_price": r[2]} for r in db.execute("""
         SELECT m.code,b.latest_price,i.price FROM procurement_materials m
-        LEFT JOIN procurement_price_batch_items b ON b.material_id=m.id AND b.batch_id=?
+        LEFT JOIN procurement_price_batch_items b ON b.material_id=m.id AND b.batch_id=%s
         LEFT JOIN procurement_inventory i ON i.material_id=m.id WHERE m.archived_at IS NULL
         """, (batch[0] if batch else None,))}
     return {"package": package, "prices": prices}
@@ -51,11 +51,9 @@ def capture(db):
 
 def enqueue(db, reason):
     # Called by every formal price activation and stock import, including CLI paths.
-    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='research_meta'").fetchone():
-        return
     if not db.execute("SELECT 1 FROM research_meta").fetchone():
         return
-    db.execute("INSERT INTO research_events VALUES (?,?,?,?,'pending',0,NULL)",
+    db.execute("INSERT INTO research_events(id,recorded_at,reason,inputs,status,attempts,error) VALUES (%s,%s,%s,%s,'pending',0,NULL)",
                (str(uuid4()), now(), reason, packed(capture(db))))
 
 
@@ -111,35 +109,14 @@ def comparison(current, previous):
 
 
 class ResearchStore:
-    def __init__(self, path: Path):
-        self.path = path
+    def __init__(self, url: str):
+        self.url = url
 
     def initialize(self):
-        with sqlite3.connect(self.path) as db:
-            db.execute("BEGIN IMMEDIATE")
-            db.execute("CREATE TABLE IF NOT EXISTS research_activation_grants (user_id TEXT PRIMARY KEY, manager INTEGER NOT NULL DEFAULT 0, granted_by TEXT NOT NULL, granted_at TEXT NOT NULL)")
-            db.execute("CREATE TABLE IF NOT EXISTS research_admin_events (id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL)")
+        with transaction(self.url, write=True) as db:
             version = db.execute("SELECT value FROM schema_metadata WHERE key='workbench_research_schema_version'").fetchone()
-            if version and str(version[0]) not in {"1", "2"}:
-                raise ValueError("研发存储版本不兼容")
-            for sql in (
-                "CREATE TABLE IF NOT EXISTS research_meta(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL)",
-                "CREATE TABLE IF NOT EXISTS research_formulas(id TEXT PRIMARY KEY,position INTEGER NOT NULL,revision INTEGER NOT NULL,formula TEXT NOT NULL,draft_sequence INTEGER NOT NULL DEFAULT 0)",
-                "CREATE TABLE IF NOT EXISTS research_formula_versions(id TEXT NOT NULL,revision INTEGER NOT NULL,formula TEXT NOT NULL,actor TEXT,recorded_at TEXT NOT NULL,PRIMARY KEY(id,revision))",
-                "CREATE TABLE IF NOT EXISTS research_drafts(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,formula TEXT NOT NULL,simulation_token TEXT NOT NULL,actor TEXT NOT NULL,updated_at TEXT NOT NULL)",
-                "CREATE TABLE IF NOT EXISTS research_events(id TEXT PRIMARY KEY,recorded_at TEXT NOT NULL,reason TEXT NOT NULL,inputs TEXT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL,error TEXT)",
-                "CREATE TABLE IF NOT EXISTS research_cost_records(sequence INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT NOT NULL,product_id TEXT NOT NULL,signature TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(event_id,product_id))",
-                "CREATE INDEX IF NOT EXISTS research_product_history ON research_cost_records(product_id,sequence)",
-            ):
-                db.execute(sql)
-            if 'simulation' not in {r[1] for r in db.execute('PRAGMA table_info(research_drafts)')}:
-                db.execute("ALTER TABLE research_drafts ADD COLUMN simulation TEXT")
-            if 'lifecycle' not in {r[1] for r in db.execute('PRAGMA table_info(research_formulas)')}:
-                db.execute("ALTER TABLE research_formulas ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'active' CHECK(lifecycle IN ('active','draft','inactive'))")
-            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS research_formula_name ON research_formulas(trim(json_extract(formula,'$.name')) COLLATE NOCASE)")
-            db.execute("CREATE TABLE IF NOT EXISTS research_backfill_runs(id INTEGER PRIMARY KEY CHECK(id=1),recorded_at TEXT NOT NULL,inputs TEXT NOT NULL)")
-            db.execute("CREATE TABLE IF NOT EXISTS research_backfill_records(purchase_version INTEGER NOT NULL,product_id TEXT NOT NULL,signature TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(purchase_version,product_id))")
-            db.execute("INSERT INTO schema_metadata VALUES('workbench_research_schema_version',2) ON CONFLICT(key) DO UPDATE SET value=2")
+            if not version or str(version[0]) != "2":
+                raise ValueError("研发存储版本不兼容，请先完成数据库迁移")
             if db.execute("SELECT 1 FROM research_meta").fetchone():
                 return
             row = db.execute("SELECT package_json FROM procurement_rd5_imports ORDER BY imported_at DESC LIMIT 1").fetchone()
@@ -149,7 +126,7 @@ class ResearchStore:
             historical = set(package.get("current_policy", {}).get("historical_recipe_ids", []))
             if not historical:
                 raise ValueError("尚未确认现行复配与历史试算范围")
-            db.execute("INSERT INTO research_meta VALUES(1,?)", (packed(package),))
+            db.execute("INSERT INTO research_meta(id,payload) VALUES(1,%s)", (packed(package),))
             for pos, recipe in enumerate(package["recipes"]):
                 if recipe["id"] in historical:
                     continue
@@ -157,19 +134,18 @@ class ResearchStore:
                 for line in recipe["lines"]:
                     if line["kind"] == "material" and line["ref"] == "CF401B":
                         line.update(kind="composite", ref=package["default_composite"])
-                db.execute("INSERT INTO research_formulas(id,position,revision,formula,draft_sequence) VALUES(?,?,1,?,0)", (recipe["id"], pos, packed(recipe)))
-                db.execute("INSERT INTO research_formula_versions VALUES(?,1,?,NULL,?)", (recipe["id"], packed(recipe), now()))
+                db.execute("INSERT INTO research_formulas(id,position,revision,formula,draft_sequence) VALUES(%s,%s,1,%s,0)", (recipe["id"], pos, packed(recipe)))
+                db.execute("INSERT INTO research_formula_versions(id,revision,formula,actor,recorded_at) VALUES(%s,1,%s,NULL,%s)", (recipe["id"], packed(recipe), now()))
             enqueue(db, "首次产品成本基线")
 
     def process_events(self):
         processed = 0
-        # ponytail: one SQLite writer processes the small RD5 graph; split workers only if throughput requires it.
+        # ponytail: one transaction writer processes the small RD5 graph; split workers only if throughput requires it.
         while True:
             event_id = None
             try:
-                with sqlite3.connect(self.path) as db:
-                    db.execute("BEGIN IMMEDIATE")
-                    event = db.execute("SELECT id,recorded_at,reason,inputs FROM research_events WHERE status!='done' ORDER BY rowid LIMIT 1").fetchone()
+                with transaction(self.url, write=True) as db:
+                    event = db.execute("SELECT id,recorded_at,reason,inputs FROM research_events WHERE status!='done' ORDER BY _order LIMIT 1").fetchone()
                     if not event:
                         return processed
                     event_id, recorded_at, reason, raw = event
@@ -187,7 +163,7 @@ class ResearchStore:
                     for formula in graph:
                         key = formula["id"]
                         sig = signature(inputs, results, key)
-                        old = db.execute("SELECT signature,payload FROM research_cost_records WHERE product_id=? ORDER BY sequence DESC LIMIT 1", (key,)).fetchone()
+                        old = db.execute("SELECT signature,payload FROM research_cost_records WHERE product_id=%s ORDER BY sequence DESC LIMIT 1", (key,)).fetchone()
                         if old and record_signature(json.loads(old[1])) == signature(inputs,results,key,include_basis=False):
                             continue
                         left, right = results["latest"][key], results["inventory"][key]
@@ -199,13 +175,13 @@ class ResearchStore:
                             "status": "missing" if left["missing_materials"] or right["missing_materials"] else "ready",
                             "formula": formula, "graph": [r for r in graph if r["id"] in dependencies],
                             "calculations": {p:{k:v for k,v in values.items() if k in dependencies} for p,values in results.items()}}
-                        db.execute("INSERT INTO research_cost_records(event_id,product_id,signature,payload) VALUES(?,?,?,?)", (event_id,key,sig,packed(payload)))
-                    db.execute("UPDATE research_events SET status='done',attempts=attempts+1,error=NULL WHERE id=?", (event_id,))
+                        db.execute("INSERT INTO research_cost_records(event_id,product_id,signature,payload) VALUES(%s,%s,%s,%s)", (event_id,key,sig,packed(payload)))
+                    db.execute("UPDATE research_events SET status='done',attempts=attempts+1,error=NULL WHERE id=%s", (event_id,))
                     processed += 1
-            except (ValueError, KeyError, ArithmeticError, sqlite3.Error) as error:
+            except (ValueError, KeyError, ArithmeticError, psycopg.Error) as error:
                 if event_id:
-                    with sqlite3.connect(self.path) as db:
-                        db.execute("UPDATE research_events SET status='failed',attempts=attempts+1,error=? WHERE id=?", (str(error)[:1000],event_id))
+                    with transaction(self.url, write=True) as db:
+                        db.execute("UPDATE research_events SET status='failed',attempts=attempts+1,error=%s WHERE id=%s", (str(error)[:1000],event_id))
                 raise
 
     def _options(self, db):
@@ -220,12 +196,12 @@ class ResearchStore:
 
     def _rows(self, db):
         rows = []
-        pending = db.execute("SELECT status FROM research_events WHERE status!='done' ORDER BY rowid LIMIT 1").fetchone()
+        pending = db.execute("SELECT status FROM research_events WHERE status!='done' ORDER BY _order LIMIT 1").fetchone()
         for formula_raw, has_draft in db.execute("SELECT f.formula,EXISTS(SELECT 1 FROM research_drafts d WHERE d.id=f.id) FROM research_formulas f WHERE f.lifecycle='active' ORDER BY f.position"):
             formula = json.loads(formula_raw)
             if formula["kind"] != "recipe":
                 continue
-            record = db.execute("SELECT payload FROM research_cost_records WHERE product_id=? ORDER BY sequence DESC LIMIT 1", (formula["id"],)).fetchone()
+            record = db.execute("SELECT payload FROM research_cost_records WHERE product_id=%s ORDER BY sequence DESC LIMIT 1", (formula["id"],)).fetchone()
             payload = json.loads(record[0]) if record else dict(formula, latest_cost=None,inventory_cost=None,change={"percent":None,"reason":"首次核算中"},missing_materials=[])
             payload["cost_details"] = {p: {k:payload.get(p, {}).get(k) for k in ("cost_source", "auto_cost", "difference")} for p in ("latest", "inventory")}
             for key in ("graph", "calculations", "formula", "latest", "inventory"):
@@ -241,13 +217,12 @@ class ResearchStore:
         return {"products": rows, "pending": bool(pending)}
 
     def listing(self):
-        with sqlite3.connect(self.path) as db:
+        with transaction(self.url) as db:
             return self._rows(db)
 
     def backfill_history(self):
         from api.research_history import backfill
-        with sqlite3.connect(self.path) as db:
-            db.execute('BEGIN IMMEDIATE')
+        with transaction(self.url, write=True) as db:
             return backfill(db)
 
     def _linked_history(self, db, key):
@@ -255,13 +230,13 @@ class ResearchStore:
         return linked_history(db,key)
 
     def formulas(self):
-        with sqlite3.connect(self.path) as db:
+        with transaction(self.url) as db:
             rows=[]
             for raw,lifecycle,revision,has_draft in db.execute('SELECT f.formula,f.lifecycle,f.revision,EXISTS(SELECT 1 FROM research_drafts d WHERE d.id=f.id) FROM research_formulas f ORDER BY position'):
                 formula=json.loads(raw)
                 if formula['kind']=='recipe':
                     if lifecycle=='draft':
-                        draft=db.execute('SELECT formula FROM research_drafts WHERE id=?',(formula['id'],)).fetchone()
+                        draft=db.execute('SELECT formula FROM research_drafts WHERE id=%s',(formula['id'],)).fetchone()
                         if draft:
                             formula=json.loads(draft[0])
                     rows.append(dict(formula,lifecycle=lifecycle,revision=revision,has_draft=bool(has_draft) or lifecycle=='draft'))
@@ -273,45 +248,45 @@ class ResearchStore:
             raise ValueError('请填写有效产品内编（最多200字）')
         if name.upper() in {'CF020C','CF401B'}:
             raise ValueError('该内编属于停购原料或已确认复配，不能另建产品配方')
-        with sqlite3.connect(self.path) as db:
-            db.execute('BEGIN IMMEDIATE')
+        with transaction(self.url, write=True) as db:
+            activation_grants.require_current(self.url, actor, 'can_edit', 'research')
             owners=self._options(db)['owners']
             if owner not in owners:
                 raise ValueError('请选择已有负责人')
-            if db.execute("SELECT 1 FROM research_formulas WHERE trim(json_extract(formula,'$.name'))=? COLLATE NOCASE",(name,)).fetchone():
+            if db.execute("SELECT 1 FROM research_formulas WHERE translate(trim(formula::jsonb->>'name'),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')=translate(%s,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')",(name,)).fetchone():
                 raise ValueError('产品内编已存在，请维护原配方')
             key='recipe:'+str(uuid4())
             formula={'id':key,'name':name,'owner':owner,'kind':'recipe','yield':'1','lines':[],'source_row':None,'sheet':None,'revision':0}
             position=db.execute('SELECT COALESCE(MAX(position),0)+1 FROM research_formulas').fetchone()[0]
-            db.execute("INSERT INTO research_formulas(id,position,revision,formula,lifecycle) VALUES(?,?,0,?,'draft')",(key,position,packed(formula)))
+            db.execute("INSERT INTO research_formulas(id,position,revision,formula,lifecycle) VALUES(%s,%s,0,%s,'draft')",(key,position,packed(formula)))
             return dict(formula,lifecycle='draft')
 
     def _references(self, db, key):
-        return [{'id':r['id'],'name':r['name']} for raw, in db.execute("SELECT formula FROM research_formulas WHERE lifecycle='active' AND id!=?",(key,))
+        return [{'id':r['id'],'name':r['name']} for raw, in db.execute("SELECT formula FROM research_formulas WHERE lifecycle='active' AND id!=%s ORDER BY _order",(key,))
                 for r in [json.loads(raw)] if any(line['kind']!='material' and line['ref']==key for line in r['lines'])]
 
-    def delete_formula(self, key, body):
-        with sqlite3.connect(self.path) as db:
-            db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT revision,draft_sequence,lifecycle,formula FROM research_formulas WHERE id=?', (key,)).fetchone()
+    def delete_formula(self, key, body, actor):
+        with transaction(self.url, write=True) as db:
+            activation_grants.require_current(self.url, actor, "can_edit", "research")
+            row = db.execute('SELECT revision,draft_sequence,lifecycle,formula FROM research_formulas WHERE id=%s', (key,)).fetchone()
             if not row:
                 raise KeyError('产品不存在')
             if row[1] != body['revision']:
                 raise RuntimeError('草稿已变化，请重新核对')
-            if row[0] != 0 or row[2] != 'draft' or json.loads(row[3])['kind'] != 'recipe' or db.execute('SELECT 1 FROM research_formula_versions WHERE id=?', (key,)).fetchone():
+            if row[0] != 0 or row[2] != 'draft' or json.loads(row[3])['kind'] != 'recipe' or db.execute('SELECT 1 FROM research_formula_versions WHERE id=%s', (key,)).fetchone():
                 raise ValueError('仅可删除从未启用的新配方')
-            for raw, in db.execute('SELECT formula FROM research_formulas WHERE id!=? UNION ALL SELECT formula FROM research_drafts WHERE id!=?', (key,key)):
+            for raw, in db.execute('SELECT formula FROM research_formulas WHERE id!=%s UNION ALL SELECT formula FROM research_drafts WHERE id!=%s', (key,key)):
                 recipe = json.loads(raw)
                 if any(line['kind'] != 'material' and line['ref'] == key for line in recipe['lines']):
                     raise ValueError('仍被配方或草稿引用，不能删除：' + recipe['name'])
-            db.execute('DELETE FROM research_drafts WHERE id=?', (key,))
-            db.execute('DELETE FROM research_formulas WHERE id=?', (key,))
+            db.execute('DELETE FROM research_drafts WHERE id=%s', (key,))
+            db.execute('DELETE FROM research_formulas WHERE id=%s', (key,))
         return {'status':'deleted'}
 
     def deactivate(self, key, body, actor):
-        with sqlite3.connect(self.path) as db:
-            db.execute('BEGIN IMMEDIATE')
-            row=db.execute('SELECT revision,formula,lifecycle FROM research_formulas WHERE id=?',(key,)).fetchone()
+        with transaction(self.url, write=True) as db:
+            activation_grants.require_current(self.url, actor, "can_manage_catalog", "research")
+            row=db.execute('SELECT revision,formula,lifecycle FROM research_formulas WHERE id=%s',(key,)).fetchone()
             if not row:
                 raise KeyError('产品不存在')
             if row[0]!=body['revision'] or row[2]!='active':
@@ -323,25 +298,25 @@ class ResearchStore:
             if references:
                 raise ValueError('仍被在用配方引用，不能停用：'+'、'.join(r['name'] for r in references))
             # Sequence invalidates any previously reviewed draft even if its formula is unchanged.
-            db.execute("UPDATE research_formulas SET lifecycle='inactive',draft_sequence=draft_sequence+1 WHERE id=?",(key,))
-            db.execute("UPDATE research_drafts SET revision=(SELECT draft_sequence FROM research_formulas WHERE id=?),simulation_token='' WHERE id=?",(key,key))
+            db.execute("UPDATE research_formulas SET lifecycle='inactive',draft_sequence=draft_sequence+1 WHERE id=%s",(key,))
+            db.execute("UPDATE research_drafts SET revision=(SELECT draft_sequence FROM research_formulas WHERE id=%s),simulation_token='' WHERE id=%s",(key,key))
             enqueue(db,'配方停用：'+formula['name'])
             return {'status':'inactive'}
 
     def detail(self, key):
-        with sqlite3.connect(self.path) as db:
-            row = db.execute("SELECT formula,draft_sequence,lifecycle FROM research_formulas WHERE id=?", (key,)).fetchone()
+        with transaction(self.url) as db:
+            row = db.execute("SELECT formula,draft_sequence,lifecycle FROM research_formulas WHERE id=%s", (key,)).fetchone()
             if not row:
                 raise KeyError("产品不存在")
             formula = json.loads(row[0])
             history = self._linked_history(db,key)
             current = next((r for r in history if r['record_type']=='formal'),{})
             product = next((r for r in self._rows(db)["products"] if r["id"] == key), dict(formula, **{k:current.get(k) for k in ("latest_cost","inventory_cost","change","status")}))
-            pending = db.execute("SELECT status FROM research_events WHERE status!='done' ORDER BY rowid LIMIT 1").fetchone()
+            pending = db.execute("SELECT status FROM research_events WHERE status!='done' ORDER BY _order LIMIT 1").fetchone()
             if pending:
                 product["status"] = "failed" if pending[0] == "failed" else "updating"
             product.update(lifecycle=row[2],revision=formula['revision'])
-            draft = db.execute("SELECT revision,formula,simulation_token,simulation FROM research_drafts WHERE id=?", (key,)).fetchone()
+            draft = db.execute("SELECT revision,formula,simulation_token,simulation FROM research_drafts WHERE id=%s", (key,)).fetchone()
             product['has_draft']=bool(draft) or row[2]=='draft'
             inputs = capture(db)
             if not any(r['id']==key for r in inputs['package']['recipes']):
@@ -357,17 +332,17 @@ class ResearchStore:
 
     def history(self, event_id=None):
         from api.research_history import version_history
-        with sqlite3.connect(self.path) as db:
+        with transaction(self.url) as db:
             return version_history(db,event_id)
 
     def trials(self):
-        with sqlite3.connect(self.path) as db:
+        with transaction(self.url) as db:
             package = json.loads(db.execute("SELECT payload FROM research_meta").fetchone()[0])
         historical = package["current_policy"]["historical_recipe_ids"]
         return {"recipes":[dict(r, latest=package["source_replay"].get(r["id"])) for r in package["recipes"] if r["kind"] == "recipe" and r["id"] in historical]}
 
     def _simulate(self, db, key, body):
-        row = db.execute("SELECT formula,revision,draft_sequence,lifecycle FROM research_formulas WHERE id=?", (key,)).fetchone()
+        row = db.execute("SELECT formula,revision,draft_sequence,lifecycle FROM research_formulas WHERE id=%s", (key,)).fetchone()
         if not row:
             raise KeyError("产品不存在")
         if body["draft_revision"] != row[2]:
@@ -445,39 +420,37 @@ class ResearchStore:
                 "affected":affected,"simulation_token":token,"blocking":blocking,"warnings":["收率超过100%，请核对；原表值予以保留"] if Decimal(formula["yield"]) > 1 else [],"formula":formula}
 
     def simulate(self, key, body):
-        with sqlite3.connect(self.path) as db:
-            db.execute("BEGIN")
+        with transaction(self.url) as db:
             return self._simulate(db,key,body)
 
     def save(self, key, body, actor):
-        with sqlite3.connect(self.path) as db:
-            db.execute("BEGIN IMMEDIATE")
+        with transaction(self.url, write=True) as db:
+            activation_grants.require_current(self.url, actor, "can_edit", "research")
             result = self._simulate(db,key,body)
             if body["simulation_token"] != result["simulation_token"]:
                 raise RuntimeError("试算后价格或配方已变化，请重新试算")
             revision = body["draft_revision"] + 1
-            db.execute("UPDATE research_formulas SET draft_sequence=? WHERE id=?", (revision,key))
+            db.execute("UPDATE research_formulas SET draft_sequence=%s WHERE id=%s", (revision,key))
             # New revision produces a new review token; activation checks it against current frozen inputs.
             result = self._simulate(db,key,dict(body,draft_revision=revision))
-            db.execute("INSERT INTO research_drafts(id,revision,formula,simulation_token,actor,updated_at,simulation) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,formula=excluded.formula,simulation_token=excluded.simulation_token,actor=excluded.actor,updated_at=excluded.updated_at,simulation=excluded.simulation",
+            db.execute("INSERT INTO research_drafts(id,revision,formula,simulation_token,actor,updated_at,simulation) VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,formula=excluded.formula,simulation_token=excluded.simulation_token,actor=excluded.actor,updated_at=excluded.updated_at,simulation=excluded.simulation",
                        (key,revision,packed(result["formula"]),result["simulation_token"],actor,now(),packed({k:v for k,v in result.items() if k != "formula"})))
             return {"revision":revision,"simulation_token":result["simulation_token"]}
 
-    def discard(self, key, revision):
-        with sqlite3.connect(self.path) as db:
-            db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT revision FROM research_drafts WHERE id=?", (key,)).fetchone()
+    def discard(self, key, revision, actor):
+        with transaction(self.url, write=True) as db:
+            activation_grants.require_current(self.url, actor, "can_edit", "research")
+            row = db.execute("SELECT revision FROM research_drafts WHERE id=%s", (key,)).fetchone()
             if not row or row[0] != revision:
                 raise RuntimeError("草稿已变化，请重新核对")
-            db.execute("DELETE FROM research_drafts WHERE id=?", (key,))
-            db.execute("UPDATE research_formulas SET draft_sequence=draft_sequence+1 WHERE id=?", (key,))
+            db.execute("DELETE FROM research_drafts WHERE id=%s", (key,))
+            db.execute("UPDATE research_formulas SET draft_sequence=draft_sequence+1 WHERE id=%s", (key,))
         return {"status":"discarded"}
 
     def activate(self, key, body, actor):
-        with sqlite3.connect(self.path) as db:
-            db.execute("BEGIN IMMEDIATE")
-            activation_grants.require_current(self.path, actor, "can_activate", "research")
-            draft = db.execute("SELECT revision,formula,actor FROM research_drafts WHERE id=?", (key,)).fetchone()
+        with transaction(self.url, write=True) as db:
+            activation_grants.require_current(self.url, actor, "can_activate", "research")
+            draft = db.execute("SELECT revision,formula,actor FROM research_drafts WHERE id=%s", (key,)).fetchone()
             if not draft or draft[0] != body["revision"]:
                 raise RuntimeError("草稿已变化，请重新核对")
             result = self._simulate(db,key,{"formula":json.loads(draft[1]),"draft_revision":draft[0]})
@@ -488,11 +461,11 @@ class ResearchStore:
             formula = result["formula"]
             formula.update(edited_by=draft[2], activated_by=actor)
             for field, user_id in (("editor_name", draft[2]), ("activator_name", actor)):
-                person = db.execute("SELECT display_name FROM identity_users WHERE id=?", (user_id,)).fetchone()
+                person = db.execute("SELECT display_name FROM identity_users WHERE id=%s", (user_id,)).fetchone()
                 formula[field] = person[0] if person else user_id
-            db.execute("UPDATE research_formulas SET revision=?,formula=?,draft_sequence=draft_sequence+1,lifecycle='active' WHERE id=?", (formula["revision"],packed(formula),key))
-            db.execute("INSERT INTO research_formula_versions VALUES(?,?,?,?,?)", (key,formula["revision"],packed(formula),actor,now()))
-            db.execute("DELETE FROM research_drafts WHERE id=?", (key,))
+            db.execute("UPDATE research_formulas SET revision=%s,formula=%s,draft_sequence=draft_sequence+1,lifecycle='active' WHERE id=%s", (formula["revision"],packed(formula),key))
+            db.execute("INSERT INTO research_formula_versions(id,revision,formula,actor,recorded_at) VALUES(%s,%s,%s,%s,%s)", (key,formula["revision"],packed(formula),actor,now()))
+            db.execute("DELETE FROM research_drafts WHERE id=%s", (key,))
             enqueue(db,"配方启用："+formula["name"])
         return {"status":"updating"}
 
@@ -576,14 +549,14 @@ def create_research_router(store, settings):
     @router.get("/activation-grants")
     def grants(request:Request, offset:int=Query(0,ge=0), limit:int=Query(10,ge=1,le=50)):
         user=actor(request,3)
-        if not activation_grants.capabilities(store.path,user,"research")["can_manage_grants"]:
+        if not activation_grants.capabilities(store.url,user,"research")["can_manage_grants"]:
             raise HTTPException(403,"无启用授权管理权限")
-        return activation_grants.grants(store.path,"research",offset,limit)
+        return activation_grants.grants(store.url,"research",offset,limit)
     @router.put("/activation-grants/{user_id}")
     def set_grant(user_id:str,body:ActivationGrantBody,request:Request):
         user=actor(request,3)
-        run(activation_grants.set_grant,store.path,user,user_id,body.enabled,body.manager,"research")
-        return activation_grants.grants(store.path,"research")
+        run(activation_grants.set_grant,store.url,user,user_id,body.enabled,body.manager,"research")
+        return activation_grants.grants(store.url,"research")
     @router.get("/products")
     def products(request:Request):
         actor(request)
@@ -606,12 +579,12 @@ def create_research_router(store, settings):
         return {**store.listing(),**store.history()}
     @router.delete("/products/{key}")
     def delete_formula(key:str,body:DeleteFormulaBody,request:Request):
-        actor(request,3)
-        return run(store.delete_formula,key,body.model_dump())
+        user=actor(request,3)
+        return run(store.delete_formula,key,body.model_dump(),user["id"])
     @router.get("/products/{key}")
     def detail(key:str,request:Request):
         user=actor(request)
-        return {**run(store.detail,key),"capabilities":activation_grants.capabilities(store.path,user,"research")}
+        return {**run(store.detail,key),"capabilities":activation_grants.capabilities(store.url,user,"research")}
     @router.get("/history")
     def history(request:Request):
         actor(request)
@@ -634,12 +607,12 @@ def create_research_router(store, settings):
         return run(store.save,key,body.model_dump(by_alias=True),user["id"])
     @router.delete("/products/{key}/draft")
     def discard(key:str,body:RevisionBody,request:Request):
-        actor(request,3)
-        return run(store.discard,key,body.revision)
+        user=actor(request,3)
+        return run(store.discard,key,body.revision,user["id"])
     @router.post("/products/{key}/activate")
     def activate(key:str,body:RevisionBody,request:Request):
         user=actor(request,3)
-        if not activation_grants.capabilities(store.path,user,"research")["can_activate"]:
+        if not activation_grants.capabilities(store.url,user,"research")["can_activate"]:
             raise HTTPException(403,"没有研发成本启用权限")
         return run(store.activate,key,body.model_dump(),user["id"])
     return router

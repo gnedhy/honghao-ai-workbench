@@ -1,17 +1,18 @@
-import sqlite3
 import time
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from api.database import Database
-from api.identity import IdentityStore
+from api.identity import DuplicateIdentityError, IdentityStore, _hash_password
 from api.main import create_app
+from api.postgres import transaction
 from api.settings import Settings
 
 
 def create_admin(settings: Settings, password: str = "Correct-Horse-2026") -> None:
-    IdentityStore(settings.database_path).create_user(
+    IdentityStore(settings.database_url).create_user(
         username="admin",
         display_name="系统管理员",
         department="总经办",
@@ -203,13 +204,13 @@ def test_identity_schema_is_additive_to_core_schema_v5(tmp_path: Path) -> None:
     with TestClient(create_app(settings)) as client:
         health = client.get("/api/health")
 
-    with sqlite3.connect(settings.database_path) as connection:
+    with transaction(settings.database_url) as connection:
         identity_version = connection.execute(
             "SELECT value FROM schema_metadata WHERE key = 'identity_schema_version'"
         ).fetchone()
 
     assert health.status_code == 200
-    assert Database(settings.database_path).schema_version() == 5
+    assert Database(settings.database_url).schema_version() == 5
     assert identity_version == (6,)
 
 
@@ -217,7 +218,7 @@ def test_non_admin_cannot_manage_users(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
-        IdentityStore(settings.database_path).create_user(
+        IdentityStore(settings.database_url).create_user(
             username="employee",
             display_name="普通员工",
             department=None,
@@ -235,18 +236,43 @@ def test_non_admin_cannot_manage_users(tmp_path: Path) -> None:
 def test_newer_identity_schema_is_not_silently_downgraded(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
     settings.ensure_directories()
-    Database(settings.database_path).initialize()
-    with sqlite3.connect(settings.database_path) as connection:
+    with transaction(settings.database_url, write=True) as connection:
         connection.execute(
-            "INSERT INTO schema_metadata (key, value) VALUES ('identity_schema_version', 7)"
+            "UPDATE schema_metadata SET value=7 WHERE key='identity_schema_version'"
         )
 
     with TestClient(create_app(settings)) as client:
         assert client.get("/api/readiness").status_code == 503
         assert client.get("/api/users").status_code == 503
 
-    with sqlite3.connect(settings.database_path) as connection:
+    with transaction(settings.database_url) as connection:
         version = connection.execute(
             "SELECT value FROM schema_metadata WHERE key = 'identity_schema_version'"
         ).fetchone()
     assert version == (7,)
+
+
+def test_postgresql_username_uniqueness_preserves_ascii_case_insensitivity(tmp_path: Path) -> None:
+    settings = Settings.from_data_dir(tmp_path / 'data')
+    store = IdentityStore(settings.database_url)
+    user = store.create_user(username='Mixed-Buyer', display_name='采购人员', department=None, password='Case-Password-2026')
+    with pytest.raises(DuplicateIdentityError):
+        store.create_user(username='mixed-buyer', display_name='重复人员', department=None, password='Other-Password-2026')
+    session = store.login('MIXED-BUYER', 'Case-Password-2026', 300)
+    assert session is not None and session[0]['id'] == user['id']
+    assert len(store.list_users()) == 1
+
+
+def test_postgresql_password_bytes_survive_store_restart_and_login(tmp_path: Path) -> None:
+    settings = Settings.from_data_dir(tmp_path / 'data')
+    user = IdentityStore(settings.database_url).create_user(
+        username='binary-password', display_name='密码校验', department=None, password='Binary-Password-2026',
+    )
+    with transaction(settings.database_url) as connection:
+        saved = connection.execute('SELECT password_salt,password_hash FROM identity_users WHERE id=%s', (user['id'],)).fetchone()
+    assert all(isinstance(value, bytes) for value in saved)
+    assert len(saved[0]) == 16 and len(saved[1]) == 32
+    assert _hash_password('Binary-Password-2026', saved[0]) == saved[1]
+    assert IdentityStore(settings.database_url).login('binary-password', 'Binary-Password-2026', 300)
+    with transaction(settings.database_url) as connection:
+        assert connection.execute('SELECT password_salt,password_hash FROM identity_users WHERE id=%s', (user['id'],)).fetchone() == saved

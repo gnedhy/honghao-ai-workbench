@@ -1,0 +1,2 @@
+# Migration checksums must remain identical across Windows and server checkouts.
+api/migrations/postgresql/*.sql text eol=lf

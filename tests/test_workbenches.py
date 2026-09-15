@@ -1,10 +1,11 @@
+import os
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
 from api.database import Database
 from api.modules import default_module_modes
+from api.postgres import transaction
 from api.settings import Settings
 from tests.helpers import authenticated_client
 
@@ -162,9 +163,9 @@ def test_core_schema_ignores_additive_workbench_tables(tmp_path: Path) -> None:
     with authenticated_client(settings):
         pass
 
-    with sqlite3.connect(settings.database_path) as connection:
+    with transaction(os.environ['HONGHAO_TEST_MIGRATION_URL'], write=True) as connection:
         connection.execute(
-            "INSERT INTO schema_metadata (key, value) VALUES (?, ?)",
+            "INSERT INTO schema_metadata (key, value) VALUES (%s, %s)",
             ("workbench_future_schema_version", 1),
         )
         connection.execute(
@@ -176,5 +177,5 @@ def test_core_schema_ignores_additive_workbench_tables(tmp_path: Path) -> None:
         project = client.post("/api/projects", json={"title": "采购成本验证"})
 
     assert health.status_code == 200
-    assert Database(settings.database_path).schema_version() == 5
+    assert Database(settings.database_url).schema_version() == 5
     assert project.status_code == 201

@@ -1,4 +1,4 @@
-import sqlite3
+import os
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -7,6 +7,7 @@ from api.authorization import AuthorizationStore
 from api.database import Database
 from api.identity import IdentityStore
 from api.main import create_app
+from api.postgres import transaction
 from api.settings import Settings
 from tests.helpers import authenticated_client
 
@@ -14,7 +15,7 @@ from tests.helpers import authenticated_client
 def test_field_management_endpoints_are_retired_without_changing_history(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
     with authenticated_client(settings) as admin:
-        store = AuthorizationStore(settings.database_path)
+        store = AuthorizationStore(settings.database_url)
         field = store.create_field("采购", "合同付款条件", "历史配置", 2, 3, ["procurement"], ["procurement"])
         store.audit("field.created", actor_user_id=None, target_type="field", target_id=field["id"])
         before = store.list_field_policies()
@@ -35,7 +36,7 @@ def test_non_admin_cannot_read_management_policies_or_audit(tmp_path: Path) -> N
     settings = Settings.from_data_dir(tmp_path / "data")
 
     with TestClient(create_app(settings)) as employee:
-        IdentityStore(settings.database_path).create_user(
+        IdentityStore(settings.database_url).create_user(
             username="employee",
             display_name="普通员工",
             department=None,
@@ -66,60 +67,34 @@ def test_non_admin_cannot_read_management_policies_or_audit(tmp_path: Path) -> N
     assert [response.status_code for response in responses] == [404, 404, 403]
 
 
-def test_authorization_schema_migrates_custom_fields_additively(tmp_path: Path) -> None:
+def test_authorization_v1_requires_explicit_upgrade_without_recreating_missing_table(tmp_path: Path) -> None:
+    """Old SQLite schemas must be upgraded by the old app before PostgreSQL import."""
     settings = Settings.from_data_dir(tmp_path / "data")
-
-    with TestClient(create_app(settings)):
-        pass
-    with sqlite3.connect(settings.database_path) as connection:
+    with transaction(os.environ['HONGHAO_TEST_MIGRATION_URL'], write=True) as connection:
         connection.execute("DROP TABLE authorization_custom_fields")
-        connection.execute(
-            "UPDATE schema_metadata SET value = 1 WHERE key = 'authorization_schema_version'"
-        )
-
-    with TestClient(create_app(settings)):
-        pass
-    with sqlite3.connect(settings.database_path) as connection:
-        version = connection.execute(
-            "SELECT value FROM schema_metadata WHERE key = 'authorization_schema_version'"
-        ).fetchone()
-        custom_fields_table = connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'authorization_custom_fields'"
-        ).fetchone()
-
-    assert version == (5,)
-    assert custom_fields_table == ("authorization_custom_fields",)
+        connection.execute("UPDATE schema_metadata SET value=1 WHERE key='authorization_schema_version'")
+    with TestClient(create_app(settings)) as client:
+        assert client.get('/api/readiness').status_code == 503
+        assert client.get('/api/admin/audit-events').status_code == 503
+    with transaction(settings.database_url) as connection:
+        assert connection.execute("SELECT value FROM schema_metadata WHERE key='authorization_schema_version'").fetchone() == (1,)
+        assert connection.execute("SELECT to_regclass('authorization_custom_fields')").fetchone() == (None,)
 
 
-def test_authorization_v3_migrates_removed_basic_level_to_view(tmp_path: Path) -> None:
+def test_authorization_v3_is_rejected_without_rewriting_legacy_field_levels(tmp_path: Path) -> None:
+    """A prior application's basic-to-view conversion is not performed by PostgreSQL startup."""
     settings = Settings.from_data_dir(tmp_path / "data")
-
-    with TestClient(create_app(settings)):
-        pass
-    store = AuthorizationStore(settings.database_path)
-    store.set_field_policy(
-        "procurement.material_unit_price",
-        2,
-        3,
-        ["procurement"],
-        ["procurement"],
-    )
-    with sqlite3.connect(settings.database_path) as connection:
-        connection.execute(
-            "UPDATE authorization_field_policies SET read_min_level = 1, write_min_level = 1 WHERE field_id = 'procurement.material_unit_price'"
-        )
-        connection.execute(
-            "UPDATE schema_metadata SET value = 3 WHERE key = 'authorization_schema_version'"
-        )
-
-    store.initialize()
-    policy = next(
-        item for item in store.list_field_policies()
-        if item["id"] == "procurement.material_unit_price"
-    )
-
-    assert policy["read_min_level"] == 2
-    assert policy["write_min_level"] == 3
+    store = AuthorizationStore(settings.database_url)
+    store.set_field_policy('procurement.material_unit_price', 2, 3, ['procurement'], ['procurement'])
+    with transaction(settings.database_url, write=True) as connection:
+        connection.execute("UPDATE authorization_field_policies SET read_min_level=1,write_min_level=1 WHERE field_id='procurement.material_unit_price'")
+        connection.execute("UPDATE schema_metadata SET value=3 WHERE key='authorization_schema_version'")
+    with TestClient(create_app(settings)) as client:
+        assert client.get('/api/readiness').status_code == 503
+        assert client.get('/api/admin/audit-events').status_code == 503
+    with transaction(settings.database_url) as connection:
+        assert connection.execute("SELECT read_min_level,write_min_level,read_scope_ids,write_scope_ids FROM authorization_field_policies WHERE field_id='procurement.material_unit_price'").fetchone() == (1, 1, '["procurement"]', '["procurement"]')
+        assert connection.execute("SELECT value FROM schema_metadata WHERE key='authorization_schema_version'").fetchone() == (3,)
 
 
 def test_authorization_schema_is_additive_and_not_downgraded(tmp_path: Path) -> None:
@@ -128,7 +103,7 @@ def test_authorization_schema_is_additive_and_not_downgraded(tmp_path: Path) -> 
     with TestClient(create_app(settings)) as client:
         health = client.get("/api/health")
 
-    with sqlite3.connect(settings.database_path) as connection:
+    with transaction(settings.database_url, write=True) as connection:
         version = connection.execute(
             "SELECT value FROM schema_metadata WHERE key = 'authorization_schema_version'"
         ).fetchone()
@@ -137,7 +112,7 @@ def test_authorization_schema_is_additive_and_not_downgraded(tmp_path: Path) -> 
         )
 
     assert health.status_code == 200
-    assert Database(settings.database_path).schema_version() == 5
+    assert Database(settings.database_url).schema_version() == 5
     assert version == (5,)
     with TestClient(create_app(settings)) as client:
         assert client.get("/api/readiness").status_code == 503

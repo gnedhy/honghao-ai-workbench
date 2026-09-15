@@ -393,6 +393,13 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
     </div>
     <h3 className="settings-section-label">更新日志</h3>
     <ol className="settings-timeline" tabIndex={0} aria-label="更新日志"><li>
+      <div className="changelog-date"><time dateTime="2026-09-15">2026年9月15日</time></div>
+      <div className="settings-timeline-content">
+        <div><strong>数据存储升级</strong><p>升级为 PostgreSQL，保留现有账号、权限、采购价格、配方及成本历史。登录方式和日常操作不变，采购与研发继续按原规则同步。</p></div>
+        <div><strong>数据与恢复校验</strong><p>逐项核对原有价格版本、产品成本、试算和排行榜，保留金额精度及历史记录；完善备份、恢复和写入一致性检查。</p></div>
+        <div><strong>授权记录显示</strong><p>移除授权记录末尾多余的分隔线，采购与研发保持一致。</p></div>
+      </div>
+    </li><li>
       <div className="changelog-date"><time dateTime="2026-09-14">2026年9月14日</time></div>
       <div className="settings-timeline-content">
         <div><strong>配方编辑与草稿</strong><p>补齐配方比例与负责人，支持比例和投料自动换算或独立填写、拖拽排序。试算后调整实时更新；保存草稿锁定填写，重开先显示已存结果并核验价格，取消保存保留填写。</p></div>

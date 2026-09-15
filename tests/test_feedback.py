@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from api.identity import IdentityStore
 from api.main import create_app
+from api.postgres import transaction
 from api.settings import Settings
 from tests.helpers import TEST_ADMIN_PASSWORD, authenticated_client
 
@@ -15,7 +16,7 @@ def login(client, name):
 
 
 def accounts(settings):
-    identities = IdentityStore(settings.database_path)
+    identities = IdentityStore(settings.database_url)
     for name in ('alice', 'bob', 'admin2'):
         identities.create_user(username=name, display_name=name, department=None,
             password=TEST_ADMIN_PASSWORD, is_system_admin=name == 'admin2')
@@ -60,6 +61,7 @@ def test_feedback_permissions_and_notification_loop(tmp_path):
         assert client.get('/api/feedback/unread').json() == {'count': 1}
         assert client.post(path + '/read', json={'revision': 3}).status_code == 409
         assert client.post(path + '/read', json={'revision': 2}).status_code == 200
+        assert client.post(path + '/read', json={'revision': 1}).status_code == 200
         assert client.get('/api/feedback/unread').json() == {'count': 0}
     with authenticated_client(settings) as client:
         login(client, 'alice')
@@ -117,3 +119,34 @@ def test_feedback_authentication_and_csrf(tmp_path):
         assert client.post('/api/feedback', json=payload, headers={'Origin': 'https://evil.test'}).status_code == 403
         assert client.post('/api/feedback', json=payload, headers={'Sec-Fetch-Site': 'cross-site'}).status_code == 403
         assert client.post('/api/feedback', json=payload, headers={'Origin': 'http://testserver'}).status_code == 200
+
+
+def test_feedback_stable_order_and_response_contract(tmp_path):
+    settings = Settings.from_data_dir(tmp_path)
+    with authenticated_client(settings) as client:
+        first = submit(client, text='第一条')
+        second = submit(client, text='第二条')
+        with transaction(settings.database_url, write=True) as connection:
+            connection.execute("UPDATE feedback SET created_at=%s", ('2026-09-14T12:00:00+00:00',))
+        items = client.get('/api/feedback').json()
+        assert [item['id'] for item in items] == [second['id'], first['id']]
+        assert all('_order' not in item and 'image' not in item for item in items)
+
+
+def test_feedback_rechecks_account_before_writing(tmp_path, monkeypatch):
+    """Simulate account deactivation after middleware authentication but before the write lock."""
+    settings = Settings.from_data_dir(tmp_path)
+    with authenticated_client(settings) as client:
+        accounts(settings)
+        login(client, 'alice')
+
+        def deactivate_after_authentication(value):
+            with transaction(settings.database_url, write=True) as connection:
+                connection.execute("UPDATE identity_users SET is_active=0 WHERE username='alice'")
+            return None, None
+
+        monkeypatch.setattr('api.feedback.decode_image', deactivate_after_authentication)
+        response = client.post('/api/feedback', json={'kind': '问题反馈', 'text': '不应保存'})
+        assert response.status_code == 401
+        login(client, 'test-admin')
+        assert client.get('/api/feedback').json() == []

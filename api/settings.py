@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from api.postgres import database_url as validate_database_url, ENVIRONMENTS
 from api.modules import (
     ModuleId,
     ModuleMode,
@@ -23,7 +24,8 @@ from api.workbenches import (
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
-    database_path: Path
+    database_url: str = field(repr=False)
+    database_environment: str
     controlled_work_dir: Path
     module_modes: dict[ModuleId, ModuleMode]
     workbench_modes: dict[WorkbenchId, WorkbenchMode]
@@ -38,11 +40,20 @@ class Settings:
         module_modes: dict[ModuleId, ModuleMode] | None = None,
         session_ttl_seconds: int = 12 * 60 * 60,
         environment: RuntimeEnvironment = "test",
+        *,
+        database_url: str | None = None,
+        database_environment: str | None = None,
     ) -> "Settings":
         if session_ttl_seconds < 1:
             raise ValueError("Session TTL must be at least one second")
         if environment not in {"test", "production"}:
             raise ValueError("Environment must be test or production")
+        url = validate_database_url(database_url)
+        database_environment = database_environment or os.environ.get("HONGHAO_DATABASE_ENVIRONMENT", environment)
+        if database_environment not in ENVIRONMENTS:
+            raise ValueError("Invalid database environment")
+        if environment == "test" and database_environment == "production":
+            raise ValueError("Test runtime cannot use the production database")
         resolved_data_dir = data_dir.resolve()
         environment_marker = resolved_data_dir / "environment"
         if environment_marker.exists() and environment_marker.read_text(encoding="utf-8").strip() != environment:
@@ -59,7 +70,8 @@ class Settings:
         )
         return cls(
             data_dir=resolved_data_dir,
-            database_path=resolved_data_dir / "honghao.db",
+            database_url=url,
+            database_environment=database_environment,
             controlled_work_dir=resolved_data_dir / "controlled-work",
             module_modes=persisted_module_modes,
             workbench_modes=persisted_workbench_modes,

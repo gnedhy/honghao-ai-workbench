@@ -2,6 +2,8 @@
 
 面向企业日常业务的本地工作台，当前聚焦采购价格管理与研发产品成本。
 
+2026 年 9 月 15 日已完成 PostgreSQL 正式切换，原账号与业务数据保留。[发布与恢复记录](docs/正式发布-2026-09-15.md) · [当前交接](docs/当前交接.md)。
+
 ## 已实现
 
 | 工作台 | 主要能力 |
@@ -14,16 +16,16 @@
 
 ## 本地启动
 
-需要 **Node.js 24、Python 3.12 和 uv**。在新检出的项目中执行：
+需要 **Node.js 24、Python 3.12、uv 和 PostgreSQL 18**。先准备独立数据库、迁移账号及应用账号，再安装依赖：
 
 ```powershell
 npm ci
 uv sync --group dev
-uv run python -m api.cli create-admin
-npm run dev
 ```
 
-打开 [开发页面](http://127.0.0.1:4173/)，使用刚创建的管理员账号登录。默认使用独立本地数据目录，不包含现有正式业务数据。
+为当前进程配置 `HONGHAO_DATABASE_URL`、`HONGHAO_DATABASE_ENVIRONMENT` 和 `HONGHAO_DATA_DIR`。先用迁移账号执行 `python -m api.cli migrate`，再换应用账号创建管理员并运行 `npm run dev`；不要把连接密码写入命令、仓库或截图。配置与恢复步骤见 [运行与维护](docs/运行与维护.md)。
+
+打开 [开发页面](http://127.0.0.1:4173/)，使用刚创建的管理员账号登录。新检出的代码不包含现有账号与业务数据；未配置数据库时服务保持不可用。
 
 构建与检查：
 
@@ -32,7 +34,7 @@ npm run verify
 npm run serve
 ```
 
-`verify` 包含测试、类型检查、构建与安全扫描；`serve` 提供构建后的单入口服务。生产环境隔离、备份与恢复见 [运行与维护](docs/运行与维护.md)。
+`verify` 包含测试、类型检查、构建与安全扫描；接口测试要求独立 PostgreSQL 测试库，不能指向业务数据库。`serve` 提供构建后的单入口服务。
 
 ## 项目结构
 
@@ -50,6 +52,6 @@ docs/       使用、运维、决策与历史说明
 
 ## 文档
 
-[更新日志](docs/更新日志-2026-09-14.md) · [当前交接](docs/当前交接.md) · [历史索引](docs/history/README.md)
+[更新日志](docs/更新日志-2026-09-15.md) · [运行与维护](docs/运行与维护.md) · [历史索引](docs/history/README.md)
 
 [产品范围](PRODUCT.md) · [领域模型](CONTEXT.md) · [设计约定](DESIGN.md) · [组件复用](docs/components.md) · [研发成本与授权](docs/研发受控成本调整-2026-09-14.md)

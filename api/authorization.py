@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+import psycopg
+from api.postgres import transaction
 from contextlib import nullcontext
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -25,85 +25,9 @@ FIELD_CATALOG: tuple[tuple[str, str, str, str], ...] = (
 )
 
 class AuthorizationStore:
-    def __init__(self, path: Path) -> None:
-        self.path = path
+    def __init__(self, url: str) -> None:
+        self.url = url
 
-    def initialize(self) -> None:
-        with sqlite3.connect(self.path) as connection:
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS authorization_role_permissions (role_id TEXT NOT NULL, permission_id TEXT NOT NULL, PRIMARY KEY (role_id, permission_id))"
-            )
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS authorization_field_policies (field_id TEXT PRIMARY KEY, read_role_ids TEXT NOT NULL DEFAULT '[]', write_role_ids TEXT NOT NULL DEFAULT '[]', read_min_level INTEGER NOT NULL DEFAULT 4, write_min_level INTEGER NOT NULL DEFAULT 4, read_scope_ids TEXT NOT NULL DEFAULT '[]', write_scope_ids TEXT NOT NULL DEFAULT '[]')"
-            )
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS authorization_custom_fields (id TEXT PRIMARY KEY, area TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL, UNIQUE (area, name))"
-            )
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS authorization_audit_events (id TEXT PRIMARY KEY, actor_user_id TEXT, action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, created_at TEXT NOT NULL)"
-            )
-            version = connection.execute(
-                "SELECT value FROM schema_metadata WHERE key = 'authorization_schema_version'"
-            ).fetchone()
-            if version is None:
-                connection.execute(
-                    "INSERT INTO schema_metadata (key, value) VALUES ('authorization_schema_version', ?)",
-                    (AUTHORIZATION_SCHEMA_VERSION,),
-                )
-                version = (AUTHORIZATION_SCHEMA_VERSION,)
-            elif int(version[0]) == 1:
-                connection.execute(
-                    "UPDATE schema_metadata SET value = ? WHERE key = 'authorization_schema_version'",
-                    (2,),
-                )
-                version = (2,)
-            if int(version[0]) == 2:
-                columns = {
-                    str(row[1])
-                    for row in connection.execute("PRAGMA table_info(authorization_field_policies)")
-                }
-                if "read_min_level" not in columns:
-                    connection.execute("ALTER TABLE authorization_field_policies ADD COLUMN read_min_level INTEGER NOT NULL DEFAULT 4")
-                    connection.execute("ALTER TABLE authorization_field_policies ADD COLUMN write_min_level INTEGER NOT NULL DEFAULT 4")
-                    connection.execute("ALTER TABLE authorization_field_policies ADD COLUMN read_scope_ids TEXT NOT NULL DEFAULT '[]'")
-                    connection.execute("ALTER TABLE authorization_field_policies ADD COLUMN write_scope_ids TEXT NOT NULL DEFAULT '[]'")
-                for field_id, read_roles, write_roles in connection.execute(
-                    "SELECT field_id, read_role_ids, write_role_ids FROM authorization_field_policies"
-                ).fetchall():
-                    read_level, read_scopes = _legacy_policy(json.loads(str(read_roles)))
-                    write_level, write_scopes = _legacy_policy(json.loads(str(write_roles)))
-                    connection.execute(
-                        "UPDATE authorization_field_policies SET read_min_level = ?, write_min_level = ?, read_scope_ids = ?, write_scope_ids = ? WHERE field_id = ?",
-                        (read_level, write_level, json.dumps(read_scopes), json.dumps(write_scopes), field_id),
-                    )
-                connection.execute(
-                    "UPDATE schema_metadata SET value = ? WHERE key = 'authorization_schema_version'",
-                    (3,),
-                )
-                version = (3,)
-            if int(version[0]) == 3:
-                connection.execute(
-                    "UPDATE authorization_field_policies SET read_min_level = 2 WHERE read_min_level = 1"
-                )
-                connection.execute(
-                    "UPDATE authorization_field_policies SET write_min_level = 2 WHERE write_min_level = 1"
-                )
-                connection.execute(
-                    "UPDATE schema_metadata SET value = ? WHERE key = 'authorization_schema_version'",
-                    (4,),
-                )
-                version = (4,)
-            if int(version[0]) == 4:
-                connection.execute(
-                    "UPDATE authorization_field_policies SET write_min_level = 3 WHERE write_min_level < 3"
-                )
-                connection.execute(
-                    "UPDATE schema_metadata SET value = ? WHERE key = 'authorization_schema_version'",
-                    (AUTHORIZATION_SCHEMA_VERSION,),
-                )
-                version = (AUTHORIZATION_SCHEMA_VERSION,)
-            if int(version[0]) != AUTHORIZATION_SCHEMA_VERSION:
-                raise RuntimeError("Unsupported authorization schema version")
 
     def has_module_access(
         self,
@@ -126,7 +50,7 @@ class AuthorizationStore:
         return is_system_admin or scope_levels.get(workbench_id, 0) >= 2
 
     def list_field_policies(self) -> list[dict[str, Any]]:
-        with sqlite3.connect(self.path) as connection:
+        with transaction(self.url) as connection:
             rows = {
                 str(row[0]): (int(row[1]), int(row[2]), json.loads(str(row[3])), json.loads(str(row[4])))
                 for row in connection.execute(
@@ -160,17 +84,17 @@ class AuthorizationStore:
         field_id = f"custom.{uuid4()}"
         read_scopes = _validate_policy(read_min_level, read_scope_ids)
         write_scopes = _validate_policy(write_min_level, write_scope_ids, write=True)
-        with sqlite3.connect(self.path) as connection:
+        with transaction(self.url, write=True) as connection:
             try:
                 connection.execute(
-                    "INSERT INTO authorization_custom_fields (id, area, name, description) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO authorization_custom_fields (id, area, name, description) VALUES (%s, %s, %s, %s)",
                     (field_id, area, name, description),
                 )
                 connection.execute(
-                    "INSERT INTO authorization_field_policies (field_id, read_role_ids, write_role_ids, read_min_level, write_min_level, read_scope_ids, write_scope_ids) VALUES (?, '[]', '[]', ?, ?, ?, ?)",
+                    "INSERT INTO authorization_field_policies (field_id, read_role_ids, write_role_ids, read_min_level, write_min_level, read_scope_ids, write_scope_ids) VALUES (%s, '[]', '[]', %s, %s, %s, %s)",
                     (field_id, read_min_level, write_min_level, json.dumps(read_scopes), json.dumps(write_scopes)),
                 )
-            except sqlite3.IntegrityError as error:
+            except psycopg.IntegrityError as error:
                 raise ValueError("Field already exists") from error
         return next(field for field in self.list_field_policies() if field["id"] == field_id)
 
@@ -186,9 +110,9 @@ class AuthorizationStore:
             raise ValueError("Unknown field")
         read_scopes = _validate_policy(read_min_level, read_scope_ids)
         write_scopes = _validate_policy(write_min_level, write_scope_ids, write=True)
-        with sqlite3.connect(self.path) as connection:
+        with transaction(self.url, write=True) as connection:
             connection.execute(
-                "INSERT INTO authorization_field_policies (field_id, read_role_ids, write_role_ids, read_min_level, write_min_level, read_scope_ids, write_scope_ids) VALUES (?, '[]', '[]', ?, ?, ?, ?) ON CONFLICT(field_id) DO UPDATE SET read_min_level = excluded.read_min_level, write_min_level = excluded.write_min_level, read_scope_ids = excluded.read_scope_ids, write_scope_ids = excluded.write_scope_ids",
+                "INSERT INTO authorization_field_policies (field_id, read_role_ids, write_role_ids, read_min_level, write_min_level, read_scope_ids, write_scope_ids) VALUES (%s, '[]', '[]', %s, %s, %s, %s) ON CONFLICT(field_id) DO UPDATE SET read_min_level = excluded.read_min_level, write_min_level = excluded.write_min_level, read_scope_ids = excluded.read_scope_ids, write_scope_ids = excluded.write_scope_ids",
                 (field_id, read_min_level, write_min_level, json.dumps(read_scopes), json.dumps(write_scopes)),
             )
         return next(field for field in self.list_field_policies() if field["id"] == field_id)
@@ -216,18 +140,18 @@ class AuthorizationStore:
         actor_user_id: str | None,
         target_type: str,
         target_id: str,
-        connection: sqlite3.Connection | None = None,
+        connection: psycopg.Connection | None = None,
     ) -> None:
-        with (nullcontext(connection) if connection is not None else sqlite3.connect(self.path)) as connection:
+        with (nullcontext(connection) if connection is not None else transaction(self.url, write=True)) as connection:
             connection.execute(
-                "INSERT INTO authorization_audit_events (id, actor_user_id, action, target_type, target_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO authorization_audit_events (id, actor_user_id, action, target_type, target_id, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
                 (str(uuid4()), actor_user_id, action, target_type, target_id, datetime.now(UTC).isoformat()),
             )
 
     def list_audit_events(self) -> list[dict[str, Any]]:
-        with sqlite3.connect(self.path) as connection:
+        with transaction(self.url) as connection:
             rows = connection.execute(
-                "SELECT events.id, events.action, events.target_type, events.target_id, events.created_at, users.display_name FROM authorization_audit_events AS events LEFT JOIN identity_users AS users ON users.id = events.actor_user_id ORDER BY events.created_at DESC, events.rowid DESC LIMIT 200"
+                "SELECT events.id, events.action, events.target_type, events.target_id, events.created_at, users.display_name FROM authorization_audit_events AS events LEFT JOIN identity_users AS users ON users.id = events.actor_user_id ORDER BY events.created_at DESC, events._order DESC LIMIT 200"
             ).fetchall()
         return [
             {
@@ -249,9 +173,9 @@ class AuthorizationStore:
         return scope_levels.get(field_id.split(".", 1)[0], 0) >= (2 if operation == "read" else 3)
 
     def _field_catalog(self) -> list[tuple[str, str, str, str]]:
-        with sqlite3.connect(self.path) as connection:
+        with transaction(self.url) as connection:
             custom_fields = connection.execute(
-                "SELECT id, area, name, description FROM authorization_custom_fields ORDER BY rowid"
+                "SELECT id, area, name, description FROM authorization_custom_fields ORDER BY _order"
             ).fetchall()
         return [*FIELD_CATALOG, *(tuple(str(value) for value in row) for row in custom_fields)]
 

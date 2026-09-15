@@ -1,16 +1,17 @@
 """Account-scoped feedback and per-reader notifications, stored with the application DB."""
 import base64
 import binascii
-from contextlib import closing
 from datetime import UTC, datetime
 from io import BytesIO
-import sqlite3
 from typing import Annotated, Literal
 from uuid import uuid4
 import warnings
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from psycopg.rows import dict_row
+
+from api.postgres import transaction
 
 
 class FeedbackCreate(BaseModel):
@@ -58,36 +59,16 @@ def decode_image(value):
 
 
 class FeedbackStore:
-    def __init__(self, path):
-        self.path = path
-
-    def connect(self):
-        db = sqlite3.connect(self.path)
-        db.row_factory = sqlite3.Row
-        return db
-
-    def initialize(self):
-        with closing(self.connect()) as db, db:
-            db.executescript("""
-                CREATE TABLE IF NOT EXISTS feedback (
-                    id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, owner_name TEXT NOT NULL,
-                    kind TEXT NOT NULL, text TEXT NOT NULL, context TEXT NOT NULL, version TEXT NOT NULL,
-                    created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT '待处理', result TEXT NOT NULL DEFAULT '',
-                    result_at TEXT, revision INTEGER NOT NULL DEFAULT 1, result_revision INTEGER NOT NULL DEFAULT 0,
-                    image BLOB, image_mime TEXT);
-                CREATE TABLE IF NOT EXISTS feedback_reads (
-                    feedback_id TEXT NOT NULL, user_id TEXT NOT NULL, revision INTEGER NOT NULL,
-                    PRIMARY KEY (feedback_id, user_id));
-                CREATE INDEX IF NOT EXISTS feedback_owner ON feedback(owner_id);
-            """)
+    def __init__(self, database_url: str):
+        self.database_url = database_url
 
     def listing(self, user):
-        with closing(self.connect()) as db:
+        with transaction(self.database_url) as connection, connection.cursor(row_factory=dict_row) as db:
             rows = db.execute("""SELECT f.id, f.owner_id, f.owner_name, f.kind, f.text, f.context, f.version,
                 f.created_at, f.status, f.result, f.result_at, f.revision, f.result_revision,
                 f.image IS NOT NULL AS has_image, COALESCE(r.revision, 0) AS read_revision
-                FROM feedback f LEFT JOIN feedback_reads r ON r.feedback_id=f.id AND r.user_id=?
-                WHERE ? OR f.owner_id=? ORDER BY f.created_at DESC, f.rowid DESC""",
+                FROM feedback f LEFT JOIN feedback_reads r ON r.feedback_id=f.id AND r.user_id=%s
+                WHERE %s OR f.owner_id=%s ORDER BY f.created_at DESC, f._order DESC""",
                 (user['id'], user['is_system_admin'], user['id'])).fetchall()
         result = []
         for row in rows:
@@ -100,17 +81,17 @@ class FeedbackStore:
         return result
 
     def accessible(self, db, feedback_id, user):
-        row = db.execute("SELECT * FROM feedback WHERE id=?", (feedback_id,)).fetchone()
+        row = db.execute("SELECT * FROM feedback WHERE id=%s", (feedback_id,)).fetchone()
         if row is None or (not user['is_system_admin'] and row['owner_id'] != user['id']):
             raise HTTPException(404, "反馈不存在")
         return row
 
     def unread_count(self, user):
-        with closing(self.connect()) as db:
+        with transaction(self.database_url) as db:
             return db.execute("""SELECT COUNT(*) FROM feedback f
-                LEFT JOIN feedback_reads r ON r.feedback_id=f.id AND r.user_id=?
-                WHERE (f.owner_id=? AND f.result_revision>COALESCE(r.revision,0))
-                   OR (? AND f.owner_id<>? AND COALESCE(r.revision,0)<1)""",
+                LEFT JOIN feedback_reads r ON r.feedback_id=f.id AND r.user_id=%s
+                WHERE (f.owner_id=%s AND f.result_revision>COALESCE(r.revision,0))
+                   OR (%s AND f.owner_id<>%s AND COALESCE(r.revision,0)<1)""",
                 (user['id'],user['id'],user['is_system_admin'],user['id'])).fetchone()[0]
 
 
@@ -136,50 +117,50 @@ def create_feedback_router(store, current_user):
         user = writer(request)
         image, mime = decode_image(payload.image)
         feedback_id = str(uuid4())
-        with closing(store.connect()) as db, db:
+        with transaction(store.database_url, write=True) as connection, connection.cursor(row_factory=dict_row) as db:
+            user = writer(request)
             db.execute("""INSERT INTO feedback (id,owner_id,owner_name,kind,text,context,version,created_at,image,image_mime)
-                VALUES (?,?,?,?,?,?,?,?,?,?)""", (feedback_id,user['id'],user['display_name'],payload.kind,payload.text,
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", (feedback_id,user['id'],user['display_name'],payload.kind,payload.text,
                 payload.context,payload.version,datetime.now(UTC).isoformat(),image,mime))
         return next(item for item in store.listing(user) if item['id'] == feedback_id)
 
     @router.get("/{feedback_id}/image")
     def image(feedback_id: str, request: Request):
-        with closing(store.connect()) as db:
-            row = store.accessible(db, feedback_id, current_user(request))
+        user = current_user(request)
+        with transaction(store.database_url) as connection, connection.cursor(row_factory=dict_row) as db:
+            row = store.accessible(db, feedback_id, user)
             if row['image'] is None:
                 raise HTTPException(404, "没有截图")
             return Response(row['image'], media_type=row['image_mime'], headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
     @router.post("/{feedback_id}/read")
     def read(feedback_id: str, payload: FeedbackRead, request: Request):
-        user = writer(request)
-        with closing(store.connect()) as db, db:
-            db.execute("BEGIN IMMEDIATE")
+        with transaction(store.database_url, write=True) as connection, connection.cursor(row_factory=dict_row) as db:
+            user = writer(request)
             row = store.accessible(db, feedback_id, user)
             if payload.revision > row['revision']:
                 raise HTTPException(409, "反馈版本已变化，请刷新")
-            db.execute("""INSERT INTO feedback_reads VALUES (?,?,?) ON CONFLICT(feedback_id,user_id)
-                DO UPDATE SET revision=MAX(revision,excluded.revision)""", (feedback_id,user['id'],payload.revision))
+            db.execute("""INSERT INTO feedback_reads (feedback_id,user_id,revision) VALUES (%s,%s,%s) ON CONFLICT(feedback_id,user_id)
+                DO UPDATE SET revision=GREATEST(feedback_reads.revision,excluded.revision)""", (feedback_id,user['id'],payload.revision))
         return {"ok": True}
 
     @router.patch("/{feedback_id}")
     def update(feedback_id: str, payload: FeedbackUpdate, request: Request):
-        user = writer(request)
-        if not user['is_system_admin']:
-            raise HTTPException(403, "仅管理员可处理反馈")
-        if payload.status == '已处理' and not payload.result:
-            raise HTTPException(422, "请填写处理结果")
-        if payload.status != '已处理' and payload.result:
-            raise HTTPException(422, "填写处理结果后，请将状态设为已处理")
-        with closing(store.connect()) as db, db:
-            db.execute("BEGIN IMMEDIATE")
+        with transaction(store.database_url, write=True) as connection, connection.cursor(row_factory=dict_row) as db:
+            user = writer(request)
+            if not user['is_system_admin']:
+                raise HTTPException(403, "仅管理员可处理反馈")
+            if payload.status == '已处理' and not payload.result:
+                raise HTTPException(422, "请填写处理结果")
+            if payload.status != '已处理' and payload.result:
+                raise HTTPException(422, "填写处理结果后，请将状态设为已处理")
             row = store.accessible(db, feedback_id, user)
             if row['revision'] != payload.revision:
                 raise HTTPException(409, "反馈已被其他管理员更新，请刷新后再处理")
             if row['status'] != payload.status or row['result'] != payload.result:
                 revision = row['revision'] + 1
                 complete = payload.status == '已处理'
-                db.execute("""UPDATE feedback SET status=?,result=?,revision=?,result_at=?,result_revision=? WHERE id=?""",
+                db.execute("""UPDATE feedback SET status=%s,result=%s,revision=%s,result_at=%s,result_revision=%s WHERE id=%s""",
                     (payload.status,payload.result,revision,datetime.now(UTC).isoformat() if complete else row['result_at'],
                      revision if complete and user['id'] != row['owner_id'] else row['result_revision'],feedback_id))
         return next(item for item in store.listing(user) if item['id'] == feedback_id)

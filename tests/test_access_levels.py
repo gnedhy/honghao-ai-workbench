@@ -1,12 +1,12 @@
-import sqlite3
+import os
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from api.authorization import AuthorizationStore
-from api.database import Database
 from api.identity import IdentityStore
 from api.main import create_app
+from api.postgres import transaction
 from api.settings import Settings
 from tests.helpers import authenticated_client
 
@@ -188,7 +188,7 @@ def test_fields_follow_only_their_own_scope_and_level(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
     with authenticated_client(settings):
         pass
-    store = AuthorizationStore(settings.database_path)
+    store = AuthorizationStore(settings.database_url)
     # An old cross-scope grant must neither expose prices nor block their owner.
     store.set_field_policy("procurement.material_unit_price", 4, 4, ["research"], ["research"])
     payload = {"material_name": "乙二醇", "unit_price": 4280}
@@ -205,7 +205,7 @@ def test_fields_follow_only_their_own_scope_and_level(tmp_path: Path) -> None:
 
 def test_unconfigured_builtin_fields_use_scope_and_unknown_fields_are_denied(tmp_path: Path) -> None:
     from api.authorization import FIELD_CATALOG
-    store = AuthorizationStore(tmp_path / "unused.db")
+    store = AuthorizationStore(Settings.from_data_dir(tmp_path).database_url)
     for field_id, *_ in FIELD_CATALOG:
         scope = field_id.split(".", 1)[0]
         assert store.can_write_field(field_id, False, {scope: 3})
@@ -215,121 +215,71 @@ def test_unconfigured_builtin_fields_use_scope_and_unknown_fields_are_denied(tmp
         assert store.filter_readable_fields({"value": 42}, {"value": "custom.unknown"}, admin, {"procurement": 4}) == {}
 
 
-def test_identity_v1_migrates_legacy_roles_to_levels_and_scopes(tmp_path: Path) -> None:
+def test_identity_v1_is_rejected_without_promoting_legacy_roles(tmp_path: Path) -> None:
+    """Legacy roles must be upgraded by the old app before importing a current snapshot."""
     settings = Settings.from_data_dir(tmp_path / "data")
-    settings.ensure_directories()
-    Database(settings.database_path).initialize()
-    legacy = IdentityStore(settings.database_path)
-    legacy.initialize()
-    user = legacy.create_user(
-        username="legacy-buyer",
-        display_name="旧采购账号",
-        department="采购部",
-        password="Legacy-Password-2026",
-    )
-
-    with sqlite3.connect(settings.database_path) as connection:
-        connection.execute(
-            "INSERT INTO identity_user_roles (user_id, role_id) VALUES (?, 'procurement')",
-            (user["id"],),
-        )
-        connection.execute("DELETE FROM identity_user_scopes WHERE user_id = ?", (user["id"],))
-        connection.execute("UPDATE identity_users SET access_level = 1 WHERE id = ?", (user["id"],))
-        connection.execute(
-            "UPDATE schema_metadata SET value = 1 WHERE key = 'identity_schema_version'"
-        )
-
-    migrated = IdentityStore(settings.database_path)
-    migrated.initialize()
-    result = migrated.get_user(user["id"])
-
-    assert result is not None
-    assert result["is_system_admin"] is False
-    assert result["scope_levels"] == {"procurement": 2}
+    store = IdentityStore(settings.database_url)
+    user = store.create_user(username='legacy-buyer', display_name='旧采购账号', department='采购部', password='Legacy-Password-2026')
+    with transaction(settings.database_url, write=True) as connection:
+        connection.execute("INSERT INTO identity_user_roles (user_id,role_id) VALUES (%s,'procurement')", (user['id'],))
+        connection.execute("DELETE FROM identity_user_scopes WHERE user_id=%s", (user['id'],))
+        connection.execute("UPDATE identity_users SET access_level=1 WHERE id=%s", (user['id'],))
+        connection.execute("UPDATE schema_metadata SET value=1 WHERE key='identity_schema_version'")
+    with TestClient(create_app(settings)) as client:
+        assert client.get('/api/readiness').status_code == 503
+        assert client.get('/api/users').status_code == 503
+    unchanged = store.get_user(user['id'])
+    assert unchanged is not None and not unchanged['is_system_admin']
+    assert unchanged['scope_levels'] == {}
+    with transaction(settings.database_url) as connection:
+        assert connection.execute("SELECT value FROM schema_metadata WHERE key='identity_schema_version'").fetchone() == (1,)
+        assert connection.execute("SELECT role_id FROM identity_user_roles WHERE user_id=%s", (user['id'],)).fetchall() == [('procurement',)]
 
 
-def test_identity_v2_migrates_global_level_into_each_existing_scope(tmp_path: Path) -> None:
+def test_identity_v2_is_rejected_without_distributing_global_level(tmp_path: Path) -> None:
+    """The old app must migrate scope columns; the PostgreSQL runtime cannot alter schemas."""
     settings = Settings.from_data_dir(tmp_path / "data")
-    settings.ensure_directories()
-    Database(settings.database_path).initialize()
-    store = IdentityStore(settings.database_path)
-    store.initialize()
-    user = store.create_user(
-        username="legacy-manager",
-        display_name="旧范围负责人",
-        department="采购部",
-        password="Legacy-Manager-2026",
-    )
-
-    with sqlite3.connect(settings.database_path) as connection:
+    user = IdentityStore(settings.database_url).create_user(username='legacy-manager', display_name='旧范围负责人', department='采购部', password='Legacy-Manager-2026')
+    with transaction(os.environ['HONGHAO_TEST_MIGRATION_URL'], write=True) as connection:
         connection.execute("DROP TABLE identity_user_scopes")
-        connection.execute(
-            "CREATE TABLE identity_user_scopes (user_id TEXT NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE, scope_id TEXT NOT NULL, PRIMARY KEY (user_id, scope_id))"
-        )
-        connection.executemany(
-            "INSERT INTO identity_user_scopes (user_id, scope_id) VALUES (?, ?)",
-            [(user["id"], "procurement"), (user["id"], "research")],
-        )
-        connection.execute(
-            "UPDATE identity_users SET access_level = 4 WHERE id = ?", (user["id"],)
-        )
-        connection.execute(
-            "UPDATE schema_metadata SET value = 2 WHERE key = 'identity_schema_version'"
-        )
-
-    migrated = IdentityStore(settings.database_path)
-    migrated.initialize()
-
-    assert migrated.get_user(user["id"])["scope_levels"] == {
-        "procurement": 4,
-        "research": 4,
-    }
+        connection.execute("CREATE TABLE identity_user_scopes (user_id TEXT NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,scope_id TEXT NOT NULL,PRIMARY KEY(user_id,scope_id))")
+        connection.cursor().executemany("INSERT INTO identity_user_scopes (user_id,scope_id) VALUES (%s,%s)", [(user['id'],'procurement'),(user['id'],'research')])
+        connection.execute("UPDATE identity_users SET access_level=4 WHERE id=%s", (user['id'],))
+        connection.execute("UPDATE schema_metadata SET value=2 WHERE key='identity_schema_version'")
+    with TestClient(create_app(settings)) as client:
+        assert client.get('/api/readiness').status_code == 503
+        assert client.get('/api/users').status_code == 503
+    with transaction(settings.database_url) as connection:
+        assert connection.execute("SELECT scope_id FROM identity_user_scopes WHERE user_id=%s ORDER BY scope_id", (user['id'],)).fetchall() == [('procurement',),('research',)]
+        assert connection.execute("SELECT access_level FROM identity_users WHERE id=%s", (user['id'],)).fetchone() == (4,)
+        assert connection.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='identity_user_scopes' ORDER BY ordinal_position").fetchall() == [('user_id',),('scope_id',)]
+        assert connection.execute("SELECT value FROM schema_metadata WHERE key='identity_schema_version'").fetchone() == (2,)
 
 
-def test_identity_v3_migrates_removed_basic_level_to_view(tmp_path: Path) -> None:
+def test_identity_v3_is_rejected_without_promoting_basic_level(tmp_path: Path) -> None:
+    """Upgrade historical SQLite basic levels with the old app before taking the migration snapshot."""
     settings = Settings.from_data_dir(tmp_path / "data")
-    settings.ensure_directories()
-    Database(settings.database_path).initialize()
-    store = IdentityStore(settings.database_path)
-    store.initialize()
-    user = store.create_user(
-        username="legacy-basic",
-        display_name="旧基础权限",
-        department="采购部",
-        password="Legacy-Basic-Password-2026",
-        scope_levels={"procurement": 2},
-    )
-
-    with sqlite3.connect(settings.database_path) as connection:
-        connection.execute(
-            "UPDATE identity_user_scopes SET access_level = 1 WHERE user_id = ?",
-            (user["id"],),
-        )
-        connection.execute(
-            "UPDATE schema_metadata SET value = 3 WHERE key = 'identity_schema_version'"
-        )
-
-    store.initialize()
-
-    assert store.get_user(user["id"])["scope_levels"] == {"procurement": 2}
+    store = IdentityStore(settings.database_url)
+    user = store.create_user(username='legacy-basic', display_name='旧基础权限', department='采购部', password='Legacy-Basic-Password-2026', scope_levels={'procurement':2})
+    with transaction(settings.database_url, write=True) as connection:
+        connection.execute("UPDATE identity_user_scopes SET access_level=1 WHERE user_id=%s", (user['id'],))
+        connection.execute("UPDATE schema_metadata SET value=3 WHERE key='identity_schema_version'")
+    with TestClient(create_app(settings)) as client:
+        assert client.get('/api/readiness').status_code == 503
+        assert client.get('/api/users').status_code == 503
+    assert store.get_user(user['id'])['scope_levels'] == {'procurement':1}
+    with transaction(settings.database_url) as connection:
+        assert connection.execute("SELECT value FROM schema_metadata WHERE key='identity_schema_version'").fetchone() == (3,)
 
 
-def test_app_backs_up_database_before_access_migration(tmp_path: Path) -> None:
+def test_app_rejects_access_migration_without_creating_automatic_sqlite_backups(tmp_path: Path) -> None:
+    """Backup and schema upgrades are explicit deployment work, never application startup writes."""
     settings = Settings.from_data_dir(tmp_path / "data")
-    settings.ensure_directories()
-    Database(settings.database_path).initialize()
-    IdentityStore(settings.database_path).initialize()
-    with sqlite3.connect(settings.database_path) as connection:
-        connection.execute(
-            "UPDATE schema_metadata SET value = 1 WHERE key = 'identity_schema_version'"
-        )
-
-    with TestClient(create_app(settings)):
-        pass
-
-    backups = list((settings.data_dir / "backups").glob("pre-access-level-migration-*.db"))
-    assert len(backups) == 1
-    with sqlite3.connect(backups[0]) as connection:
-        assert connection.execute(
-            "SELECT value FROM schema_metadata WHERE key = 'identity_schema_version'"
-        ).fetchone() == (1,)
+    with transaction(settings.database_url, write=True) as connection:
+        connection.execute("UPDATE schema_metadata SET value=1 WHERE key='identity_schema_version'")
+    with TestClient(create_app(settings)) as client:
+        assert client.get('/api/readiness').status_code == 503
+        assert client.get('/api/users').status_code == 503
+    with transaction(settings.database_url) as connection:
+        assert connection.execute("SELECT value FROM schema_metadata WHERE key='identity_schema_version'").fetchone() == (1,)
+    assert list(settings.data_dir.rglob('*.db')) == []

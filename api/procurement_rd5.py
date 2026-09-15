@@ -3,47 +3,35 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
 from api import procurement_collaboration as collaboration
+from api.postgres import transaction
 from api.research_formulas import DEFAULT_COMPOSITE, OMITTED_CODES, PRICE_SHEET, calculate, parse_workbook
 
 
-def initialize(db: sqlite3.Connection) -> None:
-    if not db.in_transaction:
-        db.execute("BEGIN IMMEDIATE")
-    db.execute("""CREATE TABLE procurement_inventory_v7 (
-        material_id TEXT PRIMARY KEY REFERENCES procurement_materials(id),
-        quantity TEXT, price TEXT, raw_price TEXT NOT NULL,
-        source_sha256 TEXT NOT NULL, sheet TEXT NOT NULL, source_row INTEGER NOT NULL,
-        imported_by TEXT NOT NULL, imported_at TEXT NOT NULL
-    )""")
-    db.execute("INSERT INTO procurement_inventory_v7 SELECT * FROM procurement_inventory")
-    db.execute("DROP TABLE procurement_inventory")
-    db.execute("ALTER TABLE procurement_inventory_v7 RENAME TO procurement_inventory")
-    db.execute("""CREATE TABLE IF NOT EXISTS procurement_rd5_imports (
-        sha256 TEXT PRIMARY KEY, imported_by TEXT NOT NULL, imported_at TEXT NOT NULL,
-        result_json TEXT NOT NULL, package_json TEXT NOT NULL
-    )""")
-    db.execute("UPDATE schema_metadata SET value=7 WHERE key='workbench_procurement_schema_version'")
-
-
 def _receipt(db, digest):
-    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='procurement_rd5_imports'").fetchone():
-        return None
-    return db.execute("SELECT result_json,package_json FROM procurement_rd5_imports WHERE sha256=?", (digest,)).fetchone()
+    return db.execute("SELECT result_json,package_json FROM procurement_rd5_imports WHERE sha256=%s", (digest,)).fetchone()
 
 
 def _state_digest(db):
     state = {}
-    for table in ("procurement_materials", "procurement_material_aliases", "procurement_inventory",
-                  "procurement_departments", "procurement_department_materials", "procurement_price_batches",
-                  "procurement_price_batch_items", "procurement_updates", "procurement_update_items"):
-        state[table] = sorted(db.execute(f"SELECT * FROM {table}").fetchall(), key=repr)
+    fields = {
+        "procurement_materials": "id,code,name,unit,latest_price,inventory_price,in_transit_price,previous_latest_price,last_import_id,updated_at,archived_at,archived_by",
+        "procurement_material_aliases": "alias_code,material_id,created_by,created_at",
+        "procurement_inventory": "material_id,quantity,price,raw_price,source_sha256,sheet,source_row,imported_by,imported_at",
+        "procurement_departments": "id,name,position",
+        "procurement_department_materials": "department_id,material_id",
+        "procurement_price_batches": "id,version,published_by,published_at,item_count,update_id,price_date,activated_at,submitted_by,source_name,base_batch_id",
+        "procurement_price_batch_items": "batch_id,material_id,code,name,unit,latest_price,inventory_price,in_transit_price,recommended_price",
+        "procurement_updates": "id,price_date,source_name,created_by,created_at,updated_at,status,submitted_by,submitted_at,return_reason,scheduled_activate_at,base_batch_id,published_batch_id,cancelled_by,cancelled_at,cancel_reason",
+        "procurement_update_items": "update_id,material_id,code,name,unit,latest_price,inventory_price,in_transit_price,recommended_price",
+    }
+    for table, columns in fields.items():
+        state[table] = sorted(db.execute(f"SELECT {columns} FROM {table}").fetchall(), key=repr)
     return hashlib.sha256(json.dumps(state, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
@@ -77,7 +65,7 @@ def _plan(db, package):
     included = [r for r in rows if r["action"] != "omit"]
     selected = [r for r in included if r["action"] != "keep"]
     active_count = sum(not r["archived"] for r in catalog.values())
-    current_links = {r[0] for r in db.execute("SELECT material_id FROM procurement_department_materials WHERE department_id=?", (department[0],))}
+    current_links = {r[0] for r in db.execute("SELECT material_id FROM procurement_department_materials WHERE department_id=%s", (department[0],))}
     existing_new_links = {r["material_id"] for r in included if r["material_id"]} - current_links
     return {"sha256": package["source_sha256"], "state_sha256": _state_digest(db), "department_id": department[0],
         "counts": {"keep": sum(r["action"] == "keep" for r in rows), "restore": sum(r["action"] == "restore" for r in rows),
@@ -91,16 +79,16 @@ def _plan(db, package):
             "composites": sum(r["kind"] == "composite" for r in package["recipes"])}, "rows": rows}
 
 
-def preview(path: Path, content: bytes) -> dict:
+def preview(url: str, content: bytes) -> dict:
     package = parse_workbook(content)
-    with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as db:
+    with transaction(url) as db:
         receipt = _receipt(db, package["source_sha256"])
         if receipt:
             return {**json.loads(receipt[0]), "already_imported": True}
         return _plan(db, package)
 
 
-def import_rd5(path: Path, source: Path, actor_id: str, *, expected_sha256: str,
+def import_rd5(url: str, source: Path, actor_id: str, *, data_dir: Path, expected_sha256: str,
                expected_state_sha256: str, effective_date: date) -> dict:
     from api.procurement import ProcurementStore
 
@@ -108,15 +96,14 @@ def import_rd5(path: Path, source: Path, actor_id: str, *, expected_sha256: str,
     if hashlib.sha256(content).hexdigest() != expected_sha256:
         raise ValueError("文件已变化，请重新预检")
     package = parse_workbook(content)
-    stored = path.parent / "controlled-work" / "procurement-sources" / f"{expected_sha256}.xlsx"
+    stored = data_dir / "controlled-work" / "procurement-sources" / f"{expected_sha256}.xlsx"
     created_archive = False
     try:
-        with sqlite3.connect(path) as db:
-            db.execute("BEGIN IMMEDIATE")
-            admin = db.execute("SELECT access_level,is_active FROM identity_users WHERE id=?", (actor_id,)).fetchone()
+        with transaction(url, write=True) as db:
+            admin = db.execute("SELECT access_level,is_active FROM identity_users WHERE id=%s", (actor_id,)).fetchone()
             if admin != (5, 1):
                 raise PermissionError("研发五部导入仅限有效系统管理员")
-            collaboration.require_current(path, actor_id, "can_activate")
+            collaboration.require_current(url, actor_id, "can_activate")
             receipt = _receipt(db, expected_sha256)
             if receipt:
                 return {**json.loads(receipt[0]), "already_imported": True}
@@ -139,7 +126,7 @@ def import_rd5(path: Path, source: Path, actor_id: str, *, expected_sha256: str,
                 with stored.open("xb") as stream:
                     created_archive = True
                     stream.write(content)
-            db.execute("INSERT OR IGNORE INTO procurement_source_imports VALUES (?,?,?,?,?)",
+            db.execute("INSERT INTO procurement_source_imports (sha256, filename, stored_path, imported_by, imported_at) VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                        (expected_sha256, source.name, str(stored), actor_id, now))
             added_links = []
             for row in plan["rows"]:
@@ -147,24 +134,24 @@ def import_rd5(path: Path, source: Path, actor_id: str, *, expected_sha256: str,
                     continue
                 if row["action"] == "create":
                     row["material_id"] = str(uuid4())
-                    db.execute("INSERT INTO procurement_materials(id,code,name,unit,updated_at) VALUES (?,?,?,'kg',?)",
+                    db.execute("INSERT INTO procurement_materials(id,code,name,unit,updated_at) VALUES (%s,%s,%s,'kg',%s)",
                                (row["material_id"], row["code"], row["code"], now))
                 elif row["action"] == "restore":
-                    db.execute("UPDATE procurement_materials SET archived_at=NULL,archived_by=NULL,updated_at=? WHERE id=?", (now, row["material_id"]))
+                    db.execute("UPDATE procurement_materials SET archived_at=NULL,archived_by=NULL,updated_at=%s WHERE id=%s", (now, row["material_id"]))
                 if row["action"] != "keep":
-                    if db.execute("SELECT 1 FROM procurement_inventory WHERE material_id=?", (row["material_id"],)).fetchone():
+                    if db.execute("SELECT 1 FROM procurement_inventory WHERE material_id=%s", (row["material_id"],)).fetchone():
                         raise ValueError(f"{row['code']} 已有库存记录，请核对后单独处理")
                     stock = row["inventory_price"]
-                    db.execute("INSERT INTO procurement_inventory VALUES (?,?,?,?,?,?,?,?,?)",
+                    db.execute("INSERT INTO procurement_inventory (material_id, quantity, price, raw_price, source_sha256, sheet, source_row, imported_by, imported_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                         (row["material_id"], None, None if stock == "0" else stock, stock or "", expected_sha256,
                          PRICE_SHEET, row["source_row"], actor_id, now))
                     collaboration.admin_event(db, actor_id, "material." + ("restored" if row["action"] == "restore" else "created"),
                                               row["material_id"], {"code": row["code"], "source_sha256": expected_sha256})
-                if db.execute("INSERT OR IGNORE INTO procurement_department_materials VALUES (?,?)", (plan["department_id"], row["material_id"])).rowcount:
+                if db.execute("INSERT INTO procurement_department_materials (department_id, material_id) VALUES (%s,%s) ON CONFLICT DO NOTHING", (plan["department_id"], row["material_id"])).rowcount:
                     added_links.append(row["material_id"])
             collaboration.admin_event(db, actor_id, "department.changed", plan["department_id"], {"added": added_links, "removed": []})
 
-            store = ProcurementStore(path)
+            store = ProcurementStore(url)
             reason = "研发五部原料补齐，保留已有原料价格，录入新增原料初始价格"
             for row in selected:
                 if row["latest_price"] is not None:
@@ -173,8 +160,8 @@ def import_rd5(path: Path, source: Path, actor_id: str, *, expected_sha256: str,
             batch = None
             if update:
                 update_id = str(update[0])
-                db.execute("UPDATE procurement_updates SET source_name=? WHERE id=?", (source.name, update_id))
-                db.execute("UPDATE procurement_imports SET source_name=? WHERE update_id=?", (source.name, update_id))
+                db.execute("UPDATE procurement_updates SET source_name=%s WHERE id=%s", (source.name, update_id))
+                db.execute("UPDATE procurement_imports SET source_name=%s WHERE update_id=%s", (source.name, update_id))
                 event_id = store._event(db, update_id, "rd5_prices_imported", actor_id, reason)
                 collaboration.record_changes(db, event_id, update_id, actor_id, effective_date.isoformat(),
                     [(r["material_id"], None, r["latest_price"]) for r in selected if r["latest_price"] is not None])
@@ -182,12 +169,12 @@ def import_rd5(path: Path, source: Path, actor_id: str, *, expected_sha256: str,
                 batch = store._activate_update(db, update_id, actor_id, now)
                 for row in selected:
                     if row["latest_price"] is not None:
-                        db.execute("""UPDATE procurement_snapshot_sources SET sheet=?,cell=?,sha256=?
-                                      WHERE batch_id=? AND material_id=?""",
+                        db.execute("""UPDATE procurement_snapshot_sources SET sheet=%s,cell=%s,sha256=%s
+                                      WHERE batch_id=%s AND material_id=%s""",
                                    (PRICE_SHEET, f"C{row['source_row']}", expected_sha256, batch["id"], row["material_id"]))
             prices = {r[0]: {"material_id": r[1], "latest_price": r[2], "inventory_price": r[3]} for r in db.execute(
                 """SELECT m.code,m.id,b.latest_price,i.price FROM procurement_materials m
-                   LEFT JOIN procurement_price_batch_items b ON b.material_id=m.id AND b.batch_id=?
+                   LEFT JOIN procurement_price_batch_items b ON b.material_id=m.id AND b.batch_id=%s
                    LEFT JOIN procurement_inventory i ON i.material_id=m.id WHERE m.archived_at IS NULL""", (store._latest_batch_id(db),))}
             package.update(source_filename=source.name, effective_date=effective_date.isoformat(), imported_at=now,
                            price_batch_id=store._latest_batch_id(db), material_mapping=plan["rows"], price_inputs=prices)
@@ -201,7 +188,7 @@ def import_rd5(path: Path, source: Path, actor_id: str, *, expected_sha256: str,
             result = {"sha256": expected_sha256, "counts": plan["counts"], "batch": batch,
                       "effective_date": effective_date.isoformat(), "imported_at": now,
                       "blocked_recipes": [r["name"] for r in package["recipes"] if r["kind"] == "recipe" and package["current_calculation"][r["id"]]["cost"] is None]}
-            db.execute("INSERT INTO procurement_rd5_imports VALUES (?,?,?,?,?)",
+            db.execute("INSERT INTO procurement_rd5_imports (sha256, imported_by, imported_at, result_json, package_json) VALUES (%s,%s,%s,%s,%s)",
                        (expected_sha256, actor_id, now, json.dumps(result, ensure_ascii=False), json.dumps(package, ensure_ascii=False)))
             collaboration.admin_event(db, actor_id, "rd5.imported", expected_sha256, result)
             return result
@@ -211,22 +198,21 @@ def import_rd5(path: Path, source: Path, actor_id: str, *, expected_sha256: str,
         raise
 
 
-def revise_preparation(path: Path, digest: str, *, actor_id: str | None = None,
+def revise_preparation(url: str, digest: str, *, actor_id: str | None = None,
                        expected_state_sha256: str | None = None) -> dict:
     """Apply the confirmed 2026-09-12 formula scope, without reimporting procurement data."""
     from api.procurement import ProcurementStore
 
-    with sqlite3.connect(path.resolve().as_uri() + "?mode=" + ("rw" if actor_id else "ro"), uri=True) as db:
+    with transaction(url, write=bool(actor_id)) as db:
         if actor_id:
-            db.execute("BEGIN IMMEDIATE")
-            admin = db.execute("SELECT access_level,is_active FROM identity_users WHERE id=?", (actor_id,)).fetchone()
+            admin = db.execute("SELECT access_level,is_active FROM identity_users WHERE id=%s", (actor_id,)).fetchone()
             if admin != (5, 1):
                 raise PermissionError("配方准备修订仅限有效系统管理员")
-            collaboration.require_current(path, actor_id, "can_activate")
+            collaboration.require_current(url, actor_id, "can_activate")
         receipt = _receipt(db, digest)
         if not receipt:
             raise ValueError("尚未完成该来源的导入")
-        source = db.execute("SELECT stored_path FROM procurement_source_imports WHERE sha256=?", (digest,)).fetchone()
+        source = db.execute("SELECT stored_path FROM procurement_source_imports WHERE sha256=%s", (digest,)).fetchone()
         if not source or hashlib.sha256(Path(source[0]).read_bytes()).hexdigest() != digest:
             raise ValueError("来源归档校验失败")
         state = hashlib.sha256((_state_digest(db) + receipt[1]).encode()).hexdigest()
@@ -243,10 +229,10 @@ def revise_preparation(path: Path, digest: str, *, actor_id: str | None = None,
             raise ValueError("未找到本次确认的 CF401B 方案及三组 K172-C 旧试算")
         policy = {"confirmed_on": "2026-09-12", "historical_recipe_ids": historical,
                   "material_replacements": {"CF020C": "CF020D"}}
-        batch_id = ProcurementStore(path)._latest_batch_id(db)
+        batch_id = ProcurementStore(url)._latest_batch_id(db)
         prices = {r[0]: {"material_id": r[1], "latest_price": r[2], "inventory_price": r[3]} for r in db.execute(
             """SELECT m.code,m.id,b.latest_price,i.price FROM procurement_materials m
-               LEFT JOIN procurement_price_batch_items b ON b.material_id=m.id AND b.batch_id=?
+               LEFT JOIN procurement_price_batch_items b ON b.material_id=m.id AND b.batch_id=%s
                LEFT JOIN procurement_inventory i ON i.material_id=m.id WHERE m.archived_at IS NULL""", (batch_id,))}
         if "CF020D" not in prices:
             raise ValueError("替代原料 CF020D 不在在用台账中")
@@ -266,16 +252,16 @@ def revise_preparation(path: Path, digest: str, *, actor_id: str | None = None,
         if actor_id and not unchanged:
             package["revised_at"] = datetime.now(UTC).isoformat()
             package["revised_by"] = actor_id
-            db.execute("UPDATE procurement_rd5_imports SET package_json=? WHERE sha256=?",
+            db.execute("UPDATE procurement_rd5_imports SET package_json=%s WHERE sha256=%s",
                        (json.dumps(package, ensure_ascii=False), digest))
             collaboration.admin_event(db, actor_id, "rd5.preparation_revised", digest, result)
         return result
 
 
-def export_preparation(path: Path, digest: str, output: Path) -> dict:
-    with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as db:
+def export_preparation(url: str, digest: str, output: Path) -> dict:
+    with transaction(url) as db:
         receipt = _receipt(db, digest)
-        batch = db.execute("SELECT version FROM procurement_price_batches WHERE id=?",
+        batch = db.execute("SELECT version FROM procurement_price_batches WHERE id=%s",
                            (json.loads(receipt[1])["price_batch_id"],)).fetchone() if receipt else None
     if not receipt:
         raise ValueError("尚未完成该来源的导入")

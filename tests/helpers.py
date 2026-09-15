@@ -15,7 +15,7 @@ TEST_ADMIN_PASSWORD = "Test-Admin-Password-2026"
 def authenticated_client(settings: Settings) -> Iterator[TestClient]:
     with TestClient(create_app(settings)) as client:
         try:
-            IdentityStore(settings.database_path).create_user(
+            IdentityStore(settings.database_url).create_user(
                 username="test-admin",
                 display_name="测试管理员",
                 department=None,

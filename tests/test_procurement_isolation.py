@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-import sqlite3
+from api.postgres import transaction
 
 from api.identity import IdentityStore
 from api.procurement import ProcurementStore
@@ -84,8 +84,8 @@ def test_scope_reader_can_read_nested_prices_despite_legacy_restriction(tmp_path
         assert publish(client, import_prices(client, '2026-08-01', [('A', 10)])).status_code == 200
         import_prices(client, '2026-08-02', [('A', 11)])
         from api.authorization import AuthorizationStore
-        AuthorizationStore(settings.database_path).set_field_policy("procurement.material_unit_price", 4, 4, ["procurement"], ["procurement"])
-        IdentityStore(settings.database_path).create_user(username='restricted', display_name='查看账号', department='采购', password='Isolated-Test-Password-2026', scope_levels={'procurement': 2})
+        AuthorizationStore(settings.database_url).set_field_policy("procurement.material_unit_price", 4, 4, ["procurement"], ["procurement"])
+        IdentityStore(settings.database_url).create_user(username='restricted', display_name='查看账号', department='采购', password='Isolated-Test-Password-2026', scope_levels={'procurement': 2})
         procurement_post(client,'/api/logout')
         assert procurement_post(client,'/api/login', json={'username': 'restricted', 'password': 'Isolated-Test-Password-2026'}).status_code == 200
         overview = client.get('/api/workbenches/procurement/overview').json()
@@ -102,8 +102,8 @@ def test_input_items_include_unchanged_zero_and_missing_but_not_untouched_materi
         current = import_prices(client, '2026-08-02', [('A', 10), ('B', ''), ('C', 13), ('D', 0)])
         assert {item['code']: item['draft_price'] for item in current['input_items']} == {'A': '10', 'C': '13', 'D': '0'}
         assert {item['code'] for item in current['items']} == {'C', 'D'}
-        with sqlite3.connect(settings.database_path) as connection:
-            connection.execute('DELETE FROM procurement_update_items WHERE update_id=?', (current['id'],))
+        with transaction(settings.database_url, write=True) as connection:
+            connection.execute('DELETE FROM procurement_update_items WHERE update_id=%s', (current['id'],))
         recovered = client.get('/api/workbenches/procurement/updates/current').json()['current']
         assert recovered['input_items'] == current['input_items']
 
@@ -128,7 +128,7 @@ def test_scheduled_baseline_keeps_approver_identity(tmp_path: Path):
         current = import_prices(client, '2026-08-01', [('A', 10)])
         due = datetime.now(UTC) + timedelta(hours=1)
         assert publish(client, current, mode='scheduled', activate_at=due.isoformat()).status_code == 200
-        store = ProcurementStore(settings.database_path)
+        store = ProcurementStore(settings.database_url)
         assert store.process_scheduled(due + timedelta(seconds=1)) == 1
         detail = store.get_batch(store.overview()['batches'][0]['id'])
         assert detail['published_by_name'] is not None
@@ -150,9 +150,9 @@ def test_full_snapshot_validation_rejects_missing_price_without_issue(tmp_path: 
     settings = procurement_settings(tmp_path)
     with authenticated_client(settings) as client:
         current = import_prices(client, '2026-08-01', [('A', 10)])
-        with sqlite3.connect(settings.database_path) as connection:
-            connection.execute("DELETE FROM procurement_issues WHERE update_id=?", (current['id'],))
-            connection.execute("UPDATE procurement_update_items SET latest_price=NULL WHERE update_id=?", (current['id'],))
+        with transaction(settings.database_url, write=True) as connection:
+            connection.execute("DELETE FROM procurement_issues WHERE update_id=%s", (current['id'],))
+            connection.execute("UPDATE procurement_update_items SET latest_price=NULL WHERE update_id=%s", (current['id'],))
         assert publish(client, current).status_code == 409
         assert publish(client, current, mode='scheduled', activate_at=(datetime.now(UTC) + timedelta(days=1)).isoformat()).status_code == 409
         assert client.get('/api/workbenches/procurement/overview').json()['batches'] == []
@@ -162,18 +162,18 @@ def test_concurrent_activation_only_creates_one_baseline(tmp_path: Path):
     settings = procurement_settings(tmp_path)
     with authenticated_client(settings) as client:
         current = import_prices(client, '2026-08-01', [('A', 10)])
-        with sqlite3.connect(settings.database_path) as connection:
-            actor = connection.execute('SELECT created_by FROM procurement_updates WHERE id=?', (current['id'],)).fetchone()[0]
+        with transaction(settings.database_url) as connection:
+            actor = connection.execute('SELECT created_by FROM procurement_updates WHERE id=%s', (current['id'],)).fetchone()[0]
         def attempt():
             try:
-                ProcurementStore(settings.database_path).publish_update(current['id'], actor, 'immediate')
+                ProcurementStore(settings.database_url).publish_update(current['id'], actor, 'immediate')
                 return 'published'
             except ValueError:
                 return 'rejected'
         with ThreadPoolExecutor(max_workers=2) as executor:
             outcomes = list(executor.map(lambda _: attempt(), range(2)))
         assert sorted(outcomes) == ['published', 'rejected']
-        assert len(ProcurementStore(settings.database_path).overview()['batches']) == 1
+        assert len(ProcurementStore(settings.database_url).overview()['batches']) == 1
 
 
 def test_service_startup_processes_overdue_schedule_once(tmp_path: Path):
@@ -181,8 +181,8 @@ def test_service_startup_processes_overdue_schedule_once(tmp_path: Path):
     with authenticated_client(settings) as client:
         current = import_prices(client, '2026-08-01', [('A', 10)])
         assert publish(client, current, mode='scheduled', activate_at=(datetime.now(UTC) + timedelta(days=1)).isoformat()).status_code == 200
-    with sqlite3.connect(settings.database_path) as connection:
-        connection.execute('UPDATE procurement_updates SET scheduled_activate_at=? WHERE id=?', ((datetime.now(UTC) - timedelta(minutes=1)).isoformat(), current['id']))
+    with transaction(settings.database_url, write=True) as connection:
+        connection.execute('UPDATE procurement_updates SET scheduled_activate_at=%s WHERE id=%s', ((datetime.now(UTC) - timedelta(minutes=1)).isoformat(), current['id']))
     for _ in range(2):
         with authenticated_client(settings) as client:
             assert len(client.get('/api/workbenches/procurement/overview').json()['batches']) == 1
@@ -205,8 +205,8 @@ def test_active_import_cannot_be_archived(tmp_path: Path):
     settings = procurement_settings(tmp_path)
     with authenticated_client(settings) as client:
         current = import_prices(client, '2026-08-01', [('A', 10)])
-        with sqlite3.connect(settings.database_path) as connection:
-            import_id = connection.execute('SELECT id FROM procurement_imports WHERE update_id=?', (current['id'],)).fetchone()[0]
+        with transaction(settings.database_url) as connection:
+            import_id = connection.execute('SELECT id FROM procurement_imports WHERE update_id=%s', (current['id'],)).fetchone()[0]
         assert procurement_post(client,f'/api/workbenches/procurement/imports/{import_id}/archive').status_code == 409
         assert procurement_post(client,f"/api/workbenches/procurement/updates/{current['id']}/cancel", json={'reason': '本轮报价取消'}).status_code == 200
         assert procurement_post(client,f'/api/workbenches/procurement/imports/{import_id}/archive').status_code == 200
@@ -219,8 +219,8 @@ def test_history_and_material_use_same_scope_not_legacy_field_policy(tmp_path: P
         material_id = current['items'][0]['material_id']
         for field, level in [('material_unit_price', 4), ('supplier_quote', 2)]:
             from api.authorization import AuthorizationStore
-            AuthorizationStore(settings.database_path).set_field_policy(f"procurement.{field}", level, 4, ["procurement"], ["procurement"])
-        IdentityStore(settings.database_path).create_user(username='editor', display_name='采购', department='采购', password='Isolated-Test-Password-2026', scope_levels={'procurement': 3})
+            AuthorizationStore(settings.database_url).set_field_policy(f"procurement.{field}", level, 4, ["procurement"], ["procurement"])
+        IdentityStore(settings.database_url).create_user(username='editor', display_name='采购', department='采购', password='Isolated-Test-Password-2026', scope_levels={'procurement': 3})
         procurement_post(client,'/api/logout')
         assert procurement_post(client,'/api/login', json={'username': 'editor', 'password': 'Isolated-Test-Password-2026'}).status_code == 200
         detail = client.get(f'/api/workbenches/procurement/materials/{material_id}').json()

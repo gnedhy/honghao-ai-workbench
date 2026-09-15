@@ -1,5 +1,5 @@
 """Material creation and optional draft prices use one isolated transaction."""
-import sqlite3
+from api.postgres import transaction
 
 import pytest
 
@@ -41,8 +41,8 @@ def test_new_material_draft_distribution_and_activation(real_data):
     official = overview(client)
     assert next(m for m in official['materials'] if m['id'] == material_id)['published_price'] == '12.5'
     assert official['departments'][0]['priced'] == before['departments'][0]['priced'] + 1
-    with sqlite3.connect(settings.database_path) as db:
-        assert db.execute("SELECT COUNT(*) FROM procurement_admin_events WHERE target_id=? AND action='material.created'", (material_id,)).fetchone()[0] == 1
+    with transaction(settings.database_url) as db:
+        assert db.execute("SELECT COUNT(*) FROM procurement_admin_events WHERE target_id=%s AND action='material.created'", (material_id,)).fetchone()[0] == 1
 
 
 def test_optional_price_and_zero_price(real_data):
@@ -102,7 +102,7 @@ def test_wrong_date_and_price_failure_roll_back_all(real_data, monkeypatch):
     monkeypatch.setattr(ProcurementStore, '_adjust_price', fail_after_write)
     assert client.post(PREFIX+'/materials', json=payload(client)).status_code == 422
     assert overview(client) == before
-    with sqlite3.connect(settings.database_path) as db:
+    with transaction(settings.database_url) as db:
         assert db.execute("SELECT COUNT(*) FROM procurement_admin_events WHERE detail LIKE '%NEW-CATALOG%'").fetchone()[0] == 0
 
 
@@ -128,9 +128,9 @@ def test_changed_baseline_does_not_accept_old_confirmation(real_data):
 def test_archived_code_and_alias_remain_reserved(real_data):
     settings, client, _ = real_data
     material = overview(client)['materials'][0]
-    with sqlite3.connect(settings.database_path) as db:
-        db.execute("UPDATE procurement_materials SET archived_at='2026-09-09' WHERE id=?", (material['id'],))
-        db.execute("INSERT INTO procurement_material_aliases VALUES ('OLD-ARCHIVED',?,'test','2026-09-09')", (material['id'],))
+    with transaction(settings.database_url, write=True) as db:
+        db.execute("UPDATE procurement_materials SET archived_at='2026-09-09' WHERE id=%s", (material['id'],))
+        db.execute("INSERT INTO procurement_material_aliases (alias_code, material_id, created_by, created_at) VALUES ('OLD-ARCHIVED',%s,'test','2026-09-09')", (material['id'],))
     for code in (material['code'], 'OLD-ARCHIVED'):
         response = client.post(PREFIX+'/materials', json={'code': code})
         assert response.status_code == 409

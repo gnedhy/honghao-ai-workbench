@@ -1,6 +1,6 @@
-import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -8,7 +8,7 @@ import pytest
 from api.authorization import AuthorizationStore
 from api.identity import IdentityStore, SESSION_COOKIE_NAME
 from api.procurement_collaboration import set_grant
-from api.procurement import ProcurementStore
+from api.postgres import transaction
 from api.settings import Settings
 from tests.helpers import authenticated_client
 
@@ -20,7 +20,7 @@ NEW = "Temporary-Profile-New-2026"
 def account(tmp_path):
     settings = Settings.from_data_dir(tmp_path / "profile-test", module_modes={key: "off" for key in ("chat", "knowledge", "automation", "workbench", "tasks")})
     with authenticated_client(settings) as client:
-        store = IdentityStore(settings.database_path)
+        store = IdentityStore(settings.database_url)
         admin = client.get("/api/me").json()
         buyer = store.create_user(username="temporary-buyer", display_name="临时采购员", department="采购部", password=OLD, scope_levels={"procurement": 3, "research": 2})
         empty = store.create_user(username="temporary-empty", display_name="临时无授权", department=None, password=OLD)
@@ -39,9 +39,8 @@ def test_profile_self_only_and_independent_of_disabled_modules(account):
     settings, client, store, admin, buyer, empty = account
     data = client.get("/api/me/profile").json()
     assert data["is_system_admin"] and data["procurement_capabilities"]["can_manage_grants"]
-    ProcurementStore(settings.database_path).initialize()
-    AuthorizationStore(settings.database_path).set_field_policy("procurement.material_unit_price", 2, 3, ["procurement"], ["procurement"])
-    set_grant(settings.database_path, admin, buyer["id"], True)
+    AuthorizationStore(settings.database_url).set_field_policy("procurement.material_unit_price", 2, 3, ["procurement"], ["procurement"])
+    set_grant(settings.database_url, admin, buyer["id"], True)
     sign_in(client)
     data = client.get("/api/me/profile").json()
     assert data["id"] == buyer["id"] and data["scope_levels"] == {"procurement": 3, "research": 2}
@@ -62,10 +61,9 @@ def test_profile_self_only_and_independent_of_disabled_modules(account):
 
 def test_admin_profile_only_name_department_and_preserve_history(account):
     settings, client, store, admin, buyer, _ = account
-    ProcurementStore(settings.database_path).initialize()
     # An existing saved operation retains its actor name, even after renaming.
-    with sqlite3.connect(settings.database_path) as db:
-        db.execute("INSERT INTO procurement_saved_changes VALUES (?,?,?,?,?,?,?,?,?)", ("event", "round", "material", buyer["id"], buyer["display_name"], "1", "2", "2026-09-09", datetime.now(UTC).isoformat()))
+    with transaction(settings.database_url, write=True) as db:
+        db.execute("INSERT INTO procurement_saved_changes (event_id,update_id,material_id,actor_id,actor_name,before_price,after_price,price_date,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)", ("event", "round", "material", buyer["id"], buyer["display_name"], "1", "2", "2026-09-09", datetime.now(UTC).isoformat()))
     before = store.get_user(buyer["id"])
     response = client.patch(f'/api/users/{buyer["id"]}/profile', json={"display_name": " 新姓名 ", "membership": {"primary_department_id": None, "additional_department_ids": []}})
     assert response.status_code == 200 and response.json()["department"] is None
@@ -77,9 +75,9 @@ def test_admin_profile_only_name_department_and_preserve_history(account):
         assert client.patch(f'/api/users/{buyer["id"]}/profile', json={"display_name": name}).status_code == 422
     assert client.patch(f'/api/users/{admin["id"]}/profile', json={"display_name": "管理员新姓名", "department": None}).status_code == 200
     assert client.get("/api/me/profile").json()["display_name"] == "管理员新姓名"
-    with sqlite3.connect(settings.database_path) as db:
+    with transaction(settings.database_url) as db:
         assert db.execute("SELECT actor_name FROM procurement_saved_changes").fetchone()[0] == buyer["display_name"]
-    event = AuthorizationStore(settings.database_path).list_audit_events()[0]
+    event = AuthorizationStore(settings.database_url).list_audit_events()[0]
     assert event["action"] == "user.profile.updated" and event["target_id"] == admin["id"] and event["created_at"]
 
 
@@ -94,6 +92,52 @@ def test_self_profile_is_read_only_for_users_and_admin(account):
         assert client.patch('/api/me/profile', json=fields).status_code == 403
     assert store.get_user(empty['id']) == before
     assert store.login(empty['username'], OLD, 300)
+
+
+@pytest.mark.parametrize("operation", ["profile", "module", "workbench"])
+def test_admin_writes_recheck_revocation_before_mutation(tmp_path, monkeypatch, operation):
+    """A request authenticated before revocation cannot write after the revocation commits."""
+    import api.main as main
+
+    settings = Settings.from_data_dir(tmp_path / "revoked-admin", module_modes={
+        "chat": "off", "knowledge": "off", "automation": "off", "workbench": "active", "tasks": "off",
+    })
+    with authenticated_client(settings) as client:
+        store = IdentityStore(settings.database_url)
+        admin = client.get("/api/me").json()
+        paths = [settings.data_dir / name for name in ("runtime-config.json", "workbench-runtime-config.json")]
+        before_files = [path.read_bytes() if path.exists() else None for path in paths]
+        before_events = AuthorizationStore(settings.database_url).list_audit_events()
+        entered, resume = threading.Event(), threading.Event()
+        original_transaction = main.transaction
+
+        @contextmanager
+        def delayed_write(url, *, write=False):
+            if write:
+                entered.set()
+                assert resume.wait(5)
+            with original_transaction(url, write=write) as connection:
+                yield connection
+
+        monkeypatch.setattr(main, "transaction", delayed_write)
+        if operation == "profile":
+            method, url, payload = client.patch, f'/api/users/{admin["id"]}/profile', {"display_name": "撤权后修改"}
+        elif operation == "module":
+            method, url, payload = client.put, "/api/admin/module-settings/workbench", {"mode": "off", "reviews": []}
+        else:
+            method, url, payload = client.put, "/api/admin/workbench-settings/research", {"mode": "off", "reviews": []}
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(method, url, json=payload)
+            try:
+                assert entered.wait(5)
+                store.update_user(admin["id"], is_system_admin=False)
+            finally:
+                resume.set()
+            response = pending.result()
+        assert response.status_code == 401
+        assert store.get_user(admin["id"])["display_name"] == admin["display_name"]
+        assert [path.read_bytes() if path.exists() else None for path in paths] == before_files
+        assert AuthorizationStore(settings.database_url).list_audit_events() == before_events
 
 
 def test_self_profile_rejects_extra_identity_permission_and_password_fields(account):
@@ -164,11 +208,11 @@ def test_wrong_password_limit_is_account_wide_persistent_and_expires(account):
         sign_in(client)  # New sessions cannot bypass the account limit.
     assert change(client).status_code == 429
     token = client.cookies.get(SESSION_COOKIE_NAME)
-    assert IdentityStore(settings.database_path).change_password(buyer["id"], token, OLD, NEW, NEW) == "limited"
-    with sqlite3.connect(settings.database_path) as db:
-        db.execute("UPDATE identity_password_failures SET attempted_at=?", ((datetime.now(UTC)-timedelta(minutes=16)).isoformat(),))
+    assert IdentityStore(settings.database_url).change_password(buyer["id"], token, OLD, NEW, NEW) == "limited"
+    with transaction(settings.database_url, write=True) as db:
+        db.execute("UPDATE identity_password_failures SET attempted_at=%s", ((datetime.now(UTC)-timedelta(minutes=16)).isoformat(),))
     assert change(client).status_code == 200
-    events = AuthorizationStore(settings.database_path).list_audit_events()
+    events = AuthorizationStore(settings.database_url).list_audit_events()
     assert "password.limited" in [event["action"] for event in events]
     assert OLD not in str(events) and NEW not in str(events) and "wrong-current" not in str(events)
 

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import ExitStack, asynccontextmanager, suppress
 from pathlib import Path
-import sqlite3
+import psycopg
+from api.postgres import transaction
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
@@ -40,7 +41,7 @@ from api.workbenches import (
     load_persisted_workbench_modes,
     save_persisted_workbench_modes,
 )
-from api.operations import migrate_data, migrate_procurement_data, readiness_checks, service_marker
+from api.operations import readiness_checks, service_marker
 from api.procurement import ProcurementStore, create_procurement_router
 from api.procurement_collaboration import capabilities
 from api.research import ResearchStore, create_research_router
@@ -49,6 +50,17 @@ from api.research import ResearchStore, create_research_router
 API_VERSION = "0.1.0"
 SERVICE_NAME = "honghao-ai-api"
 PUBLIC_API_PATHS = ("/api/health", "/api/readiness", "/api/login")
+
+
+async def _run_database_job(callback: Callable[[], object]) -> None:
+    worker = asyncio.create_task(asyncio.to_thread(callback))
+    try:
+        await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        # Cancelling to_thread does not stop its thread; retain the service lease until it exits.
+        with suppress(Exception):
+            await worker
+        raise
 
 
 class HealthResponse(BaseModel):
@@ -296,13 +308,13 @@ class KnowledgeVersionCreate(BaseModel):
 def create_app(settings: Settings | None = None, *, static_dir: Path | None = None) -> FastAPI:
     runtime_settings = settings or Settings.from_environment()
     static_root = static_dir.resolve() if static_dir is not None else None
-    database = Database(runtime_settings.database_path)
-    identities = IdentityStore(runtime_settings.database_path)
-    authorization = AuthorizationStore(runtime_settings.database_path)
-    knowledge = KnowledgeStore(runtime_settings.database_path, runtime_settings.data_dir)
-    procurement = ProcurementStore(runtime_settings.database_path)
-    feedback = FeedbackStore(runtime_settings.database_path)
-    research = ResearchStore(runtime_settings.database_path)
+    database = Database(runtime_settings.database_url)
+    identities = IdentityStore(runtime_settings.database_url)
+    authorization = AuthorizationStore(runtime_settings.database_url)
+    knowledge = KnowledgeStore(runtime_settings.database_url, runtime_settings.data_dir)
+    procurement = ProcurementStore(runtime_settings.database_url)
+    feedback = FeedbackStore(runtime_settings.database_url)
+    research = ResearchStore(runtime_settings.database_url)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -319,9 +331,9 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         async def run_research_scheduler():
             while True:
                 try:
-                    await asyncio.to_thread(research.process_events)
+                    await _run_database_job(research.process_events)
                     app.state.research_scheduler = "ok"
-                except (OSError, RuntimeError, ValueError, KeyError, ArithmeticError, sqlite3.Error):
+                except (OSError, RuntimeError, ValueError, KeyError, ArithmeticError, psycopg.Error):
                     app.state.research_scheduler = "failed"
                 await asyncio.sleep(3)
 
@@ -329,18 +341,18 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             while True:
                 await asyncio.sleep(30)
                 try:
-                    procurement.process_scheduled()
+                    await _run_database_job(procurement.process_scheduled)
                     app.state.procurement_scheduler = "ok"
-                except (OSError, RuntimeError, ValueError, sqlite3.Error):
+                except (OSError, RuntimeError, ValueError, psycopg.Error):
                     app.state.procurement_scheduler = "failed"
 
         with ExitStack() as stack:
             try:
                 runtime_settings.ensure_directories()
                 stack.enter_context(service_marker(runtime_settings))
-                database_preexisted = runtime_settings.database_path.is_file()
-                migrate_data(runtime_settings, include_workbenches=False)
-                feedback.initialize()
+                if any(value != "ok" for value in readiness_checks(runtime_settings).values()):
+                    raise RuntimeError("数据库尚未准备好，请由迁移账号显式完成迁移并核对环境")
+                knowledge.initialize()
                 app.state.database = database
                 app.state.identities = identities
                 app.state.authorization = authorization
@@ -348,25 +360,21 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                 app.state.procurement = procurement
                 if runtime_settings.workbench_modes["procurement"] == "active":
                     try:
-                        migrate_procurement_data(
-                            runtime_settings,
-                            backup_before_migration=database_preexisted,
-                        )
                         procurement.process_scheduled()
                         scheduler_task = asyncio.create_task(run_procurement_scheduler())
                         news_task = asyncio.create_task(app.state.procurement_news.run())
-                    except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
-                        app.state.procurement_error = str(error)
+                    except (OSError, RuntimeError, ValueError, psycopg.Error) as error:
+                        app.state.procurement_error = "采购启动失败"
                         app.state.procurement_scheduler = "failed"
                 if runtime_settings.workbench_modes["research"] == "active":
                     try:
                         research.initialize()
                         app.state.research = research
                         research_task = asyncio.create_task(run_research_scheduler())
-                    except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
-                        app.state.research_error = str(error)
-            except (OSError, RuntimeError, ValueError) as error:
-                app.state.startup_error = str(error)
+                    except (OSError, RuntimeError, ValueError, psycopg.Error) as error:
+                        app.state.research_error = "研发启动失败"
+            except (OSError, RuntimeError, ValueError, psycopg.Error):
+                app.state.startup_error = "数据库或运行配置未就绪"
             try:
                 yield
             finally:
@@ -385,6 +393,14 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
 
     app = FastAPI(title="Honghao AI API", version=API_VERSION, lifespan=lifespan)
 
+    @app.exception_handler(psycopg.Error)
+    async def database_error(request: Request, error: psycopg.Error):
+        return JSONResponse(status_code=503, content={"detail": "数据库暂时不可用，请稍后重试"})
+
+    @app.exception_handler(PermissionError)
+    async def permission_error(request: Request, error: PermissionError):
+        return JSONResponse(status_code=403, content={"detail": "当前账号无权执行此操作"})
+
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, error: RequestValidationError):
         if request.url.path == "/api/me/password":
@@ -392,7 +408,8 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         return await request_validation_exception_handler(request, error)
 
     def current_user(request: Request) -> dict:
-        user = getattr(request.state, "current_user", None)
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        user = identities.user_for_session(token) if token else None
         if user is None:
             raise HTTPException(status_code=401, detail="Authentication required")
         return user
@@ -444,7 +461,10 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     async def require_authentication(request: Request, call_next):
         if request.url.path.startswith("/api/") and request.url.path not in PUBLIC_API_PATHS:
             token = request.cookies.get(SESSION_COOKIE_NAME)
-            user = identities.user_for_session(token) if token else None
+            try:
+                user = identities.user_for_session(token) if token else None
+            except psycopg.Error:
+                return JSONResponse(status_code=503, content={"detail": "Service not ready"})
             if user is None:
                 return JSONResponse(status_code=401, content={"detail": "Authentication required"})
             request.state.current_user = user
@@ -527,7 +547,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     @app.get("/api/me/profile", response_model=ProfileResponse)
     def me_profile(request: Request) -> ProfileResponse:
         user = current_user(request)
-        return ProfileResponse(**user, procurement_capabilities=capabilities(runtime_settings.database_path, user), research_capabilities=capabilities(runtime_settings.database_path, user, "research"))
+        return ProfileResponse(**user, procurement_capabilities=capabilities(runtime_settings.database_url, user), research_capabilities=capabilities(runtime_settings.database_url, user, "research"))
 
     @app.patch("/api/me/profile", response_model=UserResponse)
     def update_me_profile(update: ProfileUpdate, request: Request) -> UserResponse:
@@ -546,16 +566,17 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
 
     @app.patch("/api/users/{user_id}/profile", response_model=UserResponse)
     def update_profile(user_id: str, update: AdminProfileUpdate, request: Request) -> UserResponse:
-        actor = require_system_admin(request)
-        try:
-            user = identities.update_profile(user_id, actor_id=actor["id"], display_name=update.display_name, department=update.department or None, membership=update.membership.model_dump() if update.membership is not None else None)
-        except PermissionError as error:
-            raise HTTPException(status_code=403, detail="Administrator required") from error
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        return UserResponse(**user)
+        with transaction(runtime_settings.database_url, write=True):
+            actor = require_system_admin(request)
+            try:
+                user = identities.update_profile(user_id, actor_id=actor["id"], display_name=update.display_name, department=update.department or None, membership=update.membership.model_dump() if update.membership is not None else None)
+            except PermissionError as error:
+                raise HTTPException(status_code=403, detail="Administrator required") from error
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            if user is None:
+                raise HTTPException(status_code=404, detail="User not found")
+            return UserResponse(**user)
 
     @app.post("/api/logout", status_code=204)
     def logout(request: Request, response: Response) -> None:
@@ -567,29 +588,30 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
 
     @app.post("/api/users", response_model=UserResponse, status_code=201)
     def create_user(user: UserCreate, request: Request) -> UserResponse:
-        actor = require_system_admin(request)
-        try:
-            created = identities.create_user(
-                username=user.username,
-                display_name=user.display_name,
-                department=user.department,
-                password=user.password,
-                is_system_admin=user.is_system_admin,
-                scope_levels=user.scope_levels,
-                primary_department_id=user.primary_department_id,
-                additional_department_ids=user.additional_department_ids,
+        with transaction(runtime_settings.database_url, write=True):
+            actor = require_system_admin(request)
+            try:
+                created = identities.create_user(
+                    username=user.username,
+                    display_name=user.display_name,
+                    department=user.department,
+                    password=user.password,
+                    is_system_admin=user.is_system_admin,
+                    scope_levels=user.scope_levels,
+                    primary_department_id=user.primary_department_id,
+                    additional_department_ids=user.additional_department_ids,
+                )
+            except DuplicateIdentityError as error:
+                raise HTTPException(status_code=409, detail="User already exists") from error
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            authorization.audit(
+                "user.created",
+                actor_user_id=actor["id"],
+                target_type="account",
+                target_id=created["id"],
             )
-        except DuplicateIdentityError as error:
-            raise HTTPException(status_code=409, detail="User already exists") from error
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        authorization.audit(
-            "user.created",
-            actor_user_id=actor["id"],
-            target_type="account",
-            target_id=created["id"],
-        )
-        return UserResponse(**created)
+            return UserResponse(**created)
 
     @app.get("/api/users", response_model=list[UserResponse])
     def list_users(request: Request) -> list[UserResponse]:
@@ -597,7 +619,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         return [UserResponse(**user) for user in identities.list_users()]
 
     from api.organization import OrganizationStore
-    organization = OrganizationStore(runtime_settings.database_path)
+    organization = OrganizationStore(runtime_settings.database_url)
 
     @app.get('/api/departments')
     def list_departments(request: Request):
@@ -652,29 +674,30 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
 
     @app.patch("/api/users/{user_id}", response_model=UserResponse)
     def update_user(user_id: str, update: UserUpdate, request: Request) -> UserResponse:
-        actor = require_system_admin(request)
-        if update.is_active is None and update.is_system_admin is None and update.scope_levels is None:
-            raise HTTPException(status_code=422, detail="No account changes supplied")
-        if user_id == actor["id"]:
-            raise HTTPException(status_code=422, detail="Cannot modify the current administrator")
-        try:
-            user = identities.update_user(
-                user_id,
-                is_active=update.is_active,
-                is_system_admin=update.is_system_admin,
-                scope_levels=update.scope_levels,
+        with transaction(runtime_settings.database_url, write=True):
+            actor = require_system_admin(request)
+            if update.is_active is None and update.is_system_admin is None and update.scope_levels is None:
+                raise HTTPException(status_code=422, detail="No account changes supplied")
+            if user_id == actor["id"]:
+                raise HTTPException(status_code=422, detail="Cannot modify the current administrator")
+            try:
+                user = identities.update_user(
+                    user_id,
+                    is_active=update.is_active,
+                    is_system_admin=update.is_system_admin,
+                    scope_levels=update.scope_levels,
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            if user is None:
+                raise HTTPException(status_code=404, detail="User not found")
+            authorization.audit(
+                "user.updated",
+                actor_user_id=actor["id"],
+                target_type="account",
+                target_id=user_id,
             )
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        authorization.audit(
-            "user.updated",
-            actor_user_id=actor["id"],
-            target_type="account",
-            target_id=user_id,
-        )
-        return UserResponse(**user)
+            return UserResponse(**user)
 
     @app.get("/api/admin/audit-events", response_model=list[AuditEventResponse])
     def list_audit_events(request: Request) -> list[AuditEventResponse]:
@@ -727,63 +750,64 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         update: ModuleSettingUpdate,
         request: Request,
     ) -> AdminModuleStatusResponse:
-        actor = require_system_admin(request)
-        if module_id not in MODULE_IDS:
-            raise HTTPException(status_code=404, detail="Module not found")
-        pending_modes = load_persisted_module_modes(runtime_settings.data_dir, runtime_settings.environment, runtime_settings.module_modes)
-        if (runtime_settings.module_modes[module_id] != "active" or pending_modes[module_id] != "active"):
-            raise HTTPException(status_code=403, detail="未启用的功能模块已锁定，暂不开放操作")
-        previous_review = reusable_activation_review(runtime_settings.data_dir, "runtime-config.json", module_id)
-        if (
-            runtime_settings.environment == "production"
-            and update.mode == "active"
-            and (
-                set(update.reviews) != REQUIRED_ACTIVATION_REVIEWS and (bool(update.reviews) or previous_review is None)
+        with transaction(runtime_settings.database_url, write=True):
+            actor = require_system_admin(request)
+            if module_id not in MODULE_IDS:
+                raise HTTPException(status_code=404, detail="Module not found")
+            pending_modes = load_persisted_module_modes(runtime_settings.data_dir, runtime_settings.environment, runtime_settings.module_modes)
+            if (runtime_settings.module_modes[module_id] != "active" or pending_modes[module_id] != "active"):
+                raise HTTPException(status_code=403, detail="未启用的功能模块已锁定，暂不开放操作")
+            previous_review = reusable_activation_review(runtime_settings.data_dir, "runtime-config.json", module_id)
+            if (
+                runtime_settings.environment == "production"
+                and update.mode == "active"
+                and (
+                    set(update.reviews) != REQUIRED_ACTIVATION_REVIEWS and (bool(update.reviews) or previous_review is None)
+                )
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Production activation requires business, security, code, and rollback reviews",
+                )
+            typed_module_id = cast(ModuleId, module_id)
+            pending_modes = load_persisted_module_modes(
+                runtime_settings.data_dir,
+                runtime_settings.environment,
+                runtime_settings.module_modes,
             )
-        ):
-            raise HTTPException(
-                status_code=422,
-                detail="Production activation requires business, security, code, and rollback reviews",
+            pending_modes[typed_module_id] = update.mode
+            save_persisted_module_modes(
+                runtime_settings.data_dir,
+                runtime_settings.environment,
+                pending_modes,
+                approved_module=typed_module_id
+                if runtime_settings.environment == "production" and update.mode == "active"
+                else None,
+                approved_review_record=(previous_review if not update.reviews and previous_review else create_activation_review_record(
+                    update.reviews,
+                    reviewed_by=actor["id"],
+                    issue_url=update.issue_url or "",
+                    pull_request_url=update.pull_request_url or "",
+                ))
+                if runtime_settings.environment == "production" and update.mode == "active"
+                else None,
+                changed_module=typed_module_id,
+                changed_mode=update.mode,
+                changed_by=actor["id"],
             )
-        typed_module_id = cast(ModuleId, module_id)
-        pending_modes = load_persisted_module_modes(
-            runtime_settings.data_dir,
-            runtime_settings.environment,
-            runtime_settings.module_modes,
-        )
-        pending_modes[typed_module_id] = update.mode
-        save_persisted_module_modes(
-            runtime_settings.data_dir,
-            runtime_settings.environment,
-            pending_modes,
-            approved_module=typed_module_id
-            if runtime_settings.environment == "production" and update.mode == "active"
-            else None,
-            approved_review_record=(previous_review if not update.reviews and previous_review else create_activation_review_record(
-                update.reviews,
-                reviewed_by=actor["id"],
-                issue_url=update.issue_url or "",
-                pull_request_url=update.pull_request_url or "",
-            ))
-            if runtime_settings.environment == "production" and update.mode == "active"
-            else None,
-            changed_module=typed_module_id,
-            changed_mode=update.mode,
-            changed_by=actor["id"],
-        )
-        authorization.audit(
-            f"module.mode.{update.mode}",
-            actor_user_id=actor["id"],
-            target_type="module",
-            target_id=typed_module_id,
-        )
-        return AdminModuleStatusResponse(
-            id=typed_module_id,
-            can_change=(runtime_settings.module_modes[typed_module_id] == "active" and update.mode == "active"),
-            current_mode=runtime_settings.module_modes[typed_module_id],
-            pending_mode=update.mode,
-            can_reactivate=previous_review is not None or (runtime_settings.environment == "production" and update.mode == "active"),
-        )
+            authorization.audit(
+                f"module.mode.{update.mode}",
+                actor_user_id=actor["id"],
+                target_type="module",
+                target_id=typed_module_id,
+            )
+            return AdminModuleStatusResponse(
+                id=typed_module_id,
+                can_change=(runtime_settings.module_modes[typed_module_id] == "active" and update.mode == "active"),
+                current_mode=runtime_settings.module_modes[typed_module_id],
+                pending_mode=update.mode,
+                can_reactivate=previous_review is not None or (runtime_settings.environment == "production" and update.mode == "active"),
+            )
 
     @app.put(
         "/api/admin/workbench-settings/{workbench_id}",
@@ -794,59 +818,60 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         update: ModuleSettingUpdate,
         request: Request,
     ) -> AdminWorkbenchStatusResponse:
-        actor = require_system_admin(request)
-        if workbench_id not in WORKBENCH_IDS:
-            raise HTTPException(status_code=404, detail="Workbench not found")
-        if workbench_id == "management":
-            raise HTTPException(status_code=403, detail="总经办工作台已锁定，暂不开放操作")
-        previous_review = reusable_activation_review(runtime_settings.data_dir, "workbench-runtime-config.json", workbench_id)
-        if (
-            runtime_settings.environment == "production"
-            and update.mode == "active"
-            and (
-                set(update.reviews) != REQUIRED_ACTIVATION_REVIEWS and (bool(update.reviews) or previous_review is None)
+        with transaction(runtime_settings.database_url, write=True):
+            actor = require_system_admin(request)
+            if workbench_id not in WORKBENCH_IDS:
+                raise HTTPException(status_code=404, detail="Workbench not found")
+            if workbench_id == "management":
+                raise HTTPException(status_code=403, detail="总经办工作台已锁定，暂不开放操作")
+            previous_review = reusable_activation_review(runtime_settings.data_dir, "workbench-runtime-config.json", workbench_id)
+            if (
+                runtime_settings.environment == "production"
+                and update.mode == "active"
+                and (
+                    set(update.reviews) != REQUIRED_ACTIVATION_REVIEWS and (bool(update.reviews) or previous_review is None)
+                )
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Production activation requires business, security, code, and rollback reviews",
+                )
+            typed_workbench_id = cast(WorkbenchId, workbench_id)
+            pending_modes = load_persisted_workbench_modes(
+                runtime_settings.data_dir,
+                runtime_settings.environment,
+                runtime_settings.workbench_modes,
             )
-        ):
-            raise HTTPException(
-                status_code=422,
-                detail="Production activation requires business, security, code, and rollback reviews",
+            pending_modes[typed_workbench_id] = update.mode
+            is_production_activation = runtime_settings.environment == "production" and update.mode == "active"
+            save_persisted_workbench_modes(
+                runtime_settings.data_dir,
+                runtime_settings.environment,
+                pending_modes,
+                approved_workbench=typed_workbench_id if is_production_activation else None,
+                approved_review_record=(previous_review if not update.reviews and previous_review else create_activation_review_record(
+                    update.reviews,
+                    reviewed_by=actor["id"],
+                    issue_url=update.issue_url or "",
+                    pull_request_url=update.pull_request_url or "",
+                )) if is_production_activation else None,
+                changed_workbench=typed_workbench_id,
+                changed_mode=update.mode,
+                changed_by=actor["id"],
             )
-        typed_workbench_id = cast(WorkbenchId, workbench_id)
-        pending_modes = load_persisted_workbench_modes(
-            runtime_settings.data_dir,
-            runtime_settings.environment,
-            runtime_settings.workbench_modes,
-        )
-        pending_modes[typed_workbench_id] = update.mode
-        is_production_activation = runtime_settings.environment == "production" and update.mode == "active"
-        save_persisted_workbench_modes(
-            runtime_settings.data_dir,
-            runtime_settings.environment,
-            pending_modes,
-            approved_workbench=typed_workbench_id if is_production_activation else None,
-            approved_review_record=(previous_review if not update.reviews and previous_review else create_activation_review_record(
-                update.reviews,
-                reviewed_by=actor["id"],
-                issue_url=update.issue_url or "",
-                pull_request_url=update.pull_request_url or "",
-            )) if is_production_activation else None,
-            changed_workbench=typed_workbench_id,
-            changed_mode=update.mode,
-            changed_by=actor["id"],
-        )
-        authorization.audit(
-            f"workbench.mode.{update.mode}",
-            actor_user_id=actor["id"],
-            target_type="workbench",
-            target_id=typed_workbench_id,
-        )
-        return AdminWorkbenchStatusResponse(
-            id=typed_workbench_id,
-            can_change=typed_workbench_id != "management",
-            current_mode=runtime_settings.workbench_modes[typed_workbench_id],
-            pending_mode=update.mode,
-            can_reactivate=previous_review is not None or (runtime_settings.environment == "production" and update.mode == "active"),
-        )
+            authorization.audit(
+                f"workbench.mode.{update.mode}",
+                actor_user_id=actor["id"],
+                target_type="workbench",
+                target_id=typed_workbench_id,
+            )
+            return AdminWorkbenchStatusResponse(
+                id=typed_workbench_id,
+                can_change=typed_workbench_id != "management",
+                current_mode=runtime_settings.workbench_modes[typed_workbench_id],
+                pending_mode=update.mode,
+                can_reactivate=previous_review is not None or (runtime_settings.environment == "production" and update.mode == "active"),
+            )
 
     @app.get("/api/workbenches", response_model=list[WorkbenchStatusResponse])
     def list_workbenches(request: Request) -> list[WorkbenchStatusResponse]:
@@ -975,7 +1000,12 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
 
     @app.post("/api/projects", response_model=ProjectResponse, status_code=201)
     def create_project(project: ProjectCreate, request: Request) -> ProjectResponse:
-        return ProjectResponse(**request.app.state.database.create_project(project.title))
+        with transaction(runtime_settings.database_url, write=True):
+            actor = current_user(request)
+            module_id = module_for_api_path(request.url.path)
+            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method):
+                raise HTTPException(status_code=403, detail="Permission denied")
+            return ProjectResponse(**request.app.state.database.create_project(project.title))
 
     @app.get("/api/projects", response_model=list[ProjectResponse])
     def list_projects(request: Request) -> list[ProjectResponse]:
@@ -983,17 +1013,27 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
 
     @app.patch("/api/projects/{project_id}", response_model=ProjectResponse)
     def rename_project(project_id: str, update: ProjectUpdate, request: Request) -> ProjectResponse:
-        project = request.app.state.database.rename_project(project_id, update.title)
-        if project is None:
-            raise HTTPException(status_code=404, detail="Project not found")
-        return ProjectResponse(**project)
+        with transaction(runtime_settings.database_url, write=True):
+            actor = current_user(request)
+            module_id = module_for_api_path(request.url.path)
+            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method):
+                raise HTTPException(status_code=403, detail="Permission denied")
+            project = request.app.state.database.rename_project(project_id, update.title)
+            if project is None:
+                raise HTTPException(status_code=404, detail="Project not found")
+            return ProjectResponse(**project)
 
     @app.post("/api/conversations", response_model=ConversationResponse, status_code=201)
     def create_conversation(conversation: ConversationCreate, request: Request) -> ConversationResponse:
-        created = request.app.state.database.create_conversation(conversation.title, conversation.project_id)
-        if created is None:
-            raise HTTPException(status_code=404, detail="Project not found")
-        return ConversationResponse(**created)
+        with transaction(runtime_settings.database_url, write=True):
+            actor = current_user(request)
+            module_id = module_for_api_path(request.url.path)
+            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method):
+                raise HTTPException(status_code=403, detail="Permission denied")
+            created = request.app.state.database.create_conversation(conversation.title, conversation.project_id)
+            if created is None:
+                raise HTTPException(status_code=404, detail="Project not found")
+            return ConversationResponse(**created)
 
     @app.get("/api/conversations", response_model=list[ConversationResponse])
     def list_conversations(request: Request, project_id: str | None = None) -> list[ConversationResponse]:
@@ -1008,13 +1048,18 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         update: ConversationProjectUpdate,
         request: Request,
     ) -> ConversationResponse:
-        conversation = request.app.state.database.set_conversation_project(
-            conversation_id,
-            update.project_id,
-        )
-        if conversation is None:
-            raise HTTPException(status_code=404, detail="Conversation or project not found")
-        return ConversationResponse(**conversation)
+        with transaction(runtime_settings.database_url, write=True):
+            actor = current_user(request)
+            module_id = module_for_api_path(request.url.path)
+            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method):
+                raise HTTPException(status_code=403, detail="Permission denied")
+            conversation = request.app.state.database.set_conversation_project(
+                conversation_id,
+                update.project_id,
+            )
+            if conversation is None:
+                raise HTTPException(status_code=404, detail="Conversation or project not found")
+            return ConversationResponse(**conversation)
 
     @app.post(
         "/api/conversation-submissions",
@@ -1025,20 +1070,25 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         submission: InitialConversationSubmission,
         request: Request,
     ) -> InitialSubmissionResponse:
-        ensure_submission_modules_available(submission.mode, current_user(request))
-        try:
-            result = request.app.state.database.create_conversation_submission(
-                submission.title,
-                submission.project_id,
-                submission.mode,
-                submission.content,
-                str(submission.submission_key),
-            )
-        except SubmissionConflictError as error:
-            raise HTTPException(status_code=409, detail="Submission key already used") from error
-        if result is None:
-            raise HTTPException(status_code=404, detail="Project not found")
-        return InitialSubmissionResponse(**result)
+        with transaction(runtime_settings.database_url, write=True):
+            actor = current_user(request)
+            module_id = module_for_api_path(request.url.path)
+            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method):
+                raise HTTPException(status_code=403, detail="Permission denied")
+            ensure_submission_modules_available(submission.mode, current_user(request))
+            try:
+                result = request.app.state.database.create_conversation_submission(
+                    submission.title,
+                    submission.project_id,
+                    submission.mode,
+                    submission.content,
+                    str(submission.submission_key),
+                )
+            except SubmissionConflictError as error:
+                raise HTTPException(status_code=409, detail="Submission key already used") from error
+            if result is None:
+                raise HTTPException(status_code=404, detail="Project not found")
+            return InitialSubmissionResponse(**result)
 
     @app.post(
         "/api/conversations/{conversation_id}/submissions",
@@ -1050,19 +1100,24 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         submission: ConversationSubmission,
         request: Request,
     ) -> SubmissionResponse:
-        ensure_submission_modules_available(submission.mode, current_user(request))
-        try:
-            result = request.app.state.database.submit_conversation(
-                conversation_id,
-                submission.mode,
-                submission.content,
-                str(submission.submission_key),
-            )
-        except SubmissionConflictError as error:
-            raise HTTPException(status_code=409, detail="Submission key already used") from error
-        if result is None:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        return SubmissionResponse(**result)
+        with transaction(runtime_settings.database_url, write=True):
+            actor = current_user(request)
+            module_id = module_for_api_path(request.url.path)
+            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method):
+                raise HTTPException(status_code=403, detail="Permission denied")
+            ensure_submission_modules_available(submission.mode, current_user(request))
+            try:
+                result = request.app.state.database.submit_conversation(
+                    conversation_id,
+                    submission.mode,
+                    submission.content,
+                    str(submission.submission_key),
+                )
+            except SubmissionConflictError as error:
+                raise HTTPException(status_code=409, detail="Submission key already used") from error
+            if result is None:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+            return SubmissionResponse(**result)
 
     @app.get(
         "/api/conversations/{conversation_id}/messages",

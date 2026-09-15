@@ -19,7 +19,7 @@ def backfill(db):
     previous = {}
     for batch_id, version, price_date, published_at in batches:
         # Snapshot prices are the already validated formal purchase prices, including explicit zero.
-        period = {code:price for code,price in db.execute('SELECT code,latest_price FROM procurement_price_batch_items WHERE batch_id=?',(batch_id,))}
+        period = {code:price for code,price in db.execute('SELECT code,latest_price FROM procurement_price_batch_items WHERE batch_id=%s',(batch_id,))}
         source_batches.append({'id':batch_id,'version':version,'price_date':price_date,'published_at':published_at,'prices':period})
         inputs = deepcopy(frozen)
         for code, entry in inputs['prices'].items():
@@ -51,17 +51,17 @@ def backfill(db):
                 calculations={p:{k:v for k,v in values.items() if k in ids} for p,values in results.items()},
                 missing_materials=sorted(set(left['missing_materials']+right['missing_materials'])),
                 status='missing' if left['missing_materials'] or right['missing_materials'] else 'ready')
-            db.execute('INSERT INTO research_backfill_records VALUES(?,?,?,?)',(version,key,sig,packed(payload)))
+            db.execute('INSERT INTO research_backfill_records(purchase_version,product_id,signature,payload) VALUES(%s,%s,%s,%s)',(version,key,sig,packed(payload)))
             previous[key] = dict(payload,signature=sig)
-    db.execute('INSERT INTO research_backfill_runs VALUES(1,?,?)',(date,packed({'current':frozen,'purchase_versions':source_batches})))
+    db.execute('INSERT INTO research_backfill_runs(id,recorded_at,inputs) VALUES(1,%s,%s)',(date,packed({'current':frozen,'purchase_versions':source_batches})))
     return {'status':'created','versions':len(batches)}
 
 
 def linked_history(db, key):
     """Project comparisons without ever editing original payloads or their signatures."""
     from api.research import comparison, comparison_price
-    entries = [json.loads(raw) for raw, in db.execute('SELECT payload FROM research_backfill_records WHERE product_id=? ORDER BY purchase_version',(key,))]
-    for raw, in db.execute('SELECT payload FROM research_cost_records WHERE product_id=? ORDER BY sequence',(key,)):
+    entries = [json.loads(raw) for raw, in db.execute('SELECT payload FROM research_backfill_records WHERE product_id=%s ORDER BY purchase_version',(key,))]
+    for raw, in db.execute('SELECT payload FROM research_cost_records WHERE product_id=%s ORDER BY sequence',(key,)):
         row=json.loads(raw)
         row.update(record_type='formal',effective_date=row['recorded_at'][:10],product_id=key)
         entries.append(row)
@@ -83,7 +83,7 @@ def linked_history(db, key):
 
 def version_history(db, event_id=None):
     versions = {}
-    keys = [r[0] for r in db.execute("SELECT DISTINCT product_id FROM research_cost_records UNION SELECT DISTINCT product_id FROM research_backfill_records")]
+    keys = [r[0] for r in db.execute("SELECT DISTINCT product_id FROM research_cost_records UNION SELECT DISTINCT product_id FROM research_backfill_records ORDER BY product_id")]
     for key in keys:
         for row in linked_history(db,key):
             if row['kind'] != 'recipe' or (event_id and row['event_id']!=event_id):

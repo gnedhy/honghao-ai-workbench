@@ -1,6 +1,8 @@
 import copy
 import json
-import sqlite3
+import os
+import psycopg
+from api.postgres import migrate, transaction
 from datetime import date
 from decimal import Decimal
 
@@ -66,11 +68,11 @@ def data(tmp_path):
     with authenticated_client(settings) as client:
         assert publish(client, import_prices(client, "2026-09-08", [("A", 30)])).status_code == 200
         admin = client.get("/api/me").json()["id"]
-        with sqlite3.connect(settings.database_path) as db:
+        with transaction(settings.database_url, write=True) as db:
             a_id = db.execute("SELECT id FROM procurement_materials WHERE code='A'").fetchone()[0]
-            db.execute("INSERT INTO procurement_departments VALUES ('rd5','研发五部',4)")
-            db.execute("INSERT INTO procurement_department_materials VALUES ('rd5',?)", (a_id,))
-            db.execute("INSERT INTO procurement_inventory VALUES (?, '12.345', '9', '9', 'original', '原料行情总表', 2, ?, 'original')", (a_id, admin))
+            db.execute("INSERT INTO procurement_departments (id, name, position) VALUES ('rd5','研发五部',4)")
+            db.execute("INSERT INTO procurement_department_materials (department_id, material_id) VALUES ('rd5',%s)", (a_id,))
+            db.execute("INSERT INTO procurement_inventory (material_id, quantity, price, raw_price, source_sha256, sheet, source_row, imported_by, imported_at) VALUES (%s, '12.345', '9', '9', 'original', '原料行情总表', 2, %s, 'original')", (a_id, admin))
             db.execute("INSERT INTO procurement_materials(id,code,name,unit,updated_at,archived_at) VALUES ('old-b','B','B','kg','original','archived')")
         source = tmp_path / 'rd5.xlsx'
         make_source(source)
@@ -79,15 +81,15 @@ def data(tmp_path):
 
 def apply(data, plan=None, actor=None):
     settings, _, source, admin = data
-    plan = plan or preview(settings.database_path, source.read_bytes())
-    return import_rd5(settings.database_path, source, actor or admin, expected_sha256=plan["sha256"],
-                      expected_state_sha256=plan["state_sha256"], effective_date=date(2026, 9, 11))
+    plan = plan or preview(settings.database_url, source.read_bytes())
+    return import_rd5(settings.database_url, source, actor or admin, expected_sha256=plan["sha256"],
+                      expected_state_sha256=plan["state_sha256"], effective_date=date(2026, 9, 11), data_dir=settings.data_dir)
 
 
 def table_rows(path):
-    with sqlite3.connect(path) as db:
-        return {name: db.execute(f'SELECT * FROM {name} ORDER BY rowid').fetchall() for (name,) in
-                db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'procurement_%'")}
+    with transaction(path) as db:
+        return {name: db.execute(f'SELECT * FROM {name} ORDER BY _order').fetchall() for (name,) in
+                db.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'procurement_%'")}
 
 
 @pytest.mark.parametrize('updated_price, expected_change', [(30, 0), (33, 0.1)])
@@ -99,7 +101,7 @@ def test_supplement_preserves_old_comparisons_and_next_price_update_uses_current
     mid = old['id']
     original = before['ledger_comparison']['items'][mid]
     assert original['change'] == expected_change
-    plan = preview(settings.database_path, source.read_bytes())
+    plan = preview(settings.database_url, source.read_bytes())
     apply(data, plan)
     after = client.get('/api/workbenches/procurement/overview').json()
     retained = next(m for m in after['materials'] if m['id'] == mid)
@@ -119,7 +121,7 @@ def test_supplement_preserves_old_comparisons_and_next_price_update_uses_current
     assert len(version['items']) == 8  # The immutable snapshot still carries the existing material.
 
     assert apply(data, plan)['already_imported'] is True
-    assert ProcurementStore(settings.database_path).batch_comparison(before['batches'][0]['id']) == before['batches'][0]['comparison']
+    assert ProcurementStore(settings.database_url).batch_comparison(before['batches'][0]['id']) == before['batches'][0]['comparison']
 
     # A later addition through the ordinary importer preserves both old and newly added baselines.
     assert publish(client, import_prices(client, '2026-09-12', [('EXTRA', 8)])).status_code == 200
@@ -138,15 +140,15 @@ def test_supplement_preserves_old_comparisons_and_next_price_update_uses_current
 
 def test_import_preserves_existing_data_restores_ids_publishes_and_calculates(data, tmp_path):
     settings, client, source, admin = data
-    plan = preview(settings.database_path, source.read_bytes())
+    plan = preview(settings.database_url, source.read_bytes())
     assert plan['counts'] == {'keep': 1, 'restore': 1, 'create': 8, 'omit': 1, 'active_before': 1, 'active_after': 10,
                               'department_before': 1, 'department_after': 10, 'latest_prices': 7, 'inventory_prices': 7,
                               'recipes': 3, 'recipe_lines': 7, 'composites': 4}
-    before = table_rows(settings.database_path)
+    before = table_rows(settings.database_url)
     result = apply(data, plan)
     assert result['batch']['version'] == 2
     assert result['blocked_recipes'] == ['缺价方案']
-    after = table_rows(settings.database_path)
+    after = table_rows(settings.database_url)
     assert after['procurement_materials'][0] == before['procurement_materials'][0]
     assert after['procurement_inventory'][0] == before['procurement_inventory'][0]
     assert after['procurement_price_batches'][:1] == before['procurement_price_batches']
@@ -161,7 +163,7 @@ def test_import_preserves_existing_data_restores_ids_publishes_and_calculates(da
     assert rows['CF063A']['published_price'] == '2.5'
     assert all(m['published_price_date'] == '2026-09-11' for k, m in rows.items() if k != 'A' and m['published_price'] is not None)
     assert all(m['price_modifier']['id'] == admin for k, m in rows.items() if k != 'A' and m['published_price'] is not None)
-    export = export_preparation(settings.database_path, result['sha256'], tmp_path / 'review')
+    export = export_preparation(settings.database_url, result['sha256'], tmp_path / 'review')
     with open(export['package'], encoding='utf-8') as stream:
         package = json.load(stream)
     calc = package['current_calculation']
@@ -174,7 +176,7 @@ def test_import_preserves_existing_data_restores_ids_publishes_and_calculates(da
     assert 'source_blank_as_zero' in json.dumps(package['source_replay'])
     assert package['recipes'][0]['lines'][0]['material_id'] == rows['CF401B']['id']
     assert apply(data, plan)['already_imported'] is True
-    assert table_rows(settings.database_path) == after
+    assert table_rows(settings.database_url) == after
     # Later normal price activation must leave independent inventory intact.
     newer = import_prices(client, '2026-09-12', [('B', 8)])
     assert publish(client, newer).status_code == 200
@@ -185,13 +187,13 @@ def test_import_preserves_existing_data_restores_ids_publishes_and_calculates(da
 @pytest.mark.parametrize('target,value', [('A3','A'), ('C4',-2), ('C4','=HYPERLINK("https://example.com")'), ('B4','=MIN(C4,D4)'), ('E4',4)])
 def test_bad_source_rejected_without_writes(data, target, value):
     settings, _, source, _ = data
-    before = table_rows(settings.database_path)
+    before = table_rows(settings.database_url)
     w = load_workbook(source)
     w['原料单价'][target] = value
     w.save(source)
     with pytest.raises(ValueError):
         apply(data)
-    assert table_rows(settings.database_path) == before
+    assert table_rows(settings.database_url) == before
 
 
 @pytest.mark.parametrize('target,value', [('E2',-1), ('F2',0), ('D2','=VLOOKUP(B2,其他!A:B,2,0)'), ('C2',.5)])
@@ -207,21 +209,21 @@ def test_invalid_recipe_rejected(data, target, value):
 @pytest.mark.parametrize('mutation', ['material', 'prices', 'department', 'alias'])
 def test_stale_preflight_stops_before_writing(data, mutation):
     settings, _, source, _ = data
-    plan = preview(settings.database_path, source.read_bytes())
-    with sqlite3.connect(settings.database_path) as db:
+    plan = preview(settings.database_url, source.read_bytes())
+    with transaction(settings.database_url, write=True) as db:
         db.execute({'material': "UPDATE procurement_materials SET code='A-new' WHERE code='A'",
                     'prices': "UPDATE procurement_price_batch_items SET latest_price='31'",
                     'department': "DELETE FROM procurement_department_materials",
-                    'alias': "INSERT INTO procurement_material_aliases VALUES ('CF026','old-b','someone','now')"}[mutation])
-    before = table_rows(settings.database_path)
+                    'alias': "INSERT INTO procurement_material_aliases (alias_code, material_id, created_by, created_at) VALUES ('CF026','old-b','someone','now')"}[mutation])
+    before = table_rows(settings.database_url)
     with pytest.raises(ValueError):
         apply(data, plan)
-    assert table_rows(settings.database_path) == before
+    assert table_rows(settings.database_url) == before
 
 
 def test_file_change_and_pending_round_stop_import(data):
     settings, client, source, _ = data
-    plan = preview(settings.database_path, source.read_bytes())
+    plan = preview(settings.database_url, source.read_bytes())
     source.write_bytes(source.read_bytes() + b'changed')
     with pytest.raises(ValueError, match='文件已变化'):
         apply(data, plan)
@@ -233,18 +235,21 @@ def test_file_change_and_pending_round_stop_import(data):
 
 def test_entire_transaction_and_archive_roll_back(data):
     settings, _, _, _ = data
-    with sqlite3.connect(settings.database_path) as db:
-        db.execute("CREATE TRIGGER fail_receipt BEFORE INSERT ON procurement_rd5_imports BEGIN SELECT RAISE(ABORT,'late failure'); END")
-    before = table_rows(settings.database_path)
-    with pytest.raises(sqlite3.IntegrityError, match='late failure'):
+    with transaction(os.environ['HONGHAO_TEST_MIGRATION_URL'], write=True) as db:
+        db.execute("""CREATE FUNCTION fail_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN RAISE EXCEPTION 'late failure' USING ERRCODE='23514'; END $$;
+            CREATE TRIGGER fail_receipt BEFORE INSERT ON procurement_rd5_imports
+            FOR EACH ROW EXECUTE FUNCTION fail_receipt()""")
+    before = table_rows(settings.database_url)
+    with pytest.raises(psycopg.IntegrityError, match='late failure'):
         apply(data)
-    assert table_rows(settings.database_path) == before
+    assert table_rows(settings.database_url) == before
     assert not list((settings.data_dir / 'controlled-work' / 'procurement-sources').glob('*.xlsx'))
 
 
 def test_permissions_cli_and_generic_formula_rejection(data, capsys):
     settings, _, source, _ = data
-    user = IdentityStore(settings.database_path).create_user(username='reader', display_name='reader', department=None,
+    user = IdentityStore(settings.database_url).create_user(username='reader', display_name='reader', department=None,
                                                            password='Reader-password-2026', scope_levels={'procurement': 4})
     with pytest.raises(PermissionError):
         apply(data, actor=user['id'])
@@ -256,18 +261,17 @@ def test_permissions_cli_and_generic_formula_rejection(data, capsys):
         read_workbook(source.read_bytes())
 
 
-def test_quantity_nullable_migration_preserves_source_and_preferences(data):
+def test_quantity_nullable_schema_preserves_source_and_preferences(data):
     settings, _, _, admin = data
-    before = table_rows(settings.database_path)['procurement_inventory']
-    preferences = ProcurementStore(settings.database_path).preferences(admin)
-    with sqlite3.connect(settings.database_path) as db:
-        db.execute("UPDATE schema_metadata SET value=6 WHERE key='workbench_procurement_schema_version'")
-    ProcurementStore(settings.database_path).initialize()
-    ProcurementStore(settings.database_path).initialize()
-    assert table_rows(settings.database_path)['procurement_inventory'] == before
-    assert ProcurementStore(settings.database_path).preferences(admin) == preferences
-    with sqlite3.connect(settings.database_path) as db:
-        assert next(r for r in db.execute('PRAGMA table_info(procurement_inventory)') if r[1] == 'quantity')[3] == 0
+    before = table_rows(settings.database_url)['procurement_inventory']
+    preferences = ProcurementStore(settings.database_url).preferences(admin)
+    assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == 2
+    assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == 2
+    assert ProcurementStore(settings.database_url).schema_version() == 7
+    assert table_rows(settings.database_url)['procurement_inventory'] == before
+    assert ProcurementStore(settings.database_url).preferences(admin) == preferences
+    with transaction(settings.database_url) as db:
+        assert db.execute("SELECT is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='procurement_inventory' AND column_name='quantity'").fetchone() == ('YES',)
 
 
 def test_graph_cycles_missing_propagation_and_zero_quantities(tmp_path):
@@ -304,13 +308,13 @@ def trial_data(data):
 def test_current_scope_preserves_procurement_source_and_reimport(trial_data, tmp_path, capsys):
     data, digest = trial_data
     settings, _, source, admin = data
-    before = table_rows(settings.database_path)
+    before = table_rows(settings.database_url)
     original = json.loads(before['procurement_rd5_imports'][0][4])
-    plan = revise_preparation(settings.database_path, digest)
+    plan = revise_preparation(settings.database_url, digest)
     assert plan['counts'] == {'recipes': 2, 'recipe_lines': 6, 'composites': 1,
                               'historical_recipes': 3, 'historical_composites': 3}
     assert plan['blocked_recipes'] == []
-    assert table_rows(settings.database_path) == before
+    assert table_rows(settings.database_url) == before
     assert main(['procurement-rd5-current', digest, '--apply'], settings=settings) == 1
     assert '预检' in capsys.readouterr().err
     assert main(['procurement-rd5-current', digest, '--apply', '--actor-id', admin,
@@ -325,17 +329,17 @@ def test_current_scope_preserves_procurement_source_and_reimport(trial_data, tmp
     assert len(package['current_calculation']) == 3
     for key, current in package['current_calculation'].items():
         assert current == original['current_calculation'][key]
-    after = table_rows(settings.database_path)
+    after = table_rows(settings.database_url)
     for name in before.keys() - {'procurement_rd5_imports', 'procurement_admin_events'}:
         assert before[name] == after[name], name
     assert before['procurement_rd5_imports'][0][:4] == after['procurement_rd5_imports'][0][:4]
     assert len(after['procurement_admin_events']) == len(before['procurement_admin_events']) + 1
-    plan = revise_preparation(settings.database_path, digest)
+    plan = revise_preparation(settings.database_url, digest)
     assert plan['already_current'] is True
-    revise_preparation(settings.database_path, digest, actor_id=admin, expected_state_sha256=plan['state_sha256'])
-    assert import_rd5(settings.database_path, source, admin, expected_sha256=digest,
-                      expected_state_sha256='unused', effective_date=date(2026, 9, 11))['already_imported']
-    assert table_rows(settings.database_path) == after
+    revise_preparation(settings.database_url, digest, actor_id=admin, expected_state_sha256=plan['state_sha256'])
+    assert import_rd5(settings.database_url, source, admin, expected_sha256=digest,
+                      expected_state_sha256='unused', effective_date=date(2026, 9, 11), data_dir=settings.data_dir)['already_imported']
+    assert table_rows(settings.database_url) == after
     review = (tmp_path / 'revised' / '研发五部数据核对.md').read_text(encoding='utf-8')
     assert '历史试算（不列入当前有效配方）' in review and 'CF020C 已停购' in review
     assert '两种相关K172-C配方及两种复配方案待补价' not in review
@@ -345,28 +349,33 @@ def test_current_scope_preserves_procurement_source_and_reimport(trial_data, tmp
 def test_current_revision_guards_and_rollback(trial_data, failure):
     data, digest = trial_data
     settings, _, _, admin = data
-    plan = revise_preparation(settings.database_path, digest)
+    plan = revise_preparation(settings.database_url, digest)
     if failure == 'permission':
         admin = 'not-an-admin'
-    elif failure in {'state', 'package', 'rollback'}:
-        with sqlite3.connect(settings.database_path) as db:
+    elif failure in {'state', 'package'}:
+        with transaction(settings.database_url, write=True) as db:
             db.execute({'state': "UPDATE procurement_inventory SET price='10'",
-                        'package': "UPDATE procurement_rd5_imports SET package_json=package_json || ' '",
-                        'rollback': "CREATE TRIGGER fail_revision BEFORE INSERT ON procurement_admin_events BEGIN SELECT RAISE(ABORT,'late failure'); END"}[failure])
+                        'package': "UPDATE procurement_rd5_imports SET package_json=package_json || ' '"}[failure])
+    elif failure == 'rollback':
+        with transaction(os.environ['HONGHAO_TEST_MIGRATION_URL'], write=True) as db:
+            db.execute("""CREATE FUNCTION fail_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN RAISE EXCEPTION 'late failure' USING ERRCODE='23514'; END $$;
+                CREATE TRIGGER fail_revision BEFORE INSERT ON procurement_admin_events
+                FOR EACH ROW EXECUTE FUNCTION fail_revision()""")
     elif failure == 'source':
         (settings.data_dir / 'controlled-work' / 'procurement-sources' / f'{digest}.xlsx').write_bytes(b'changed')
-    before = table_rows(settings.database_path)
-    with pytest.raises((PermissionError, ValueError, sqlite3.IntegrityError)):
-        revise_preparation(settings.database_path, digest, actor_id=admin, expected_state_sha256=plan['state_sha256'])
-    assert table_rows(settings.database_path) == before
+    before = table_rows(settings.database_url)
+    with pytest.raises((PermissionError, ValueError, psycopg.IntegrityError)):
+        revise_preparation(settings.database_url, digest, actor_id=admin, expected_state_sha256=plan['state_sha256'])
+    assert table_rows(settings.database_url) == before
 
 
 def test_replacement_uses_current_d_price_and_propagates_missing(trial_data):
     data, digest = trial_data
     settings, _, _, admin = data
-    plan = revise_preparation(settings.database_path, digest)
-    revise_preparation(settings.database_path, digest, actor_id=admin, expected_state_sha256=plan['state_sha256'])
-    package = json.loads(table_rows(settings.database_path)['procurement_rd5_imports'][0][4])
+    plan = revise_preparation(settings.database_url, digest)
+    revise_preparation(settings.database_url, digest, actor_id=admin, expected_state_sha256=plan['state_sha256'])
+    package = json.loads(table_rows(settings.database_url)['procurement_rd5_imports'][0][4])
     # A source CF020C line remains traceable; current calculation resolves its replacement once.
     line = package['recipes'][0]['lines'][1]
     line.update(code='CF020C', ref='CF020C')

@@ -10,9 +10,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import uvicorn
+import psycopg
 
 from api.identity import DuplicateIdentityError, IdentityStore
-from api.operations import create_snapshot, doctor, migrate_data, restore_snapshot, verify_snapshot
+from api.operations import create_snapshot, doctor, migrate_data, restore_snapshot, verify_snapshot, readiness_checks
 from api.settings import Settings
 
 
@@ -20,7 +21,7 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
     parser = argparse.ArgumentParser(prog="python -m api.cli")
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("create-admin", help="交互创建本地系统管理员")
-    subcommands.add_parser("migrate", help="初始化或升级当前数据目录")
+    subcommands.add_parser("migrate", help="使用迁移账号显式迁移 PostgreSQL 结构")
     backup = subcommands.add_parser("backup", help="创建完整数据快照")
     backup.add_argument("--destination", type=Path)
     restore = subcommands.add_parser("restore", help="校验或恢复数据快照")
@@ -103,33 +104,33 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
             from api.procurement_rd5 import revise_preparation, export_preparation
             if args.apply and not all((args.actor_id, args.state_sha256)):
                 raise ValueError("执行修订须提供管理员ID及预检状态SHA256")
-            result = revise_preparation(runtime_settings.database_path, args.sha256,
+            result = revise_preparation(runtime_settings.database_url, args.sha256,
                 actor_id=args.actor_id if args.apply else None, expected_state_sha256=args.state_sha256)
             if args.export_dir:
-                result["export"] = export_preparation(runtime_settings.database_path, args.sha256, args.export_dir)
+                result["export"] = export_preparation(runtime_settings.database_url, args.sha256, args.export_dir)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         if args.command == "procurement-rd5":
             from api.procurement_rd5 import preview, import_rd5, export_preparation
-            result = preview(runtime_settings.database_path, args.source.read_bytes())
+            result = preview(runtime_settings.database_url, args.source.read_bytes())
             if args.apply:
                 if not all((args.actor_id, args.sha256, args.state_sha256, args.effective_date)):
                     raise ValueError("执行导入须提供管理员ID、预检文件及状态SHA256、价格生效日期")
-                result = import_rd5(runtime_settings.database_path, args.source, args.actor_id,
-                                    expected_sha256=args.sha256, expected_state_sha256=args.state_sha256,
+                result = import_rd5(runtime_settings.database_url, args.source, args.actor_id,
+                                    data_dir=runtime_settings.data_dir, expected_sha256=args.sha256, expected_state_sha256=args.state_sha256,
                                     effective_date=args.effective_date)
             if args.export_dir:
-                result["export"] = export_preparation(runtime_settings.database_path, result["sha256"], args.export_dir)
+                result["export"] = export_preparation(runtime_settings.database_url, result["sha256"], args.export_dir)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         if args.command == "procurement-inventory":
             from api.procurement_inventory import inventory_preview, import_inventory
-            result = inventory_preview(runtime_settings.database_path, args.source.read_bytes())
+            result = inventory_preview(runtime_settings.database_url, args.source.read_bytes())
             if args.apply:
                 if not args.actor_id or not args.sha256 or not args.catalog_sha256:
                     raise ValueError("执行导入须提供有效管理员ID、预检文件SHA256及目录SHA256")
-                result = import_inventory(runtime_settings.database_path, args.source, args.actor_id,
-                                          expected_sha256=args.sha256, expected_catalog_sha256=args.catalog_sha256)
+                result = import_inventory(runtime_settings.database_url, args.source, args.actor_id,
+                                          data_dir=runtime_settings.data_dir, expected_sha256=args.sha256, expected_catalog_sha256=args.catalog_sha256)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         if args.command == "procurement-history":
@@ -138,7 +139,7 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
             if args.apply:
                 if not args.actor_id or not args.sha256:
                     raise ValueError("执行迁入须提供有效管理员ID及预检SHA256")
-                result = import_history(runtime_settings.database_path, args.source, args.actor_id, expected_sha256=args.sha256)
+                result = import_history(runtime_settings.database_url, args.source, args.actor_id, data_dir=runtime_settings.data_dir, expected_sha256=args.sha256)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         if args.command == "migrate":
@@ -150,7 +151,7 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
             print(create_snapshot(runtime_settings, destination))
             return 0
         if args.command == "restore":
-            verify_snapshot(args.snapshot, expected_environment=runtime_settings.environment)
+            verify_snapshot(args.snapshot, expected_environment=runtime_settings.environment, expected_database_environment=runtime_settings.database_environment)
             if not args.apply:
                 print("快照校验通过，未写入数据。")
                 return 0
@@ -160,9 +161,8 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
             if args.confirm != "RESTORE":
                 print("恢复已阻止：写入时必须提供 --confirm RESTORE。", file=sys.stderr)
                 return 1
-            rollback = restore_snapshot(runtime_settings, args.snapshot)
-            detail = f"，写入前快照：{rollback}" if rollback else ""
-            print(f"恢复完成{detail}")
+            restore_snapshot(runtime_settings, args.snapshot)
+            print("恢复完成：已核验数据库及附件，原快照保持不变。")
             return 0
         if args.command == "doctor":
             checks = doctor(runtime_settings)
@@ -170,6 +170,11 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
                 status = "OK" if passed is True else "WARN" if passed is None else "FAIL"
                 print(f"[{status}] {name}：{detail}")
             return 0 if all(passed is not False for _, _, passed in checks) else 1
+        if args.command == "create-admin" and any(value != "ok" for value in readiness_checks(runtime_settings).values()):
+            raise RuntimeError("应用数据库未就绪；请先完成迁移，再使用应用账号创建管理员")
+    except psycopg.Error:
+        print("操作失败：数据库连接、权限或操作异常，未输出连接凭据。", file=sys.stderr)
+        return 1
     except (FileNotFoundError, OSError, RuntimeError, ValueError) as error:
         print(f"操作失败：{error}", file=sys.stderr)
         return 1
@@ -191,9 +196,7 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
         return 1
 
     runtime_settings.ensure_directories()
-    migrate_data(runtime_settings)
-    identities = IdentityStore(runtime_settings.database_path)
-    identities.initialize()
+    identities = IdentityStore(runtime_settings.database_url)
     try:
         identities.create_user(
             username=username,
@@ -202,6 +205,9 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
             password=password,
             is_system_admin=True,
         )
+    except psycopg.Error:
+        print("管理员创建失败：请检查数据库连接及权限。", file=sys.stderr)
+        return 1
     except DuplicateIdentityError:
         print("该用户名已存在。", file=sys.stderr)
         return 1

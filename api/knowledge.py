@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -11,6 +10,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO
 from uuid import uuid4
+
+from api.identity import IdentityStore
+from api.postgres import transaction
 
 
 KNOWLEDGE_SCHEMA_VERSION = 6
@@ -22,182 +24,37 @@ class InvalidKnowledgeSourceError(ValueError):
 
 
 class KnowledgeStore:
-    def __init__(self, database_path: Path, data_dir: Path) -> None:
-        self.database_path = database_path
+    def __init__(self, database_url: str, data_dir: Path) -> None:
+        self.database_url = database_url
         self.sources_dir = data_dir / "knowledge" / "sources"
         self.items_dir = data_dir / "knowledge" / "items"
 
     def initialize(self) -> None:
         self.sources_dir.mkdir(parents=True, exist_ok=True)
         self.items_dir.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.database_path) as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS knowledge_sources (
-                    id TEXT PRIMARY KEY,
-                    filename TEXT NOT NULL,
-                    mime_type TEXT NOT NULL,
-                    size_bytes INTEGER NOT NULL,
-                    sha256 TEXT NOT NULL,
-                    stored_name TEXT NOT NULL UNIQUE,
-                    legacy_storage_status TEXT NOT NULL DEFAULT 'quarantined' CHECK (legacy_storage_status IN ('quarantined')),
-                    safety_status TEXT NOT NULL DEFAULT 'quarantined' CHECK (safety_status IN ('quarantined', 'confirmed')),
-                    processing_status TEXT NOT NULL DEFAULT 'not_started',
-                    processing_error TEXT,
-                    duplicate_of TEXT REFERENCES knowledge_sources(id),
-                    created_by_user_id TEXT NOT NULL REFERENCES identity_users(id),
-                    read_min_level INTEGER NOT NULL DEFAULT 4,
-                    read_scope_ids TEXT NOT NULL DEFAULT '[]',
-                    created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS knowledge_source_read_roles (
-                    source_id TEXT NOT NULL REFERENCES knowledge_sources(id) ON DELETE CASCADE,
-                    role_id TEXT NOT NULL REFERENCES identity_roles(id),
-                    PRIMARY KEY (source_id, role_id)
-                );
-                """
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO schema_metadata (key, value) VALUES (?, ?)",
-                ("knowledge_schema_version", 1),
-            )
-            version = connection.execute(
-                "SELECT value FROM schema_metadata WHERE key = ?",
-                ("knowledge_schema_version",),
-            ).fetchone()
-            if version is None:
-                raise RuntimeError("Knowledge schema is not initialized")
-            version_number = int(version[0])
-            if version_number == 1:
-                columns = {
-                    str(row[1])
-                    for row in connection.execute("PRAGMA table_info(knowledge_sources)")
-                }
-                if "processing_status" not in columns:
-                    connection.execute(
-                        "ALTER TABLE knowledge_sources ADD COLUMN processing_status TEXT NOT NULL DEFAULT 'quarantined'"
-                    )
-                if "processing_error" not in columns:
-                    connection.execute(
-                        "ALTER TABLE knowledge_sources ADD COLUMN processing_error TEXT"
-                    )
-                connection.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS knowledge_versions (
-                        id TEXT PRIMARY KEY,
-                        source_id TEXT NOT NULL REFERENCES knowledge_sources(id),
-                        stored_name TEXT NOT NULL UNIQUE,
-                        status TEXT NOT NULL CHECK (status IN ('draft')),
-                        created_by_user_id TEXT NOT NULL REFERENCES identity_users(id),
-                        created_at TEXT NOT NULL
-                    )
-                    """
-                )
-                connection.execute(
-                    "UPDATE schema_metadata SET value = ? WHERE key = ?",
-                    (2, "knowledge_schema_version"),
-                )
-                version_number = 2
-            if version_number == 2:
-                connection.executescript(
-                    """
-                    CREATE TABLE IF NOT EXISTS knowledge_version_sources (
-                        version_id TEXT NOT NULL REFERENCES knowledge_versions(id) ON DELETE CASCADE,
-                        source_id TEXT NOT NULL REFERENCES knowledge_sources(id),
-                        PRIMARY KEY (version_id, source_id)
-                    );
-                    INSERT OR IGNORE INTO knowledge_version_sources (version_id, source_id)
-                    SELECT id, source_id FROM knowledge_versions;
-                    """
-                )
-                connection.execute(
-                    "UPDATE schema_metadata SET value = ? WHERE key = ?",
-                    (3, "knowledge_schema_version"),
-                )
-                version_number = 3
-            if version_number == 3:
-                columns = {
-                    str(row[1])
-                    for row in connection.execute("PRAGMA table_info(knowledge_sources)")
-                }
-                if "safety_status" not in columns:
-                    connection.execute(
-                        "ALTER TABLE knowledge_sources ADD COLUMN safety_status TEXT NOT NULL DEFAULT 'quarantined'"
-                    )
-                if "status" in columns:
-                    connection.execute(
-                        "ALTER TABLE knowledge_sources RENAME COLUMN status TO legacy_storage_status"
-                    )
-                connection.execute(
-                    "UPDATE knowledge_sources SET safety_status = 'confirmed' WHERE processing_status <> 'quarantined'"
-                )
-                connection.execute(
-                    "UPDATE knowledge_sources SET processing_status = 'not_started' WHERE processing_status = 'quarantined'"
-                )
-                connection.execute(
-                    "UPDATE schema_metadata SET value = ? WHERE key = ?",
-                    (4, "knowledge_schema_version"),
-                )
-                version_number = 4
-            if version_number == 4:
-                columns = {
-                    str(row[1])
-                    for row in connection.execute("PRAGMA table_info(knowledge_sources)")
-                }
-                if "read_min_level" not in columns:
-                    connection.execute(
-                        "ALTER TABLE knowledge_sources ADD COLUMN read_min_level INTEGER NOT NULL DEFAULT 4"
-                    )
-                    connection.execute(
-                        "ALTER TABLE knowledge_sources ADD COLUMN read_scope_ids TEXT NOT NULL DEFAULT '[]'"
-                    )
-                for source_id, in connection.execute("SELECT id FROM knowledge_sources").fetchall():
-                    roles = [
-                        str(row[0])
-                        for row in connection.execute(
-                            "SELECT role_id FROM knowledge_source_read_roles WHERE source_id = ?",
-                            (source_id,),
-                        )
-                    ]
-                    minimum_level, scopes = _legacy_source_policy(roles)
-                    connection.execute(
-                        "UPDATE knowledge_sources SET read_min_level = ?, read_scope_ids = ? WHERE id = ?",
-                        (minimum_level, json.dumps(scopes), source_id),
-                    )
-                connection.execute(
-                    "UPDATE schema_metadata SET value = ? WHERE key = ?",
-                    (5, "knowledge_schema_version"),
-                )
-                version_number = 5
-            if version_number == 5:
-                connection.execute(
-                    "UPDATE knowledge_sources SET read_min_level = 2 WHERE read_min_level = 1"
-                )
-                connection.execute(
-                    "UPDATE knowledge_sources SET read_min_level = 4, read_scope_ids = '[]' WHERE read_min_level = 5"
-                )
-                connection.execute(
-                    "UPDATE schema_metadata SET value = ? WHERE key = ?",
-                    (KNOWLEDGE_SCHEMA_VERSION, "knowledge_schema_version"),
-                )
-            connection.execute(
-                "CREATE VIEW IF NOT EXISTS knowledge_derived_index AS SELECT versions.id AS version_id, links.source_id, sources.filename, sources.sha256 FROM knowledge_versions AS versions JOIN knowledge_version_sources AS links ON links.version_id = versions.id JOIN knowledge_sources AS sources ON sources.id = links.source_id"
-            )
+        if self.schema_version() != KNOWLEDGE_SCHEMA_VERSION:
+            raise RuntimeError("Unsupported knowledge schema version")
+        with transaction(self.database_url, write=True) as connection:
             connection.execute(
                 "UPDATE knowledge_sources SET processing_status = 'parse_failed', processing_error = 'interrupted' WHERE processing_status = 'processing'"
             )
-        if self.schema_version() != KNOWLEDGE_SCHEMA_VERSION:
-            raise RuntimeError("Unsupported knowledge schema version")
 
     def schema_version(self) -> int:
-        with sqlite3.connect(self.database_path) as connection:
+        with transaction(self.database_url) as connection:
             row = connection.execute(
-                "SELECT value FROM schema_metadata WHERE key = ?",
+                "SELECT value FROM schema_metadata WHERE key = %s",
                 ("knowledge_schema_version",),
             ).fetchone()
         if row is None:
             raise RuntimeError("Knowledge schema is not initialized")
         return int(row[0])
+
+    def _require_writer(self, actor_id: str, *, administrator: bool = False) -> None:
+        user = IdentityStore(self.database_url).get_user(actor_id)
+        if user is None or not user["is_active"]:
+            raise PermissionError("账号已失效，请重新登录")
+        if not user["is_system_admin"] and (administrator or user["scope_levels"].get("knowledge", 0) < 3):
+            raise PermissionError("知识操作权限已变化，请刷新后重试")
 
     def create_source(
         self,
@@ -237,14 +94,14 @@ class KnowledgeStore:
             temporary_path = None
 
             created_at = datetime.now(UTC).isoformat()
-            with sqlite3.connect(self.database_path) as connection:
+            with transaction(self.database_url, write=True) as connection:
+                self._require_writer(created_by_user_id)
                 duplicate = connection.execute(
-                    "SELECT id FROM knowledge_sources WHERE sha256 = ? ORDER BY rowid LIMIT 1",
+                    "SELECT id FROM knowledge_sources WHERE sha256 = %s ORDER BY _order LIMIT 1",
                     (digest.hexdigest(),),
                 ).fetchone()
-                connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
-                    "INSERT INTO knowledge_sources (id, filename, mime_type, size_bytes, sha256, stored_name, legacy_storage_status, duplicate_of, created_by_user_id, read_min_level, read_scope_ids, created_at) VALUES (?, ?, ?, ?, ?, ?, 'quarantined', ?, ?, ?, ?, ?)",
+                    "INSERT INTO knowledge_sources (id, filename, mime_type, size_bytes, sha256, stored_name, legacy_storage_status, duplicate_of, created_by_user_id, read_min_level, read_scope_ids, created_at) VALUES (%s, %s, %s, %s, %s, %s, 'quarantined', %s, %s, %s, %s, %s)",
                     (
                         source_id,
                         Path(filename).name,
@@ -272,9 +129,9 @@ class KnowledgeStore:
         return source
 
     def get_source(self, source_id: str) -> dict[str, Any] | None:
-        with sqlite3.connect(self.database_path) as connection:
+        with transaction(self.database_url) as connection:
             row = connection.execute(
-                "SELECT id, filename, mime_type, size_bytes, sha256, stored_name, safety_status, processing_status, duplicate_of, created_at, processing_error, read_min_level, read_scope_ids FROM knowledge_sources WHERE id = ?",
+                "SELECT id, filename, mime_type, size_bytes, sha256, stored_name, safety_status, processing_status, duplicate_of, created_at, processing_error, read_min_level, read_scope_ids FROM knowledge_sources WHERE id = %s",
                 (source_id,),
             ).fetchone()
             if row is None:
@@ -305,10 +162,10 @@ class KnowledgeStore:
         source = self.get_source(source_id)
         if source is None:
             return None
-        with sqlite3.connect(self.database_path) as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with transaction(self.database_url, write=True) as connection:
+            self._require_writer(confirmed_by_user_id, administrator=True)
             claimed = connection.execute(
-                "UPDATE knowledge_sources SET safety_status = 'confirmed', processing_status = 'processing', processing_error = NULL WHERE id = ? AND safety_status = 'quarantined'",
+                "UPDATE knowledge_sources SET safety_status = 'confirmed', processing_status = 'processing', processing_error = NULL WHERE id = %s AND safety_status = 'quarantined'",
                 (source_id,),
             ).rowcount
         if claimed == 0:
@@ -348,9 +205,9 @@ class KnowledgeStore:
             return {"status": "parse_failed", "reason": "parser_failed"}
 
     def _set_processing_result(self, source_id: str, status: str, reason: str | None) -> None:
-        with sqlite3.connect(self.database_path) as connection:
+        with transaction(self.database_url, write=True) as connection:
             connection.execute(
-                "UPDATE knowledge_sources SET processing_status = ?, processing_error = ? WHERE id = ?",
+                "UPDATE knowledge_sources SET processing_status = %s, processing_error = %s WHERE id = %s",
                 (status, reason, source_id),
             )
 
@@ -385,9 +242,9 @@ class KnowledgeStore:
         )
 
     def list_versions(self, source_id: str) -> list[dict[str, Any]]:
-        with sqlite3.connect(self.database_path) as connection:
+        with transaction(self.database_url) as connection:
             rows = connection.execute(
-                "SELECT versions.id, versions.status, versions.created_at FROM knowledge_versions AS versions JOIN knowledge_derived_index AS derived ON derived.version_id = versions.id WHERE derived.source_id = ? ORDER BY versions.rowid",
+                "SELECT versions.id, versions.status, versions.created_at FROM knowledge_versions AS versions JOIN knowledge_derived_index AS derived ON derived.version_id = versions.id WHERE derived.source_id = %s ORDER BY versions._order",
                 (source_id,),
             ).fetchall()
             return [
@@ -398,7 +255,7 @@ class KnowledgeStore:
                     "source_ids": [
                         str(source[0])
                         for source in connection.execute(
-                            "SELECT source_id FROM knowledge_version_sources WHERE version_id = ? ORDER BY rowid",
+                            "SELECT source_id FROM knowledge_version_sources WHERE version_id = %s ORDER BY _order",
                             (row[0],),
                         )
                     ],
@@ -407,9 +264,9 @@ class KnowledgeStore:
             ]
 
     def version_path(self, source_id: str, version_id: str) -> Path | None:
-        with sqlite3.connect(self.database_path) as connection:
+        with transaction(self.database_url) as connection:
             row = connection.execute(
-                "SELECT versions.stored_name FROM knowledge_versions AS versions JOIN knowledge_version_sources AS links ON links.version_id = versions.id WHERE versions.id = ? AND links.source_id = ?",
+                "SELECT versions.stored_name FROM knowledge_versions AS versions JOIN knowledge_version_sources AS links ON links.version_id = versions.id WHERE versions.id = %s AND links.source_id = %s",
                 (version_id, source_id),
             ).fetchone()
         if row is None:
@@ -439,29 +296,18 @@ class KnowledgeStore:
         with target.open("x", encoding="utf-8") as output:
             output.write(markdown)
         try:
-            with sqlite3.connect(self.database_path) as connection:
+            with transaction(self.database_url, write=True) as connection:
+                self._require_writer(created_by_user_id, administrator=True)
                 connection.execute(
-                    "INSERT INTO knowledge_versions (id, source_id, stored_name, status, created_by_user_id, created_at) VALUES (?, ?, ?, 'draft', ?, ?)",
+                    "INSERT INTO knowledge_versions (id, source_id, stored_name, status, created_by_user_id, created_at) VALUES (%s, %s, %s, 'draft', %s, %s)",
                     (version_id, source["id"], stored_name, created_by_user_id, datetime.now(UTC).isoformat()),
                 )
-                connection.executemany(
-                    "INSERT INTO knowledge_version_sources (version_id, source_id) VALUES (?, ?)",
-                    [(version_id, item["id"]) for item in sources],
-                )
+                with connection.cursor() as cursor:
+                    cursor.executemany(
+                        "INSERT INTO knowledge_version_sources (version_id, source_id) VALUES (%s, %s)",
+                        [(version_id, item["id"]) for item in sources],
+                    )
         except Exception:
             target.unlink(missing_ok=True)
             raise
         return next(version for version in self.list_versions(source["id"]) if version["id"] == version_id)
-
-
-def _legacy_source_policy(role_ids: list[str]) -> tuple[int, list[str]]:
-    if "employee" in role_ids:
-        return 2, ["knowledge"]
-    if "knowledge-admin" in role_ids:
-        return 4, ["knowledge"]
-    scopes = [
-        scope_id
-        for scope_id in ("management", "procurement", "research", "sales")
-        if scope_id in role_ids
-    ]
-    return (2 if scopes else 4, scopes)

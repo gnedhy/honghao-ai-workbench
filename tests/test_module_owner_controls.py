@@ -13,7 +13,7 @@ def test_disabled_modules_and_management_locked_for_all_admins(tmp_path):
         for mode in ['off', 'prototype', 'active']:
             assert client.put(f'/api/admin/module-settings/{disabled}', json={'mode':mode}).status_code == 403
             assert client.put('/api/admin/workbench-settings/management', json={'mode':mode}).status_code == 403
-        IdentityStore(settings.database_path).create_user(username='gnedhy', display_name='邓楚羿', department=None, password=TEST_ADMIN_PASSWORD, is_system_admin=True)
+        IdentityStore(settings.database_url).create_user(username='gnedhy', display_name='邓楚羿', department=None, password=TEST_ADMIN_PASSWORD, is_system_admin=True)
         assert client.post('/api/login', json={'username':'gnedhy','password':TEST_ADMIN_PASSWORD}).status_code == 200
         modes = client.get('/api/admin/module-settings').json()
         assert not next(m for m in modes['modules'] if m['id'] == disabled)['can_change']

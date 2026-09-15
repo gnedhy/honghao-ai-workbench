@@ -21,10 +21,10 @@ def test_confirmed_bulk_is_atomic_and_ready_to_publish(tmp_path):
         a, b = [item['material_id'] for item in base['input_items']]
         items = [{'material_id': a, 'price': '20'}, {'material_id': b, 'price': '0'}]
         checked = confirmation(client, items)
-        before = snapshot(settings.database_path)
+        before = snapshot(settings.database_url)
         for bad in [{**checked, 'baseline_id': 'old'}, {**checked, 'references': {a: '9', b: '10'}}, {**checked, 'references': {a: '10'}}]:
             assert procurement_post(client,URL, json={**payload(None, items), 'price_confirmation': bad}).status_code == 409
-            assert snapshot(settings.database_path) == before
+            assert snapshot(settings.database_url) == before
         result = procurement_post(client,URL, json={**payload(None, items), 'price_confirmation': checked})
         assert result.status_code == 200, result.text
         current = result.json()['current_update']

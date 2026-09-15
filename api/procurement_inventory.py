@@ -3,31 +3,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from psycopg import Connection
+
+from api.postgres import transaction
 from api.procurement_collaboration import admin_event
 from api.procurement_excel import TOTAL, price_value, read_workbook, text
 
 
-def initialize(db: sqlite3.Connection) -> None:
-    if not db.in_transaction:
-        db.execute("BEGIN IMMEDIATE")
-    db.execute("""CREATE TABLE procurement_inventory (
-        material_id TEXT PRIMARY KEY REFERENCES procurement_materials(id),
-        quantity TEXT NOT NULL, price TEXT, raw_price TEXT NOT NULL,
-        source_sha256 TEXT NOT NULL, sheet TEXT NOT NULL, source_row INTEGER NOT NULL,
-        imported_by TEXT NOT NULL, imported_at TEXT NOT NULL
-    )""")
-    for user_id, raw in db.execute("SELECT user_id, ledger_columns FROM procurement_user_preferences").fetchall():
-        columns = ["inventory_quantity", *("inventory_price" if col == "previous_latest_price" else col for col in json.loads(raw))]
-        db.execute("UPDATE procurement_user_preferences SET ledger_columns=? WHERE user_id=?",
-                   (json.dumps(list(dict.fromkeys(columns))), user_id))
-    db.execute("UPDATE schema_metadata SET value=6 WHERE key='workbench_procurement_schema_version'")
-
-
-def _preview(db: sqlite3.Connection, content: bytes) -> dict:
+def _preview(db: Connection, content: bytes) -> dict:
     sheets = read_workbook(content)
     if TOTAL not in sheets:
         raise ValueError("需要原料行情总表")
@@ -72,22 +58,21 @@ def _preview(db: sqlite3.Connection, content: bytes) -> dict:
             "zero_quantity": sum(row["quantity"] == "0" for row in rows), "rows": rows}
 
 
-def inventory_preview(path: Path, content: bytes) -> dict:
-    with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as db:
+def inventory_preview(url: str, content: bytes) -> dict:
+    with transaction(url) as db:
         return _preview(db, content)
 
 
-def import_inventory(path: Path, source: Path, actor_id: str, *, expected_sha256: str, expected_catalog_sha256: str) -> dict:
+def import_inventory(url: str, source: Path, actor_id: str, *, data_dir: Path, expected_sha256: str, expected_catalog_sha256: str) -> dict:
     content = source.read_bytes()
     digest = hashlib.sha256(content).hexdigest()
     if digest != expected_sha256:
         raise ValueError("文件已变化，请重新预检")
-    stored = path.parent / "controlled-work" / "procurement-sources" / f"{digest}.xlsx"
+    stored = data_dir / "controlled-work" / "procurement-sources" / f"{digest}.xlsx"
     created_archive = False
     try:
-        with sqlite3.connect(path) as db:
-            db.execute("BEGIN IMMEDIATE")
-            admin = db.execute("SELECT access_level,is_active FROM identity_users WHERE id=?", (actor_id,)).fetchone()
+        with transaction(url, write=True) as db:
+            admin = db.execute("SELECT access_level,is_active FROM identity_users WHERE id=%s", (actor_id,)).fetchone()
             if admin != (5, 1):
                 raise PermissionError("库存导入仅限有效系统管理员")
             preview = _preview(db, content)
@@ -101,16 +86,16 @@ def import_inventory(path: Path, source: Path, actor_id: str, *, expected_sha256
                     created_archive = True
                     stream.write(content)
             now = datetime.now(UTC).isoformat()
-            db.execute("INSERT OR IGNORE INTO procurement_source_imports VALUES (?,?,?,?,?)",
+            db.execute("INSERT INTO procurement_source_imports (sha256, filename, stored_path, imported_by, imported_at) VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                        (digest, source.name, str(stored), actor_id, now))
             updated = 0
             for row in preview["rows"]:
                 values = (row["quantity"], row["price"], row["raw_price"], digest, TOTAL, row["source_row"])
-                old = db.execute("SELECT quantity,price,raw_price,source_sha256,sheet,source_row FROM procurement_inventory WHERE material_id=?",
+                old = db.execute("SELECT quantity,price,raw_price,source_sha256,sheet,source_row FROM procurement_inventory WHERE material_id=%s",
                                  (row["material_id"],)).fetchone()
                 if old == values:
                     continue
-                db.execute("""INSERT INTO procurement_inventory VALUES (?,?,?,?,?,?,?,?,?)
+                db.execute("""INSERT INTO procurement_inventory (material_id, quantity, price, raw_price, source_sha256, sheet, source_row, imported_by, imported_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT(material_id) DO UPDATE SET quantity=excluded.quantity,price=excluded.price,
                     raw_price=excluded.raw_price,source_sha256=excluded.source_sha256,sheet=excluded.sheet,
                     source_row=excluded.source_row,imported_by=excluded.imported_by,imported_at=excluded.imported_at""",

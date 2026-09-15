@@ -1,11 +1,10 @@
 import os
-import sqlite3
-from contextlib import closing
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from api.main import create_app
+from api.postgres import transaction
 from api.settings import Settings
 
 
@@ -37,11 +36,10 @@ def test_readiness_reports_runtime_dependencies_and_detects_missing_database(
 
     with TestClient(create_app(settings)) as client:
         ready = client.get("/api/readiness")
-        with closing(sqlite3.connect(settings.database_path)) as connection:
+        with transaction(settings.database_url, write=True) as connection:
             connection.execute(
                 "UPDATE schema_metadata SET value = 999 WHERE key = 'schema_version'"
             )
-            connection.commit()
         unavailable = client.get("/api/readiness")
         alive = client.get("/api/health")
 
@@ -51,6 +49,8 @@ def test_readiness_reports_runtime_dependencies_and_detects_missing_database(
         "checks": {
             "data_directory": "ok",
             "database": "ok",
+            "database_environment": "ok",
+            "application_role": "ok",
             "module_configuration": "ok",
             "runtime_startup": "ok",
             "schema_versions": "ok",
@@ -73,11 +73,10 @@ def test_migration_mismatch_starts_degraded_and_reports_not_ready(tmp_path: Path
     settings = Settings.from_data_dir(tmp_path / "data")
     with TestClient(create_app(settings)):
         pass
-    with closing(sqlite3.connect(settings.database_path)) as connection:
+    with transaction(settings.database_url, write=True) as connection:
         connection.execute(
             "UPDATE schema_metadata SET value = 999 WHERE key = 'schema_version'"
         )
-        connection.commit()
 
     with TestClient(create_app(settings)) as client:
         health = client.get("/api/health")
@@ -88,6 +87,17 @@ def test_migration_mismatch_starts_degraded_and_reports_not_ready(tmp_path: Path
     assert readiness.status_code == 503
     assert readiness.json()["checks"]["schema_versions"] == "failed"
     assert protected.status_code == 503
+
+
+def test_missing_knowledge_view_blocks_startup_without_implicit_repair(tmp_path: Path) -> None:
+    settings = Settings.from_data_dir(tmp_path / "missing-view")
+    with transaction(os.environ["HONGHAO_TEST_MIGRATION_URL"], write=True) as connection:
+        connection.execute("DROP VIEW knowledge_derived_index")
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/api/readiness").status_code == 503
+        assert client.get("/api/modules").status_code == 503
+    with transaction(settings.database_url) as connection:
+        assert connection.execute("SELECT to_regclass('public.knowledge_derived_index')").fetchone() == (None,)
 
 
 def test_startup_failure_cannot_report_ready(tmp_path: Path) -> None:

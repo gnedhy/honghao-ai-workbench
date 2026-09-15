@@ -6,7 +6,6 @@ import hashlib
 import io
 import json
 import re
-import sqlite3
 import zipfile
 from collections import Counter
 from datetime import UTC, date, datetime
@@ -17,6 +16,8 @@ from uuid import uuid4
 
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
+
+from api.postgres import transaction
 
 TOTAL = "原料行情总表"
 DEPARTMENTS = ["研发一部", "研发二部", "研发三部", "研发四部", "研发五部", "宏昊生物"]
@@ -139,7 +140,7 @@ def history_preview(content: bytes) -> dict:
             "anomalies": anomalies, "sha256": hashlib.sha256(content).hexdigest()}
 
 
-def import_history(path: Path, source: Path, actor_id: str, *, expected_sha256: str) -> dict:
+def import_history(url: str, source: Path, actor_id: str, *, data_dir: Path, expected_sha256: str) -> dict:
     content = source.read_bytes()
     preview = history_preview(content)
     if preview["sha256"] != expected_sha256:
@@ -147,15 +148,14 @@ def import_history(path: Path, source: Path, actor_id: str, *, expected_sha256: 
     sheets = read_workbook(content)
     digest = preview["sha256"]
     now = datetime.now(UTC).isoformat()
-    stored = path.parent / "controlled-work" / "procurement-sources" / f"{digest}.xlsx"
+    stored = data_dir / "controlled-work" / "procurement-sources" / f"{digest}.xlsx"
     created_archive = False
     try:
-        with sqlite3.connect(path) as db:
-            db.execute("BEGIN IMMEDIATE")
-            admin = db.execute("SELECT access_level,is_active FROM identity_users WHERE id=?", (actor_id,)).fetchone()
+        with transaction(url, write=True) as db:
+            admin = db.execute("SELECT access_level,is_active FROM identity_users WHERE id=%s", (actor_id,)).fetchone()
             if not admin or admin != (5,1):
                 raise PermissionError("首次迁入仅限有效管理员")
-            if db.execute("SELECT 1 FROM procurement_source_imports WHERE sha256=?", (digest,)).fetchone():
+            if db.execute("SELECT 1 FROM procurement_source_imports WHERE sha256=%s", (digest,)).fetchone():
                 raise ValueError("这份文件已迁入，不可重复执行")
             if db.execute("SELECT 1 FROM procurement_materials LIMIT 1").fetchone():
                 raise ValueError("首次迁入必须使用空采购库，不覆盖现有业务数据")
@@ -166,7 +166,7 @@ def import_history(path: Path, source: Path, actor_id: str, *, expected_sha256: 
                 with stored.open("xb") as stream:
                     created_archive = True
                     stream.write(content)
-            db.execute("INSERT INTO procurement_source_imports VALUES (?,?,?,?,?)", (digest, source.name, str(stored), actor_id, now))
+            db.execute("INSERT INTO procurement_source_imports (sha256, filename, stored_path, imported_by, imported_at) VALUES (%s,%s,%s,%s,%s)", (digest, source.name, str(stored), actor_id, now))
             ids = {}
             for name in [TOTAL, *DEPARTMENTS]:
                 for n,row in enumerate(sheets[name][1:],2):
@@ -175,12 +175,12 @@ def import_history(path: Path, source: Path, actor_id: str, *, expected_sha256: 
                         continue
                     if code not in ids:
                         ids[code] = str(uuid4())
-                        db.execute("INSERT INTO procurement_materials(id,code,name,unit,updated_at) VALUES (?,?,?,'kg',?)", (ids[code], code, code, now))
-                    db.execute("INSERT INTO procurement_material_sources VALUES (?,?,?,?,?)", (ids[code],name,n,json.dumps(row,ensure_ascii=False,default=str),digest))
+                        db.execute("INSERT INTO procurement_materials(id,code,name,unit,updated_at) VALUES (%s,%s,%s,'kg',%s)", (ids[code], code, code, now))
+                    db.execute("INSERT INTO procurement_material_sources (material_id, sheet, source_row, raw_json, sha256) VALUES (%s,%s,%s,%s,%s)", (ids[code],name,n,json.dumps(row,ensure_ascii=False,default=str),digest))
             for position,name in enumerate(DEPARTMENTS):
                 group = str(uuid4())
-                db.execute("INSERT INTO procurement_departments VALUES (?,?,?)", (group,name,position))
-                db.executemany("INSERT INTO procurement_department_materials VALUES (?,?)", [(group,ids[code]) for code in {text(r[1]) for r in sheets[name][1:] if text(r[1])}])
+                db.execute("INSERT INTO procurement_departments (id, name, position) VALUES (%s,%s,%s)", (group,name,position))
+                db.cursor().executemany("INSERT INTO procurement_department_materials (department_id, material_id) VALUES (%s,%s)", [(group,ids[code]) for code in {text(r[1]) for r in sheets[name][1:] if text(r[1])}])
             rows = sheets[TOTAL]
             columns = sorted([(i, day(v)) for i,v in enumerate(rows[0]) if day(v)], key=lambda item:item[1])
             previous = {}
@@ -198,14 +198,14 @@ def import_history(path: Path, source: Path, actor_id: str, *, expected_sha256: 
                         value,kind = price_value(raw)
                         previous[code] = (value,kind,price_date,raw,f"{get_column_letter(column+1)}{n}")
                     value,kind,origin_day,raw,cell = previous.get(code,(None,"missing",None,None,None))
-                    db.execute("INSERT INTO procurement_price_batch_items VALUES (?,?,?,?,'kg',?,NULL,NULL,?)", (batch,ids[code],code,code,value,value))
-                    db.execute("INSERT INTO procurement_snapshot_sources VALUES (?,?,?,?,?,?,?,?)", (batch,ids[code],origin_day,raw,kind,TOTAL,cell,digest))
-                db.execute("INSERT INTO procurement_price_batches(id,version,published_by,published_at,item_count,price_date,source_name,base_batch_id) VALUES (?,?,?, ?,?,?,?,?)",
+                    db.execute("INSERT INTO procurement_price_batch_items (batch_id, material_id, code, name, unit, latest_price, inventory_price, in_transit_price, recommended_price) VALUES (%s,%s,%s,%s,'kg',%s,NULL,NULL,%s)", (batch,ids[code],code,code,value,value))
+                    db.execute("INSERT INTO procurement_snapshot_sources (batch_id, material_id, price_date, raw_price, price_kind, sheet, cell, sha256) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", (batch,ids[code],origin_day,raw,kind,TOTAL,cell,digest))
+                db.execute("INSERT INTO procurement_price_batches(id,version,published_by,published_at,item_count,price_date,source_name,base_batch_id) VALUES (%s,%s,%s, %s,%s,%s,%s,%s)",
                            (batch,version,actor_id,now,preview["history_material_count"],price_date,source.name,prior_batch))
-                db.execute("INSERT INTO procurement_batch_provenance VALUES (?,'historical_import',?,?,?,?)", (batch,digest,now,actor_id,reported))
+                db.execute("INSERT INTO procurement_batch_provenance (batch_id, origin, sha256, imported_at, imported_by, reported_count) VALUES (%s,'historical_import',%s,%s,%s,%s)", (batch,digest,now,actor_id,reported))
                 prior_batch = batch
             for code,(value,kind,origin_day,raw,cell) in previous.items():
-                db.execute("UPDATE procurement_materials SET latest_price=? WHERE id=?", (value,ids[code]))
+                db.execute("UPDATE procurement_materials SET latest_price=%s WHERE id=%s", (value,ids[code]))
             # Only source-attributed values are stored; no invented historical user actions.
             from api.procurement_collaboration import admin_event
             admin_event(db,actor_id,"history.imported",digest,{

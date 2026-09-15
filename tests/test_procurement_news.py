@@ -132,7 +132,7 @@ def test_news_authorization_and_validation(tmp_path):
             assert client.get('/api/workbenches/procurement/news?page=0').status_code==422
             client.post('/api/logout')
             assert client.get('/api/workbenches/procurement/news').status_code==401
-            identities=IdentityStore(settings.database_path)
+            identities=IdentityStore(settings.database_url)
             for username, scopes, expected in [('outside',{},403),('viewer1',{'procurement':2},200),('viewer2',{'procurement':2},200)]:
                 identities.create_user(username=username,display_name=username,department=None,password='News-Test-Password-2026',scope_levels=scopes)
                 assert client.post('/api/login',json={'username':username,'password':'News-Test-Password-2026'}).status_code==200

@@ -1,4 +1,4 @@
-import sqlite3
+from api.postgres import transaction
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -24,12 +24,12 @@ PUBLISHER_PASSWORD = "Publisher-Password-2026"
 
 
 def switch_to_publisher(settings: Settings, client: TestClient) -> None:
-    with sqlite3.connect(settings.database_path) as connection:
+    with transaction(settings.database_url) as connection:
         exists = connection.execute(
             "SELECT 1 FROM identity_users WHERE username = 'procurement-publisher'"
         ).fetchone()
     if not exists:
-        IdentityStore(settings.database_path).create_user(
+        IdentityStore(settings.database_url).create_user(
             username="procurement-publisher",
             display_name="采购发布人",
             department="采购部",
@@ -74,26 +74,29 @@ def test_procurement_migration_is_additive_and_overview_starts_empty(tmp_path: P
         "missing_price_count": 0,
         "published_batch_count": 0,
     }
-    assert Database(settings.database_path).schema_version() == 5
+    assert Database(settings.database_url).schema_version() == 5
     assert not list((settings.data_dir / "backups").glob("pre-procurement-migration-*.db"))
-    with sqlite3.connect(settings.database_path) as connection:
+    with transaction(settings.database_url) as connection:
         version = connection.execute(
             "SELECT value FROM schema_metadata WHERE key = 'workbench_procurement_schema_version'"
         ).fetchone()
     assert version == (7,)
 
 
-def test_existing_database_is_backed_up_before_procurement_migration(tmp_path: Path) -> None:
+def test_workbench_startup_keeps_existing_postgres_schema_and_data(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     with authenticated_client(Settings.from_data_dir(data_dir)):
         pass
-
-    with authenticated_client(procurement_settings(tmp_path)):
+    settings = procurement_settings(tmp_path)
+    before = IdentityStore(settings.database_url).list_users()
+    with transaction(settings.database_url) as db:
+        versions = db.execute('SELECT key,value FROM schema_metadata ORDER BY key').fetchall()
+    with authenticated_client(settings):
         pass
-
-    backups = list((data_dir / "backups").glob("pre-procurement-migration-*.db"))
-    assert len(backups) == 1
-    assert backups[0].stat().st_size > 0
+    assert IdentityStore(settings.database_url).list_users() == before
+    with transaction(settings.database_url) as db:
+        assert db.execute('SELECT key,value FROM schema_metadata ORDER BY key').fetchall() == versions
+    assert not list(data_dir.rglob('*.db'))
 
 
 def test_import_preview_keeps_zero_price_and_skips_duplicate_codes(tmp_path: Path) -> None:
@@ -282,10 +285,11 @@ RM-01,试点原料,kg,20,,
 """
 
     with authenticated_client(settings) as client:
-        procurement_post(client,
+        imported = procurement_post(client,
             "/api/workbenches/procurement/imports",
             json={"source_name": "首批", "effective_date": "2026-07-23", "content": first},
         )
+        assert imported.status_code == 201, imported.text
         first_update = client.get("/api/workbenches/procurement/updates/current").json()["current"]
         procurement_post(client,
             f"/api/workbenches/procurement/updates/{first_update['id']}/publish",
@@ -336,7 +340,7 @@ def test_scheduled_activation_keeps_official_price_until_due_and_is_idempotent(t
     assert scheduled.json()["status"] == "scheduled"
     assert before["materials"][0]["published_price"] == "10"
     assert before["materials"][0]["previous_published_price"] is None
-    store = ProcurementStore(settings.database_path)
+    store = ProcurementStore(settings.database_url)
     assert store.process_scheduled(activate_at + timedelta(minutes=1)) == 1
     assert store.process_scheduled(activate_at + timedelta(minutes=2)) == 0
     after = store.overview()
@@ -371,8 +375,8 @@ def test_new_immediate_baseline_forces_scheduled_batch_to_revalidate(tmp_path: P
     assert overview["current_update"]["id"] == scheduled_update["id"]
     assert overview["current_update"]["status"] == "revalidation_required"
     assert overview["scheduled_update"] is None
-    assert ProcurementStore(settings.database_path).process_scheduled(activate_at + timedelta(minutes=1)) == 0
-    assert ProcurementStore(settings.database_path).overview()["materials"][0]["published_price"] == "12"
+    assert ProcurementStore(settings.database_url).process_scheduled(activate_at + timedelta(minutes=1)) == 0
+    assert ProcurementStore(settings.database_url).overview()["materials"][0]["published_price"] == "12"
 
 
 def test_cancel_schedule_keeps_official_baseline_and_can_copy_draft(tmp_path: Path) -> None:
@@ -414,14 +418,14 @@ def test_procurement_scope_levels_enforce_view_edit_and_separate_activation(tmp_
     settings = procurement_settings(tmp_path)
 
     with authenticated_client(settings) as admin:
-        IdentityStore(settings.database_path).create_user(
+        IdentityStore(settings.database_url).create_user(
             username="buyer-viewer",
             display_name="采购查看用户",
             department="采购部",
             password="Buyer-Viewer-Password-2026",
             scope_levels={"procurement": 2},
         )
-        IdentityStore(settings.database_path).create_user(
+        IdentityStore(settings.database_url).create_user(
             username="buyer-editor",
             display_name="采购员",
             department="采购部",
@@ -518,14 +522,14 @@ def test_material_identity_permissions_and_old_code_alias_import(tmp_path: Path)
             json={"source_name": "采购询价单 2026-07-30", "effective_date": "2026-07-30", "content": SAMPLE_CONTENT},
         ).status_code == 201
         material = next(item for item in admin.get("/api/workbenches/procurement/overview").json()["materials"] if item["code"] == "CF004")
-        IdentityStore(settings.database_path).create_user(
+        IdentityStore(settings.database_url).create_user(
             username="buyer-editor",
             display_name="采购经办人",
             department="采购部",
             password=buyer_password,
             scope_levels={"procurement": 3},
         )
-        IdentityStore(settings.database_path).create_user(
+        IdentityStore(settings.database_url).create_user(
             username="buyer-manager",
             display_name="采购负责人",
             department="采购部",
@@ -582,21 +586,22 @@ def test_material_identity_permissions_and_old_code_alias_import(tmp_path: Path)
     assert matching[0]["latest_price"] == "12.6"
 
 
-def test_procurement_migration_failure_does_not_block_the_platform(tmp_path: Path, monkeypatch) -> None:
+def test_missing_procurement_schema_blocks_business_without_hiding_health(tmp_path: Path) -> None:
     settings = procurement_settings(tmp_path)
 
-    def fail_migration(_settings: Settings, *, backup_before_migration: bool = True) -> int:
-        raise sqlite3.OperationalError("procurement migration failed")
+    with authenticated_client(settings):
+        pass
+    with transaction(settings.database_url, write=True) as db:
+        db.execute("UPDATE schema_metadata SET value=6 WHERE key='workbench_procurement_schema_version'")
 
-    monkeypatch.setattr("api.main.migrate_procurement_data", fail_migration)
-    with authenticated_client(settings) as client:
+    with TestClient(create_app(settings)) as client:
         health = client.get("/api/health")
         readiness = client.get("/api/readiness")
         registry = client.get("/api/workbenches")
         procurement = client.get("/api/workbenches/procurement/overview")
 
     assert health.status_code == 200
-    assert readiness.status_code == 200
-    assert registry.status_code == 200
+    assert readiness.status_code == 503
+    assert registry.status_code == 503
     assert procurement.status_code == 503
 from tests.procurement_helpers import procurement_post

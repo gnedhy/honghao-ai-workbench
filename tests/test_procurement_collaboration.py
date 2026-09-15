@@ -1,6 +1,6 @@
 import io
 import json
-import sqlite3
+from api.postgres import transaction
 import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -27,20 +27,20 @@ def test_capabilities_follow_scope_without_implying_activation_or_catalog_access
     settings = procurement_settings(tmp_path)
     with authenticated_client(settings):
         pass
-    AuthorizationStore(settings.database_path).set_field_policy('procurement.material_unit_price', 4, 4, [], [])
+    AuthorizationStore(settings.database_url).set_field_policy('procurement.material_unit_price', 4, 4, [], [])
     for scope in ('procurement', 'research', 'sales', 'management', 'knowledge'):
         for level in (0, 2, 3, 4):
             user = {'id': 'ungranted', 'is_active': True, 'is_system_admin': False, 'scope_levels': {scope: level}}
-            result = capabilities(settings.database_path, user)
+            result = capabilities(settings.database_url, user)
             assert result['can_edit'] == (scope == 'procurement' and level >= 3)
             assert result['can_activate'] == (scope == 'procurement' and level >= 4)
             assert result['can_manage_catalog'] == (scope == 'procurement' and level >= 4)
             assert not any(result[key] for key in ('can_manage_grants', 'can_cancel_round'))
     user = {'id': 'admin', 'is_active': True, 'is_system_admin': True, 'scope_levels': {}}
-    assert all(capabilities(settings.database_path, user).values())
+    assert all(capabilities(settings.database_url, user).values())
     user['is_active'] = False
-    assert not capabilities(settings.database_path, user)['can_edit']
-    assert not capabilities(settings.database_path, user)['can_activate']
+    assert not capabilities(settings.database_url, user)['can_edit']
+    assert not capabilities(settings.database_url, user)['can_activate']
 
 
 @pytest.fixture
@@ -66,12 +66,12 @@ def real_data(tmp_path):
     with authenticated_client(settings) as client:
         admin = client.get('/api/me').json()
         result = history_preview(source.read_bytes())
-        import_history(settings.database_path, source, admin['id'], expected_sha256=result['sha256'])
+        import_history(settings.database_url, source, admin['id'], expected_sha256=result['sha256'], data_dir=settings.data_dir)
         for field in ['procurement.material_unit_price','procurement.supplier_quote']:
-            AuthorizationStore(settings.database_path).set_field_policy(field,2,3,['procurement'],['procurement'])
-        identities = IdentityStore(settings.database_path)
+            AuthorizationStore(settings.database_url).set_field_policy(field,2,3,['procurement'],['procurement'])
+        identities = IdentityStore(settings.database_url)
         users = [identities.create_user(username=f'buyer{i}', display_name=name, department='采购部',password=PASSWORD,scope_levels={'procurement':3}) for i,name in enumerate(['黎雪莹','曾文舒','付勇'])]
-        set_grant(settings.database_path, admin, users[0]['id'], True, True)
+        set_grant(settings.database_url, admin, users[0]['id'], True, True)
         yield settings, client, users
 
 
@@ -123,12 +123,12 @@ def test_real_migration_counts_dates_provenance_and_no_invented_events(real_data
     assert v3['comparison']['items'][material['id']]['kind']=='incomparable'
     with pytest.raises(ValueError,match='已迁入'):
         source=settings.data_dir.parent / SOURCE_NAME
-        import_history(settings.database_path,source,IdentityStore(settings.database_path).list_users()[0]['id'],expected_sha256=history_preview(source.read_bytes())['sha256'])
+        import_history(settings.database_url,source,IdentityStore(settings.database_url).list_users()[0]['id'],expected_sha256=history_preview(source.read_bytes())['sha256'], data_dir=settings.data_dir)
 
 
 def test_import_audit_keeps_only_hash_and_counts_without_losing_source_values(real_data):
     settings, _, _ = real_data
-    with sqlite3.connect(settings.database_path) as db:
+    with transaction(settings.database_url) as db:
         detail = json.loads(db.execute("SELECT detail FROM procurement_admin_events WHERE action='history.imported'").fetchone()[0])
         sha = db.execute('SELECT sha256 FROM procurement_source_imports').fetchone()[0]
         assert detail == {'sha256': sha, 'material_count': 460, 'history_material_count': 138, 'version_count': 20, 'anomaly_count': 11}
@@ -213,10 +213,10 @@ def test_disabled_or_revoked_scheduler_pauses_immediately(real_data):
     login(client,0)
     assert save(client,'CF001L','13.6').status_code==200
     assert publish(client,'scheduled').status_code==200
-    IdentityStore(settings.database_path).update_user(users[0]['id'],is_active=False)
-    with sqlite3.connect(settings.database_path) as db:
+    IdentityStore(settings.database_url).update_user(users[0]['id'],is_active=False)
+    with transaction(settings.database_url) as db:
         assert db.execute("SELECT status FROM procurement_updates ORDER BY created_at DESC LIMIT 1").fetchone()[0]=='revalidation_required'
-    assert ProcurementStore(settings.database_path).process_scheduled(datetime.now(UTC)+timedelta(days=1))==0
+    assert ProcurementStore(settings.database_url).process_scheduled(datetime.now(UTC)+timedelta(days=1))==0
 
 
 @pytest.mark.parametrize('independent_grant', [False, True])
@@ -224,15 +224,15 @@ def test_manager_demotion_only_pauses_when_effective_activation_is_lost(real_dat
     settings,client,users = real_data
     admin = client.get('/api/me').json()
     target = users[1]['id']
-    IdentityStore(settings.database_path).update_user(target, scope_levels={'procurement':4})
+    IdentityStore(settings.database_url).update_user(target, scope_levels={'procurement':4})
     if independent_grant:
-        set_grant(settings.database_path, admin, target, True)
+        set_grant(settings.database_url, admin, target, True)
     login(client,2)
     assert save(client,'CF001L','13.6').status_code == 200
     login(client,1)
     assert publish(client,'scheduled').status_code == 200
-    IdentityStore(settings.database_path).update_user(target, scope_levels={'procurement':3})
-    with sqlite3.connect(settings.database_path) as db:
+    IdentityStore(settings.database_url).update_user(target, scope_levels={'procurement':3})
+    with transaction(settings.database_url) as db:
         status = db.execute('SELECT status FROM procurement_updates ORDER BY created_at DESC LIMIT 1').fetchone()[0]
     assert status == ('scheduled' if independent_grant else 'revalidation_required')
 
@@ -241,18 +241,18 @@ def test_revoking_independent_grant_keeps_manager_activation_and_schedule(real_d
     settings,client,users = real_data
     admin = client.get('/api/me').json()
     target = users[1]['id']
-    IdentityStore(settings.database_path).update_user(target, scope_levels={'procurement':4})
-    set_grant(settings.database_path, admin, target, True)
+    IdentityStore(settings.database_url).update_user(target, scope_levels={'procurement':4})
+    set_grant(settings.database_url, admin, target, True)
     login(client,2)
     assert save(client,'CF001L','13.6').status_code == 200
     login(client,1)
     assert publish(client,'scheduled').status_code == 200
-    set_grant(settings.database_path, admin, target, False)
+    set_grant(settings.database_url, admin, target, False)
     from api.procurement_collaboration import grants
-    row = next(u for u in grants(settings.database_path)['users'] if u['id'] == target)
+    row = next(u for u in grants(settings.database_url)['users'] if u['id'] == target)
     assert row['role_granted'] and not row['granted'] and not row['manager']
-    assert capabilities(settings.database_path, IdentityStore(settings.database_path).get_user(target))['can_activate']
-    with sqlite3.connect(settings.database_path) as db:
+    assert capabilities(settings.database_url, IdentityStore(settings.database_url).get_user(target))['can_activate']
+    with transaction(settings.database_url) as db:
         assert db.execute('SELECT status FROM procurement_updates ORDER BY created_at DESC LIMIT 1').fetchone()[0] == 'scheduled'
 
 
@@ -331,5 +331,5 @@ def test_excel_numeric_expansion_malformed_xml_and_failed_archive(real_data):
     assert response.status_code == 422
     archive = settings.data_dir/'controlled-work'/'procurement-sources'/(history_preview(content)['sha256']+'.xlsx')
     with pytest.raises(PermissionError):
-        import_history(settings.database_path,source,users[1]['id'],expected_sha256=history_preview(content)['sha256'])
+        import_history(settings.database_url,source,users[1]['id'],expected_sha256=history_preview(content)['sha256'], data_dir=settings.data_dir)
     assert archive.read_bytes() == content

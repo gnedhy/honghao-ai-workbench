@@ -1,7 +1,7 @@
 """Independent acceptance of RD5 costs against real procurement data and HTTP permissions."""
 import copy
 import json
-import sqlite3
+import psycopg
 from decimal import Decimal
 from urllib.parse import quote
 
@@ -12,6 +12,7 @@ from openpyxl import Workbook
 import api.research as research
 from api.identity import IdentityStore
 from api.main import create_app
+from api.postgres import transaction
 from api.procurement_inventory import import_inventory, inventory_preview
 from api.procurement_rd5 import revise_preparation
 from api.research import ResearchStore, capture, enqueue
@@ -29,14 +30,14 @@ PREFIX = '/api/workbenches/research'
 def ready(trial_data):
     original, source_digest = trial_data
     settings, client, _, admin = original
-    plan = revise_preparation(settings.database_path, source_digest)
-    revise_preparation(settings.database_path, source_digest, actor_id=admin,
+    plan = revise_preparation(settings.database_url, source_digest)
+    revise_preparation(settings.database_url, source_digest, actor_id=admin,
                        expected_state_sha256=plan['state_sha256'])
-    before = table_rows(settings.database_path)
-    store = ResearchStore(settings.database_path)
+    before = table_rows(settings.database_url)
+    store = ResearchStore(settings.database_url)
     store.initialize()
     store.process_events()
-    assert table_rows(settings.database_path) == before
+    assert table_rows(settings.database_url) == before
     settings.workbench_modes['research'] = 'active'
     return settings, client, admin, store
 
@@ -55,12 +56,12 @@ def saved(store, actor, body=None, key=K):
 
 
 def records(path):
-    with sqlite3.connect(path) as db:
+    with transaction(path) as db:
         return db.execute('SELECT sequence,event_id,product_id,signature,payload FROM research_cost_records ORDER BY sequence').fetchall()
 
 
 def frozen(store):
-    with sqlite3.connect(store.path) as db:
+    with transaction(store.url) as db:
         return capture(db)
 
 
@@ -70,15 +71,15 @@ def update_stock(ready, tmp_path, code, price):
     sheet = workbook.active
     sheet.title = '原料行情总表'
     sheet.append(['编号', '库存量', '库存价'])
-    with sqlite3.connect(settings.database_path) as db:
+    with transaction(settings.database_url) as db:
         rows = db.execute('SELECT m.code,i.quantity,i.price FROM procurement_materials m LEFT JOIN procurement_inventory i ON i.material_id=m.id WHERE m.archived_at IS NULL ORDER BY m.code').fetchall()
     for item, qty, stock in rows:
         sheet.append([item, float(qty or 0), price if item == code else float(stock) if stock is not None else None])
     source = tmp_path / 'inventory.xlsx'
     workbook.save(source)
-    preview = inventory_preview(settings.database_path, source.read_bytes())
+    preview = inventory_preview(settings.database_url, source.read_bytes())
     args = dict(expected_sha256=preview['sha256'], expected_catalog_sha256=preview['catalog_sha256'])
-    return import_inventory(settings.database_path, source, admin, **args), source, args
+    return import_inventory(settings.database_url, source, admin, data_dir=settings.data_dir, **args), source, args
 
 
 def test_dual_cost_chain_uses_each_layer_yield_and_fallback(ready):
@@ -111,21 +112,21 @@ def test_baseline_is_single_real_period_and_historical_trials_are_separate(ready
     assert len(store.trials()['recipes']) == 3
     assert len(store.history()['versions']) == 1
     assert len(store.history()['versions'][0]['products']) == 2
-    before = records(store.path)
+    before = records(store.url)
     store.initialize()
     store.process_events()
-    assert records(store.path) == before
+    assert records(store.url) == before
 
 
 def test_draft_persists_isolated_then_activation_updates_dependents(ready):
     settings, _, actor, store = ready
-    before = records(store.path)
+    before = records(store.url)
     body = body_for(store)
     body['formula']['yield'] = '.95'
     trial, receipt = saved(store, actor, body)
     assert {r['id'] for r in trial['affected']} == {K, RH}
-    assert records(store.path) == before
-    reopened = ResearchStore(settings.database_path)
+    assert records(store.url) == before
+    reopened = ResearchStore(settings.database_url)
     reopened.initialize()
     assert Decimal(reopened.detail(K)['draft']['formula']['yield']) == Decimal('.95')
     assert reopened.detail(K)['product']['latest_cost'] == store.detail(K)['history'][0]['latest_cost']
@@ -136,9 +137,9 @@ def test_draft_persists_isolated_then_activation_updates_dependents(ready):
     assert reopened.detail(K)['product']['revision'] == 2
     assert len(reopened.detail(RH)['history']) == 2
     assert len(reopened.detail(DEFAULT_COMPOSITE)['history']) == 1
-    assert records(store.path)[:len(before)] == before
-    with sqlite3.connect(settings.database_path) as db:
-        versions = db.execute('SELECT revision,formula FROM research_formula_versions WHERE id=? ORDER BY revision', (K,)).fetchall()
+    assert records(store.url)[:len(before)] == before
+    with transaction(settings.database_url) as db:
+        versions = db.execute('SELECT revision,formula FROM research_formula_versions WHERE id=%s ORDER BY revision', (K,)).fetchall()
     assert [json.loads(row[1])['yield'] for row in versions] == ['0.9', '0.95']
 
 
@@ -150,10 +151,10 @@ def test_optimistic_draft_revision_prevents_overwrite_discard_and_old_activation
         store.save(K, dict(body, simulation_token=trial['simulation_token']), actor)
     _, second = saved(store, actor)
     with pytest.raises(RuntimeError, match='草稿'):
-        store.discard(K, first['revision'])
+        store.discard(K, first['revision'], actor)
     with pytest.raises(RuntimeError, match='草稿'):
         store.activate(K, first, actor)
-    store.discard(K, second['revision'])
+    store.discard(K, second['revision'], actor)
     assert store.detail(K)['draft'] is None
     with pytest.raises(RuntimeError, match='草稿'):
         store.simulate(K, dict(body, draft_revision=second['revision']))
@@ -187,17 +188,17 @@ def test_invalid_drafts_fail_without_business_writes(ready, failure):
         kind, ref = {'cycle': ('recipe', RH), 'unknown': ('material', 'UNKNOWN'),
                      'stopped': ('material', 'CF020C'), 'historical': ('recipe', 'recipe:K172-C（026+020C）')}[failure]
         body['formula']['lines'][0].update(kind=kind, ref=ref)
-    before = records(store.path)
+    before = records(store.url)
     with pytest.raises(ValueError):
         store.simulate(K, body)
     assert store.detail(K)['draft'] is None
-    assert records(store.path) == before
+    assert records(store.url) == before
 
 
 def test_missing_prices_allow_reviewable_draft_but_block_activation(ready):
     _, _, actor, store = ready
     body = body_for(store)
-    with sqlite3.connect(store.path) as db:
+    with transaction(store.url, write=True) as db:
         db.execute("UPDATE procurement_inventory SET price=NULL WHERE material_id=(SELECT id FROM procurement_materials WHERE code='B')")
     trial, receipt = saved(store, actor, body)
     assert trial['blocking'] == ['B']
@@ -219,20 +220,20 @@ def test_above_100_percent_yield_and_repeated_lines_are_preserved(ready):
 
 def test_unrelated_price_addition_and_unchanged_price_do_not_reset_history(ready):
     _, client, _, store = ready
-    before = records(store.path)
+    before = records(store.url)
     assert publish(client, import_prices(client, '2026-09-12', [('EXTRA', 8)])).status_code == 200
     store.process_events()
-    assert records(store.path) == before
+    assert records(store.url) == before
     assert publish(client, import_prices(client, '2026-09-13', [('A', 30)])).status_code == 200
     store.process_events()
-    assert records(store.path) == before
+    assert records(store.url) == before
     change = import_prices(client, '2026-09-14', [('A', 33)])
     confirm_risks(client, change)
     assert publish(client, change).status_code == 200
     store.process_events()
     assert len(store.detail(K)['history']) == len(store.detail(RH)['history']) == 2
     assert store.detail(K)['product']['change']['percent'] > 0
-    assert records(store.path)[:len(before)] == before
+    assert records(store.url)[:len(before)] == before
 
 
 def test_inventory_import_affects_stock_cost_latest_is_flat_and_reimport_is_idempotent(ready, tmp_path):
@@ -245,12 +246,12 @@ def test_inventory_import_affects_stock_cost_latest_is_flat_and_reimport_is_idem
     assert current['product']['latest_cost'] == old['product']['latest_cost']
     assert Decimal(current['product']['inventory_cost']) > Decimal(old['product']['inventory_cost'])
     assert current['product']['change']['percent'] == 0
-    snapshot = records(store.path)
-    assert import_inventory(settings.database_path, source, actor, **args)['updated'] == 0
-    with sqlite3.connect(store.path) as db:
+    snapshot = records(store.url)
+    assert import_inventory(settings.database_url, source, actor, data_dir=settings.data_dir, **args)['updated'] == 0
+    with transaction(store.url, write=True) as db:
         enqueue(db, '重复刷新')
     store.process_events()
-    assert records(store.path) == snapshot
+    assert records(store.url) == snapshot
 
 
 def test_failed_event_keeps_purchase_commit_and_retries_exact_frozen_input(ready, monkeypatch):
@@ -258,26 +259,26 @@ def test_failed_event_keeps_purchase_commit_and_retries_exact_frozen_input(ready
     update = import_prices(client, '2026-09-12', [('A', 33)])
     confirm_risks(client, update)
     assert publish(client, update).status_code == 200
-    before = records(store.path)
+    before = records(store.url)
     real = research.evaluate
     def fail(_):
         raise ValueError('temporary calculation fault')
     monkeypatch.setattr(research, 'evaluate', fail)
     with pytest.raises(ValueError, match='temporary'):
         store.process_events()
-    assert records(store.path) == before
+    assert records(store.url) == before
     assert store.detail(K)['product']['status'] == 'failed'
     assert frozen(store)['prices']['A']['latest_price'] == '33'
-    with sqlite3.connect(settings.database_path) as db:
+    with transaction(settings.database_url) as db:
         failed = db.execute("SELECT inputs,attempts FROM research_events WHERE status='failed'").fetchone()
     assert json.loads(failed[0])['prices']['A']['latest_price'] == '33'
     assert failed[1] == 1
     monkeypatch.setattr(research, 'evaluate', real)
     assert store.process_events() == 1
-    after = records(store.path)
+    after = records(store.url)
     assert len(after) == len(before) + 2
     assert store.process_events() == 0
-    assert records(store.path) == after
+    assert records(store.url) == after
 
 
 def test_queued_price_events_keep_intermediate_input_and_own_comparison(ready):
@@ -304,13 +305,13 @@ def test_activation_transaction_rolls_back_when_event_cannot_be_saved(ready, mon
     _, receipt = saved(store, actor, body)
     before = store.detail(K)
     def fail(*_):
-        raise sqlite3.OperationalError('event write failed')
+        raise psycopg.OperationalError('event write failed')
     monkeypatch.setattr(research, 'enqueue', fail)
-    with pytest.raises(sqlite3.OperationalError, match='event write'):
+    with pytest.raises(psycopg.OperationalError, match='event write'):
         store.activate(K, receipt, actor)
     assert store.detail(K) == before
-    with sqlite3.connect(store.path) as db:
-        assert db.execute('SELECT COUNT(*) FROM research_formula_versions WHERE id=?', (K,)).fetchone()[0] == 1
+    with transaction(store.url) as db:
+        assert db.execute('SELECT COUNT(*) FROM research_formula_versions WHERE id=%s', (K,)).fetchone()[0] == 1
 
 
 @pytest.mark.parametrize('current,previous,percent,reason', [
@@ -327,7 +328,7 @@ def test_percentage_boundary_explains_why_comparison_is_unavailable(current, pre
 @pytest.mark.parametrize('scope,level,view,edit,activate', [('research', 0, 403, 403, 403), ('research', 2, 200, 403, 403), ('research', 3, 200, 200, 403), ('research', 4, 200, 200, 200), ('procurement', 4, 403, 403, 403)])
 def test_http_permissions_apply_to_each_operation(ready, scope, level, view, edit, activate):
     settings, _, actor, store = ready
-    IdentityStore(settings.database_path).create_user(username='rd-user', display_name='原表负责人',
+    IdentityStore(settings.database_url).create_user(username='rd-user', display_name='原表负责人',
         department='研发五部', password='Research-Password-2026', scope_levels={scope: level} if level else {})
     _, receipt = saved(store, actor)
     key = quote(K, safe='')
@@ -410,7 +411,7 @@ def test_shared_reference_dag_fingerprint_has_bounded_inputs(monkeypatch):
 
 def test_composite_detail_never_calls_pending_or_failed_results_current(ready, monkeypatch):
     _, _, _, store = ready
-    with sqlite3.connect(store.path) as db:
+    with transaction(store.url, write=True) as db:
         enqueue(db, '待核算复配')
     assert store.detail(DEFAULT_COMPOSITE)['product']['status'] == 'updating'
     def fail(_):
@@ -434,7 +435,7 @@ def test_independent_ratios_survive_draft_activation_and_history(ready):
     for line in body['formula']['lines']:
         line['ratio'] = '120'
     trial, receipt = saved(store, actor, body)
-    reopened = ResearchStore(settings.database_path)
+    reopened = ResearchStore(settings.database_url)
     assert reopened.detail(K)['draft']['formula']['lines'][0]['ratio'] == '120'
     reopened.activate(K, receipt, actor)
     reopened.process_events()
@@ -459,9 +460,9 @@ def test_delete_only_unused_new_formula(ready):
     created = store.create_formula({'name':'DELETE-TEST','owner':owner}, actor)
     key = created['id']
     with pytest.raises(RuntimeError):
-        store.delete_formula(key, {'revision':99})
+        store.delete_formula(key, {'revision':99}, actor)
     with pytest.raises(ValueError):
-        store.delete_formula(K, {'revision':store.detail(K)['draft_revision']})
+        store.delete_formula(K, {'revision':store.detail(K)['draft_revision']}, actor)
     response = client.request('DELETE', PREFIX + '/products/' + quote(key, safe=''), json={'revision':0})
     assert response.status_code == 200, response.text
     with pytest.raises(KeyError):
@@ -472,8 +473,8 @@ def test_formula_owner_saved_and_activated(ready):
     settings, client, actor, store = ready
     body = body_for(store)
     owner = '另一负责人'
-    with sqlite3.connect(settings.database_path) as db:
-        db.execute("UPDATE research_formulas SET formula=json_set(formula,'$.owner',?) WHERE id=?", (owner,RH))
+    with transaction(settings.database_url, write=True) as db:
+        db.execute("UPDATE research_formulas SET formula=jsonb_set(formula::jsonb,'{owner}',to_jsonb(%s::text))::text WHERE id=%s", (owner,RH))
     body['formula']['owner'] = owner
     for line in body['formula']['lines']:
         line['ratio'] = '10'
@@ -491,7 +492,7 @@ def test_formula_owner_saved_and_activated(ready):
 def test_saved_trial_snapshot_reopens(ready):
     settings, client, actor, store = ready
     trial, receipt = saved(store, actor)
-    snapshot = ResearchStore(settings.database_path).detail(K)['draft']['simulation']
+    snapshot = ResearchStore(settings.database_url).detail(K)['draft']['simulation']
     assert snapshot['latest'] == trial['latest']
     assert snapshot['inventory'] == trial['inventory']
     assert snapshot['simulation_token'] == receipt['simulation_token']
@@ -508,7 +509,7 @@ def test_manual_cost_propagates_and_procurement_keeps_override(ready, tmp_path, 
     assert {r['id'] for r in trial['affected']} >= {K, RH}
     store.activate(K, dict(revision=receipt['revision'], simulation_token=receipt['simulation_token']), actor)
     store.process_events()
-    before = records(store.path)
+    before = records(store.url)
     values = research.evaluate(frozen(store))
     assert values[policy][K]['cost'] == '0'
     assert values[policy][RH]['cost'] == '0'
@@ -517,7 +518,7 @@ def test_manual_cost_propagates_and_procurement_keeps_override(ready, tmp_path, 
     after = research.evaluate(frozen(store))
     assert after[policy][K]['cost'] == '0'
     assert after[policy][K]['auto_cost'] != values[policy][K]['auto_cost']
-    assert records(store.path)[:len(before)] == before
+    assert records(store.url)[:len(before)] == before
     body = body_for(store)
     body['formula']['manual_costs'] = {policy: None}
     trial, receipt = saved(store, actor, body)
@@ -574,11 +575,11 @@ def test_manual_cost_missing_price_and_cycle_validation(ready):
 def test_rd5_accounts_reuse_passwords_and_own_activation(ready):
     from scripts.configure_rd5_accounts import configure, PEOPLE
     settings, _, actor, store = ready
-    identities = IdentityStore(settings.database_path)
+    identities = IdentityStore(settings.database_url)
     existing = identities.create_user(username='existing-lin', display_name='林菲菲',
         department=None, password='Existing-Password-2026', scope_levels={'research':2})
-    configure(settings.database_path, actor, True)
-    configure(settings.database_path, actor, True)
+    configure(settings.database_url, actor, True)
+    configure(settings.database_url, actor, True)
     assert identities.login('existing-lin', 'Existing-Password-2026', 3600)
     users = identities.list_users()
     assert len([u for u in users if u['display_name'] == '林菲菲']) == 1
@@ -598,8 +599,8 @@ def test_rd5_accounts_reuse_passwords_and_own_activation(ready):
             activation = client.post(f'{PREFIX}/products/{quote(K)}/activate', json=receipt.json())
             assert activation.status_code == (200 if level == 4 else 403)
             store.process_events()
-    with sqlite3.connect(store.path) as db:
-        formula = json.loads(db.execute('SELECT formula FROM research_formulas WHERE id=?',(K,)).fetchone()[0])
+    with transaction(store.url) as db:
+        formula = json.loads(db.execute('SELECT formula FROM research_formulas WHERE id=%s',(K,)).fetchone()[0])
     assert formula['edited_by'] == existing['id'] == formula['activated_by']
 
 
@@ -627,11 +628,11 @@ def test_missing_prices_only_allow_effective_manual_policy_and_stale_price_token
     body = body_for(store)
     body['formula']['manual_costs'] = {'latest':'1','inventory':'2'}
     trial = store.simulate(K,body)
-    with sqlite3.connect(store.path) as db:
+    with transaction(store.url, write=True) as db:
         db.execute("UPDATE procurement_inventory SET price='200' WHERE material_id=(SELECT id FROM procurement_materials WHERE code='B')")
     with pytest.raises(RuntimeError):
         store.save(K,dict(body,simulation_token=trial['simulation_token']),actor)
-    with sqlite3.connect(store.path) as db:
+    with transaction(store.url, write=True) as db:
         db.execute("UPDATE procurement_inventory SET price=NULL WHERE material_id=(SELECT id FROM procurement_materials WHERE code='B')")
     trial = store.simulate(K,body)
     assert not trial['blocking']
@@ -663,3 +664,33 @@ def test_existing_formula_cannot_claim_creation_reason(ready):
     body = body_for(store)
     body['formula']['adjustment_reason'] = '新增配方'
     assert client.post(f'{PREFIX}/products/{quote(K, safe="")}/simulate', json=body).status_code == 422
+
+
+def test_concurrent_saves_keep_single_revision_and_reviewable_draft(ready):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    _, _, actor, store = ready
+    body = body_for(store)
+    trial = store.simulate(K, body)
+    payload = dict(body, simulation_token=trial['simulation_token'])
+    before = records(store.url)
+    barrier = Barrier(2)
+
+    def save_together():
+        barrier.wait(timeout=5)
+        try:
+            return store.save(K, payload, actor)
+        except RuntimeError as error:
+            return error
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: save_together(), range(2)))
+    assert sum(isinstance(result, dict) for result in results) == 1
+    assert sum(isinstance(result, RuntimeError) for result in results) == 1
+    detail = store.detail(K)
+    receipt = next(result for result in results if isinstance(result, dict))
+    assert detail['draft']['revision'] == body['draft_revision'] + 1 == receipt['revision']
+    assert detail['draft']['simulation_token'] == receipt['simulation_token']
+    assert detail['draft']['simulation']['latest'] == trial['latest']
+    assert records(store.url) == before

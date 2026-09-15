@@ -1,3 +1,4 @@
+"""Offline SQLite recovery baseline retained for the one-time migration, not runtime backup."""
 import sqlite3
 from pathlib import Path
 

@@ -1,5 +1,5 @@
 import json
-import sqlite3
+from api.postgres import transaction
 
 from api.identity import IdentityStore
 from tests.test_procurement_collaboration import real_data, overview, save, publish, login, PREFIX
@@ -21,11 +21,11 @@ def test_source_purchaser_is_not_a_system_modifier(real_data):
     detail = client.get(PREFIX+f"/materials/{material['id']}").json()
     assert all(row['modifier']['kind'] == 'source' for row in detail['official_history'])
     assert detail['changes'] == []
-    with sqlite3.connect(settings.database_path) as db:
-        rows = db.execute('SELECT rowid,raw_json FROM procurement_material_sources WHERE material_id=?', (material['id'],)).fetchall()
-        for rowid, raw in rows:
+    with transaction(settings.database_url, write=True) as db:
+        rows = db.execute('SELECT _order,raw_json FROM procurement_material_sources WHERE material_id=%s', (material['id'],)).fetchall()
+        for order, raw in rows:
             values = json.loads(raw); values[0] = users[1]['display_name']
-            db.execute('UPDATE procurement_material_sources SET raw_json=? WHERE rowid=?', (json.dumps(values), rowid))
+            db.execute('UPDATE procurement_material_sources SET raw_json=%s WHERE _order=%s', (json.dumps(values), order))
     assert client.get(PREFIX+'/overview', params={'editor_id': users[1]['id']}).json()['materials'] == []
     historical = client.get(PREFIX+'/overview', params={'editor_id': users[1]['id'], 'editor_scope': 'all'}).json()
     assert len(historical['materials']) == 1
@@ -46,8 +46,8 @@ def test_latest_saved_actor_and_immutable_published_attribution(real_data):
     assert publish(client).status_code == 200
     assert save(client, 'CF001M', '10.1').status_code == 200
     assert publish(client).status_code == 200
-    with sqlite3.connect(settings.database_path) as db:
-        db.execute("UPDATE identity_users SET display_name='新姓名' WHERE id=?", (users[2]['id'],))
+    with transaction(settings.database_url, write=True) as db:
+        db.execute("UPDATE identity_users SET display_name='新姓名' WHERE id=%s", (users[2]['id'],))
     detail = client.get(PREFIX+f"/materials/{material['id']}").json()
     assert detail['official_history'][-1]['modifier']['name'] == users[2]['display_name']
     assert detail['official_history'][-2]['modifier']['name'] == users[2]['display_name']

@@ -1,7 +1,7 @@
 """Acceptance of frozen research back-calculation and formula lifecycle changes."""
 import copy
 import json
-import sqlite3
+import os
 from decimal import Decimal
 from urllib.parse import quote
 
@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from api.identity import IdentityStore
 from api.main import create_app
+from api.postgres import transaction
 from api.research import ResearchStore
 from tests.test_procurement_isolation import confirm_risks, import_prices, publish
 from tests.test_procurement_rd5 import data, trial_data, table_rows
@@ -41,34 +42,39 @@ def populated(store, key):
     return body
 
 
-def test_existing_formulas_migrate_without_changing_purchase_or_formal_payloads(ready):
+def test_existing_formulas_require_explicit_schema_migration_and_preserve_payloads(ready):
     settings, _, _, store = ready
-    purchases, costs = table_rows(store.path), records(store.path)
-    # Reconstruct the deployed v1 table shape around the original formal data.
-    with sqlite3.connect(store.path) as db:
-        db.execute('ALTER TABLE research_formulas DROP COLUMN lifecycle')
+    purchases, costs = table_rows(store.url), records(store.url)
+    # Startup must not silently upgrade a schema or rewrite preserved costs.
+    with transaction(store.url, write=True) as db:
         db.execute("UPDATE schema_metadata SET value='1' WHERE key='workbench_research_schema_version'")
+    with pytest.raises(ValueError, match='数据库迁移'):
+        store.initialize()
+    assert table_rows(store.url) == purchases
+    assert records(store.url) == costs
+    with transaction(store.url, write=True) as db:
+        db.execute("UPDATE schema_metadata SET value='2' WHERE key='workbench_research_schema_version'")
     store.initialize()
-    restarted = ResearchStore(settings.database_path)
+    restarted = ResearchStore(settings.database_url)
     restarted.initialize()
-    assert table_rows(store.path) == purchases
-    assert records(store.path) == costs
+    assert table_rows(store.url) == purchases
+    assert records(store.url) == costs
     assert {row['id'] for row in restarted.formulas()['formulas']} == {K, RH}
     assert all(row['lifecycle'] == 'active' for row in restarted.formulas()['formulas'])
-    with sqlite3.connect(store.path) as db:
+    with transaction(store.url) as db:
         assert str(db.execute("SELECT value FROM schema_metadata WHERE key='workbench_research_schema_version'").fetchone()[0]) == '2'
 
 
 def test_created_formula_stays_out_of_ledger_and_history_until_activation(ready):
     settings, _, actor, store = ready
-    purchase_before, before = table_rows(store.path), records(store.path)
+    purchase_before, before = table_rows(store.url), records(store.url)
     existing = store.listing()
     created = store.create_formula(new_body(store, 'NEW-研发配方'), actor)
     key = created['id']
     assert managed(store, key)['lifecycle'] == 'draft'
     assert editable(store, key)['formula']['lines'] == []
     assert store.listing() == existing
-    assert records(store.path) == before
+    assert records(store.url) == before
     body = populated(store, key)
     trial, receipt = saved(store, actor, body, key)
     assert Decimal(trial['latest']['cost']) == pytest.approx(Decimal(300) / 30 / Decimal('.98'))
@@ -76,7 +82,7 @@ def test_created_formula_stays_out_of_ledger_and_history_until_activation(ready)
     assert Decimal(listed_draft['yield']) == Decimal('.98')
     assert len(listed_draft['lines']) == 3
     assert store.listing() == existing
-    reopened = ResearchStore(settings.database_path)
+    reopened = ResearchStore(settings.database_url)
     reopened.initialize()
     assert len(reopened.detail(key)['draft']['formula']['lines']) == 3
     reopened.activate(key, receipt, actor)
@@ -84,20 +90,20 @@ def test_created_formula_stays_out_of_ledger_and_history_until_activation(ready)
     assert key in {p['id'] for p in reopened.listing()['products']}
     assert managed(reopened, key)['lifecycle'] == 'active'
     assert len(reopened.detail(key)['history']) == 1
-    assert records(store.path)[:len(before)] == before
-    assert table_rows(store.path) == purchase_before
+    assert records(store.url)[:len(before)] == before
+    assert table_rows(store.url) == purchase_before
 
 
 def test_abandoning_unactivated_formula_creates_no_formal_record(ready):
     _, _, actor, store = ready
-    before = records(store.path)
+    before = records(store.url)
     created = store.create_formula(new_body(store, 'NEW-待放弃'), actor)
     key = created['id']
     saved(store, actor, populated(store, key), key)
     draft = store.detail(key)['draft']
-    store.discard(key, draft['revision'])
+    store.discard(key, draft['revision'], actor)
     assert key not in {p['id'] for p in store.listing()['products']}
-    assert records(store.path) == before
+    assert records(store.url) == before
     assert key not in {p['id'] for period in store.history()['versions'] for p in period['products']}
 
 
@@ -121,14 +127,14 @@ def test_effective_upstream_reference_prevents_deactivation(ready):
 
 def test_inactive_formula_can_restore_original_id_without_changing_old_history(ready):
     settings, _, actor, store = ready
-    before = records(store.path)
+    before = records(store.url)
     revision = store.detail(RH)['product']['revision']
     store.deactivate(RH, {'revision': revision}, actor)
     assert RH not in {p['id'] for p in store.listing()['products']}
     assert managed(store, RH)['lifecycle'] == 'inactive'
-    assert records(store.path) == before
+    assert records(store.url) == before
     assert RH not in {p['id'] for p in store.detail(K)['options']['recipes']}
-    reopened = ResearchStore(settings.database_path)
+    reopened = ResearchStore(settings.database_url)
     reopened.initialize()
     body = editable(reopened, RH)
     body['formula']['yield'] = '0.85'
@@ -139,7 +145,7 @@ def test_inactive_formula_can_restore_original_id_without_changing_old_history(r
     assert managed(reopened, RH)['lifecycle'] == 'active'
     assert [p['id'] for p in reopened.listing()['products']].count(RH) == 1
     assert len(reopened.detail(RH)['history']) == 2
-    assert records(store.path)[:len(before)] == before
+    assert records(store.url)[:len(before)] == before
 
 
 def test_deactivation_checks_current_formal_revision(ready):
@@ -169,7 +175,7 @@ def test_new_and_inactive_formulas_are_not_available_as_active_references(ready)
 ])
 def test_formula_management_http_permissions(ready, scope, level, view, create, stop):
     settings, _, _, store = ready
-    IdentityStore(settings.database_path).create_user(username='revision-user', display_name='配方负责人',
+    IdentityStore(settings.database_url).create_user(username='revision-user', display_name='配方负责人',
         department='研发五部', password='Revision-Password-2026', scope_levels={scope: level})
     with TestClient(create_app(settings)) as client:
         assert client.post('/api/login', json={'username': 'revision-user', 'password': 'Revision-Password-2026'}).status_code == 200
@@ -182,13 +188,13 @@ def test_formula_management_http_permissions(ready, scope, level, view, create, 
 
 
 def backfill_payloads(store):
-    with sqlite3.connect(store.path) as db:
-        return [json.loads(row[0]) for row in db.execute('SELECT payload FROM research_backfill_records ORDER BY rowid')]
+    with transaction(store.url) as db:
+        return [json.loads(row[0]) for row in db.execute('SELECT payload FROM research_backfill_records ORDER BY _order')]
 
 
 def test_backfill_freezes_each_purchase_period_with_explicit_price_basis(ready):
     _, _, _, store = ready
-    purchases, formal = table_rows(store.path), records(store.path)
+    purchases, formal = table_rows(store.url), records(store.url)
     result = store.backfill_history()
     assert result == {'versions': 2, 'status': 'created'}
     payloads = backfill_payloads(store)
@@ -206,8 +212,8 @@ def test_backfill_freezes_each_purchase_period_with_explicit_price_basis(ready):
     composite = next(r for r in payloads if r['kind'] == 'composite' and r['purchase_version'] == 1)
     assert composite['latest']['lines'][0]['basis'] == 'current_latest_fallback'
     assert composite['latest']['lines'][0]['unit_cost'] == '12.9'
-    assert table_rows(store.path) == purchases
-    assert records(store.path) == formal
+    assert table_rows(store.url) == purchases
+    assert records(store.url) == formal
     assert len(store.trials()['recipes']) == 3
     # The two fixture purchase periods have identical effective costs. The view
     # can now compare them even though the original baseline payload stays first.
@@ -218,18 +224,18 @@ def test_backfill_freezes_each_purchase_period_with_explicit_price_basis(ready):
 def test_backfill_is_idempotent_and_keeps_frozen_reference_prices_after_updates(ready):
     settings, client, _, store = ready
     store.backfill_history()
-    before, formal = backfill_payloads(store), records(store.path)
+    before, formal = backfill_payloads(store), records(store.url)
     old_latest = store.detail(K)['product']['latest_cost']
     assert store.backfill_history() == {'versions': 2, 'status': 'unchanged'}
     update = import_prices(client, '2026-09-12', [('A', 33)])
     confirm_risks(client, update)
     assert publish(client, update).status_code == 200
     store.process_events()
-    reopened = ResearchStore(settings.database_path)
+    reopened = ResearchStore(settings.database_url)
     reopened.initialize()
     assert reopened.backfill_history() == {'versions': 2, 'status': 'unchanged'}
     assert backfill_payloads(reopened) == before
-    assert records(store.path)[:len(formal)] == formal
+    assert records(store.url)[:len(formal)] == formal
     history = reopened.detail(K)['history']
     assert len([r for r in history if r.get('record_type') == 'backfill']) == 2
     assert Decimal(reopened.detail(K)['product']['latest_cost']) > Decimal(old_latest)
@@ -237,12 +243,12 @@ def test_backfill_is_idempotent_and_keeps_frozen_reference_prices_after_updates(
 
 def test_last_movement_comparison_is_retained_in_every_research_view(ready):
     _, client, _, store = ready
-    with sqlite3.connect(store.path) as db:
+    with transaction(store.url, write=True) as db:
         db.execute("UPDATE procurement_price_batch_items SET latest_price='20' WHERE code='A' AND batch_id=(SELECT id FROM procurement_price_batches WHERE version=1)")
     # A third published period carries the same prices as period two.
     assert publish(client, import_prices(client, '2026-09-12', [('A', 30)])).status_code == 200
     store.process_events()
-    purchases, formal = table_rows(store.path), records(store.path)
+    purchases, formal = table_rows(store.url), records(store.url)
     store.backfill_history()
     frozen = backfill_payloads(store)
     for key in (K, RH):
@@ -260,8 +266,8 @@ def test_last_movement_comparison_is_retained_in_every_research_view(ready):
             detail = next(r for r in store.history(version['id'])['products'] if r['id'] == key)
             assert row['change'] == detail['change']
             assert row['comparison_basis'] == detail['comparison_basis']
-    assert table_rows(store.path) == purchases
-    assert records(store.path) == formal
+    assert table_rows(store.url) == purchases
+    assert records(store.url) == formal
     assert backfill_payloads(store) == frozen
 
 
@@ -274,12 +280,10 @@ def test_last_movement_comparison_is_retained_in_every_research_view(ready):
 ])
 def test_last_distinct_rounded_price_and_missing_zero_boundaries(costs, expected, bases):
     from api.research_history import linked_history
-    with sqlite3.connect(':memory:') as db:
-        db.execute('CREATE TABLE research_backfill_records(product_id,purchase_version,payload)')
-        db.execute('CREATE TABLE research_cost_records(product_id,sequence,payload)')
+    with transaction(os.environ['HONGHAO_TEST_DATABASE_URL'], write=True) as db:
         for version, cost in enumerate(costs, 1):
             row = {'latest_cost': cost, 'purchase_version': version, 'record_type': 'backfill', 'event_id': f'backfill:{version}'}
-            db.execute('INSERT INTO research_backfill_records VALUES(?,?,?)', ('P', version, json.dumps(row)))
+            db.execute('INSERT INTO research_backfill_records(product_id,purchase_version,signature,payload) VALUES(%s,%s,%s,%s)', ('P', version, 'boundary-test', json.dumps(row)))
         rows = list(reversed(linked_history(db, 'P')))
         assert [r['change']['percent'] for r in rows] == pytest.approx(expected)
         assert [r['comparison_basis']['purchase_version'] if r['comparison_basis'] else None for r in rows] == bases
@@ -287,41 +291,41 @@ def test_last_distinct_rounded_price_and_missing_zero_boundaries(costs, expected
 
 def test_backfill_does_not_silently_turn_unpriced_material_into_zero(ready):
     _, _, _, store = ready
-    with sqlite3.connect(store.path) as db:
+    with transaction(store.url, write=True) as db:
         db.execute("UPDATE procurement_inventory SET price=NULL WHERE material_id=(SELECT id FROM procurement_materials WHERE code='B')")
-    purchases, formal = table_rows(store.path), records(store.path)
+    purchases, formal = table_rows(store.url), records(store.url)
     store.backfill_history()
     for record in backfill_payloads(store):
         if record['id'] in {K, RH}:
             assert record['latest_cost'] is None
             assert record['inventory_cost'] is None
             assert 'B' in record['missing_materials']
-    assert table_rows(store.path) == purchases
-    assert records(store.path) == formal
+    assert table_rows(store.url) == purchases
+    assert records(store.url) == formal
 
 
 def test_backfilled_formula_and_costs_stay_frozen_after_formula_activation(ready):
     _, _, actor, store = ready
     store.backfill_history()
-    before, formal = backfill_payloads(store), records(store.path)
+    before, formal = backfill_payloads(store), records(store.url)
     body = editable(store, K)
     body['formula']['yield'] = '0.99'
     _, receipt = saved(store, actor, body, K)
     store.activate(K, receipt, actor)
     store.process_events()
     assert backfill_payloads(store) == before
-    assert records(store.path)[:len(formal)] == formal
+    assert records(store.url)[:len(formal)] == formal
     assert store.backfill_history()['status'] == 'unchanged'
 
 
 def test_unrelated_purchase_after_backfill_does_not_rewrite_formal_history(ready):
     _, client, _, store = ready
     store.backfill_history()
-    before = records(store.path)
+    before = records(store.url)
     replay_before = backfill_payloads(store)
     assert publish(client, import_prices(client, '2026-09-12', [('UNRELATED', 8)])).status_code == 200
     assert store.process_events() == 1
-    assert records(store.path) == before
+    assert records(store.url) == before
     assert backfill_payloads(store) == replay_before
 
 
@@ -352,7 +356,7 @@ def test_reference_activation_and_target_deactivation_cannot_leave_dangling_acti
             store.deactivate(RH, {'revision': target_revision}, actor)
         assert managed(store, key)['lifecycle'] == managed(store, RH)['lifecycle'] == 'active'
     store.process_events()
-    with sqlite3.connect(store.path) as db:
+    with transaction(store.url) as db:
         active = {key: json.loads(raw) for key, raw in db.execute("SELECT id,formula FROM research_formulas WHERE lifecycle='active'")}
     assert all(line['ref'] in active for formula in active.values() for line in formula['lines'] if line['kind'] != 'material')
 
@@ -364,11 +368,11 @@ def test_equal_new_latest_price_updates_live_basis_without_resetting_cost_histor
     previous = copy.deepcopy(store.detail(K))
     old_line = next(line for line in previous['latest']['lines'] if line['code'] == 'B')
     assert old_line['unit_cost'] == '10' and old_line['basis'] == 'inventory'
-    before = records(store.path)
+    before = records(store.url)
     assert publish(client, import_prices(client, '2026-09-12', [('B', 10)])).status_code == 200
     store.process_events()
     current = store.detail(K)
-    assert records(store.path) == before
+    assert records(store.url) == before
     assert current['product']['latest_cost'] == previous['product']['latest_cost']
     assert current['product']['inventory_cost'] == previous['product']['inventory_cost']
     assert current['product']['change'] == previous['product']['change']
@@ -383,7 +387,7 @@ def test_saved_draft_can_be_resimulated_and_restored_after_own_product_is_deacti
     body['formula']['yield'] = '0.85'
     _, old_receipt = saved(store, actor, body, RH)
     preserved = copy.deepcopy(store.detail(RH)['draft']['formula'])
-    before = records(store.path)
+    before = records(store.url)
     store.deactivate(RH, {'revision': store.detail(RH)['product']['revision']}, actor)
     inactive = store.detail(RH)
     assert inactive['draft']['formula'] == preserved
@@ -398,4 +402,4 @@ def test_saved_draft_can_be_resimulated_and_restored_after_own_product_is_deacti
     assert managed(store, RH)['lifecycle'] == 'active'
     assert restored['draft'] is None
     assert Decimal(restored['latest']['yield']) == Decimal('.85')
-    assert records(store.path)[:len(before)] == before
+    assert records(store.url)[:len(before)] == before

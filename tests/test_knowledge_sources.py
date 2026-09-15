@@ -1,16 +1,20 @@
 import json
-import sqlite3
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
 
+import psycopg
+import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
+from api.identity import IdentityStore
+from api.knowledge import KnowledgeStore
 from api.main import create_app
+from api.postgres import WRITE_LOCK, connect, transaction
 from api.modules import default_module_modes
 from api.settings import Settings
-from tests.helpers import authenticated_client
+from tests.helpers import TEST_ADMIN_PASSWORD, authenticated_client
 
 
 def knowledge_settings(data_dir: Path) -> Settings:
@@ -294,9 +298,9 @@ def test_source_access_requires_knowledge_scope_before_resource_scope(tmp_path: 
             files={"file": ("采购说明书.pdf", pdf_with_text("shared"), "application/pdf")},
         ).json()
         admin.post(f"/api/knowledge/sources/{source['id']}/confirm-safe")
-        with sqlite3.connect(settings.database_path) as connection:
+        with transaction(settings.database_url, write=True) as connection:
             connection.execute(
-                "UPDATE knowledge_sources SET read_min_level = 2, read_scope_ids = ? WHERE id = ?",
+                "UPDATE knowledge_sources SET read_min_level = 2, read_scope_ids = %s WHERE id = %s",
                 (json.dumps(["procurement"]), source["id"]),
             )
         admin.post(
@@ -351,7 +355,7 @@ def test_source_storage_has_no_static_or_traversal_url(tmp_path: Path) -> None:
     assert traversal.status_code == 404
 
 
-def test_derived_index_is_rebuilt_on_restart(tmp_path: Path) -> None:
+def test_derived_index_survives_restart_without_runtime_ddl(tmp_path: Path) -> None:
     settings = knowledge_settings(tmp_path / "data")
 
     with authenticated_client(settings) as client:
@@ -361,8 +365,9 @@ def test_derived_index_is_rebuilt_on_restart(tmp_path: Path) -> None:
         ).json()
         client.post(f"/api/knowledge/sources/{source['id']}/confirm-safe")
 
-    with sqlite3.connect(settings.database_path) as connection:
-        connection.execute("DROP VIEW knowledge_derived_index")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        with transaction(settings.database_url, write=True) as connection:
+            connection.execute("DROP VIEW knowledge_derived_index")
 
     with authenticated_client(settings) as restarted:
         versions = restarted.get(f"/api/knowledge/sources/{source['id']}/versions")
@@ -371,7 +376,8 @@ def test_derived_index_is_rebuilt_on_restart(tmp_path: Path) -> None:
     assert len(versions.json()) == 1
 
 
-def test_schema_v5_permissions_migrate_to_current_terms(tmp_path: Path) -> None:
+def test_old_schema_is_rejected_without_silently_rewriting_source_permissions(tmp_path: Path) -> None:
+    """Only current snapshots may be imported; older SQLite schemas must use the old app to upgrade first."""
     settings = knowledge_settings(tmp_path / "data")
 
     with authenticated_client(settings) as client:
@@ -384,34 +390,34 @@ def test_schema_v5_permissions_migrate_to_current_terms(tmp_path: Path) -> None:
             files={"file": ("旧系统专用.pdf", pdf_with_text("system-only"), "application/pdf")},
         ).json()
 
-    with sqlite3.connect(settings.database_path) as connection:
+    with transaction(settings.database_url, write=True) as connection:
         connection.execute(
-            "UPDATE knowledge_sources SET read_min_level = 1 WHERE id = ?",
+            "UPDATE knowledge_sources SET read_min_level = 1 WHERE id = %s",
             (source["id"],),
         )
         connection.execute(
-            "UPDATE knowledge_sources SET read_min_level = 5, read_scope_ids = ? WHERE id = ?",
+            "UPDATE knowledge_sources SET read_min_level = 5, read_scope_ids = %s WHERE id = %s",
             (json.dumps(["procurement"]), system_only_source["id"]),
         )
         connection.execute(
             "UPDATE schema_metadata SET value = 5 WHERE key = 'knowledge_schema_version'"
         )
 
-    with authenticated_client(settings):
-        pass
+    with pytest.raises(RuntimeError, match="Unsupported knowledge schema version"):
+        KnowledgeStore(settings.database_url, settings.data_dir).initialize()
 
-    with sqlite3.connect(settings.database_path) as connection:
+    with transaction(settings.database_url) as connection:
         assert connection.execute(
-            "SELECT read_min_level FROM knowledge_sources WHERE id = ?",
+            "SELECT read_min_level FROM knowledge_sources WHERE id = %s",
             (source["id"],),
-        ).fetchone() == (2,)
+        ).fetchone() == (1,)
         assert connection.execute(
-            "SELECT read_min_level, read_scope_ids FROM knowledge_sources WHERE id = ?",
+            "SELECT read_min_level, read_scope_ids FROM knowledge_sources WHERE id = %s",
             (system_only_source["id"],),
-        ).fetchone() == (4, "[]")
+        ).fetchone() == (5, json.dumps(["procurement"]))
         assert connection.execute(
             "SELECT value FROM schema_metadata WHERE key = 'knowledge_schema_version'"
-        ).fetchone() == (6,)
+        ).fetchone() == (5,)
 
 
 def test_multi_source_markdown_requires_access_to_every_source(tmp_path: Path) -> None:
@@ -476,3 +482,128 @@ def test_multi_source_markdown_requires_access_to_every_source(tmp_path: Path) -
     assert forbidden_merge.status_code == 403
     assert "共享来源.pdf" in combined_markdown.text
     assert "管理员来源.pdf" in combined_markdown.text
+
+
+def test_unauthorized_source_insert_removes_uploaded_file(tmp_path: Path) -> None:
+    settings = knowledge_settings(tmp_path / "data")
+    with authenticated_client(settings):
+        store = KnowledgeStore(settings.database_url, settings.data_dir)
+        with pytest.raises(PermissionError):
+            store.create_source(
+                BytesIO(pdf_with_text("rollback")), filename="失败上传.pdf", mime_type="application/pdf",
+                created_by_user_id="missing-user", read_min_level=4, read_scope_ids=[],
+            )
+        assert list(store.sources_dir.iterdir()) == []
+        with transaction(settings.database_url) as connection:
+            assert connection.execute("SELECT COUNT(*) FROM knowledge_sources").fetchone() == (0,)
+
+
+def test_restart_recovers_interrupted_source_processing(tmp_path: Path) -> None:
+    settings = knowledge_settings(tmp_path / "data")
+    with authenticated_client(settings) as client:
+        source = client.post(
+            "/api/knowledge/sources",
+            files={"file": ("处理中.pdf", pdf_with_text("interrupted"), "application/pdf")},
+        ).json()
+        with transaction(settings.database_url, write=True) as connection:
+            connection.execute(
+                "UPDATE knowledge_sources SET safety_status='confirmed', processing_status='processing' WHERE id=%s",
+                (source['id'],),
+            )
+    with authenticated_client(settings) as client:
+        recovered = client.get(f"/api/knowledge/sources/{source['id']}").json()
+        assert recovered['processing_status'] == 'parse_failed'
+        assert recovered['failure_reason'] == 'interrupted'
+        assert client.get(f"/api/knowledge/sources/{source['id']}/file").status_code == 200
+
+
+def test_source_upload_rechecks_permission_after_reading_file(tmp_path: Path) -> None:
+    settings = knowledge_settings(tmp_path / "data")
+    with authenticated_client(settings):
+        editor = IdentityStore(settings.database_url).create_user(
+            username="knowledge-editor", display_name="知识编辑", department=None,
+            password=TEST_ADMIN_PASSWORD, scope_levels={"knowledge": 3},
+        )
+        store = KnowledgeStore(settings.database_url, settings.data_dir)
+
+        class RevokingStream(BytesIO):
+            def read(self, size=-1):
+                chunk = super().read(size)
+                with transaction(settings.database_url, write=True) as connection:
+                    connection.execute(
+                        "UPDATE identity_user_scopes SET access_level=2 WHERE user_id=%s AND scope_id='knowledge'",
+                        (editor['id'],),
+                    )
+                return chunk
+
+        with pytest.raises(PermissionError, match="知识操作权限已变化"):
+            store.create_source(
+                RevokingStream(pdf_with_text("permission changed")), filename="失效权限.pdf",
+                mime_type="application/pdf", created_by_user_id=editor['id'],
+                read_min_level=3, read_scope_ids=['knowledge'],
+            )
+        assert list(store.sources_dir.iterdir()) == []
+        with transaction(settings.database_url) as connection:
+            assert connection.execute("SELECT COUNT(*) FROM knowledge_sources").fetchone() == (0,)
+
+
+def test_safe_confirmation_rechecks_admin_before_claiming_source(tmp_path: Path, monkeypatch) -> None:
+    settings = knowledge_settings(tmp_path / "data")
+    with authenticated_client(settings) as client:
+        source = client.post(
+            "/api/knowledge/sources",
+            files={"file": ("待确认.pdf", pdf_with_text("pending"), "application/pdf")},
+        ).json()
+        reviewer = IdentityStore(settings.database_url).create_user(
+            username="knowledge-reviewer", display_name="知识确认人", department=None,
+            password=TEST_ADMIN_PASSWORD, is_system_admin=True,
+        )
+        store = KnowledgeStore(settings.database_url, settings.data_dir)
+        original_get_source = store.get_source
+
+        def deactivate_after_loading_source(source_id):
+            loaded = original_get_source(source_id)
+            with transaction(settings.database_url, write=True) as connection:
+                connection.execute("UPDATE identity_users SET is_active=0 WHERE id=%s", (reviewer['id'],))
+            return loaded
+
+        monkeypatch.setattr(store, 'get_source', deactivate_after_loading_source)
+        with pytest.raises(PermissionError, match="账号已失效"):
+            store.confirm_safe(source['id'], reviewer['id'])
+        unchanged = original_get_source(source['id'])
+        assert unchanged['safety_status'] == 'quarantined'
+        assert unchanged['processing_status'] == 'not_started'
+        assert store.list_versions(source['id']) == []
+
+
+def test_merged_version_rechecks_admin_after_parsing_outside_write_lock(tmp_path: Path, monkeypatch) -> None:
+    settings = knowledge_settings(tmp_path / "data")
+    with authenticated_client(settings) as client:
+        sources = []
+        for name in ('first', 'second'):
+            source = client.post(
+                "/api/knowledge/sources",
+                files={"file": (name + ".pdf", pdf_with_text(name), "application/pdf")},
+            ).json()
+            assert client.post(f"/api/knowledge/sources/{source['id']}/confirm-safe").status_code == 200
+            sources.append(source)
+        reviewer = IdentityStore(settings.database_url).create_user(
+            username="merge-reviewer", display_name="知识合并人", department=None,
+            password=TEST_ADMIN_PASSWORD, is_system_admin=True,
+        )
+        store = KnowledgeStore(settings.database_url, settings.data_dir)
+        original_files = set(store.items_dir.rglob('*.md'))
+
+        def parse_while_permission_changes(source):
+            with connect(settings.database_url) as connection, connection.transaction():
+                assert connection.execute("SELECT pg_try_advisory_xact_lock(%s)", (WRITE_LOCK,)).fetchone() == (True,)
+            with transaction(settings.database_url, write=True) as connection:
+                connection.execute("UPDATE identity_users SET access_level=1 WHERE id=%s", (reviewer['id'],))
+            return {"status": "parsed", "text": "已解析"}
+
+        monkeypatch.setattr(store, '_run_parser', parse_while_permission_changes)
+        with pytest.raises(PermissionError, match="知识操作权限已变化"):
+            store.create_version_from_sources([source['id'] for source in sources], reviewer['id'])
+        assert set(store.items_dir.rglob('*.md')) == original_files
+        with transaction(settings.database_url) as connection:
+            assert connection.execute("SELECT COUNT(*) FROM knowledge_versions").fetchone() == (2,)

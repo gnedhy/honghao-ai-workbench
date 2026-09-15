@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,8 @@ def digest(db, table):
     return hashlib.sha256(json.dumps(rows, ensure_ascii=False).encode()).hexdigest()
 
 def main():
+    if "HONGHAO_DATABASE_URL" in os.environ:
+        raise RuntimeError("此脚本仅用于已归档的 SQLite 验收现场，不能用于 PostgreSQL")
     parser = argparse.ArgumentParser()
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
