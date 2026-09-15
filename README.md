@@ -37,8 +37,11 @@
 
 ```powershell
 npm ci
+npm exec -- playwright install chromium
 uv sync --group dev
 ```
+
+采购资讯在后端运行期间通过 Node.js、Playwright 和 Chromium 定时抓取；Playwright 不仅用于测试。新设备拉取、更新依赖或复制到独立部署目录后，都须完成[采购资讯运行依赖与验收](docs/运行与维护.md#采购资讯运行依赖与验收)，不能只部署 Python 与 `dist`。
 
 按 [隔离启动步骤](docs/运行与维护.md#启动本地工作台)配置独立数据库、附件目录和端口。结构迁移使用 `uv run python -m api.cli migrate`，服务使用同库应用账号；连接凭据从受保护配置注入。默认开发代理指向 8000，与正式服务同机时使用文档中的临时代理配置。
 

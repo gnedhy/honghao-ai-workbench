@@ -395,6 +395,7 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
     <ol className="settings-timeline" tabIndex={0} aria-label="更新日志"><li>
       <div className="changelog-date"><time dateTime="2026-09-15">2026年9月15日</time></div>
       <div className="settings-timeline-content">
+        <div><strong>采购资讯恢复更新</strong><p>修复采购资讯无法抓取的问题，恢复生意社、隆众资讯及商务部资讯的定时更新。</p></div>
         <div><strong>数据存储升级</strong><p>升级为 PostgreSQL，保留现有账号、权限、采购价格、配方及成本历史。登录方式和日常操作不变，采购与研发继续按原规则同步。</p></div>
         <div><strong>数据与恢复校验</strong><p>逐项核对原有价格版本、产品成本、试算和排行榜，保留金额精度及历史记录；完善备份、恢复和写入一致性检查。</p></div>
         <div><strong>授权记录显示</strong><p>移除授权记录末尾多余的分隔线，采购与研发保持一致。</p></div>
