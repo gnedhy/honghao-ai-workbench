@@ -10,7 +10,7 @@
 - Narrow view: wrapping toolbar and contained horizontal table scrolling; drawers fit the viewport, actions remain reachable. Test desktop and mobile after final implementation.
 - History uses the purchase-style timeline and version detail; product rows expand frozen dual costs and inputs inline. Current-price fallback is labeled as such, never described as historical inventory. Ledger/current statistics/version details compare against the last distinct rounded price; unchanged prices retain that movement. Interval rankings compare their selected endpoints. Old formal and replay payloads remain immutable; input deduplication only controls creation of new formal records.
 - Mobile menus stay inside the viewport; dates remain single-line, custom date inputs and apply action remain reachable. Editor footer margins match mobile drawer padding; only the feed table scrolls horizontally.
-- Authority: user-approved plan and current procurement CSS. Second revision independently reviewed and deployed on 2026-09-12 12:34 after backup and restore drill; no pending design direction or findings. Evidence: `.impeccable/review/research-cost/current.json`, including desktop, 390×844 and production verification captures. See `docs/研发工作台调整-2026-09-12.md`.
+- Authority: user-approved plan and current procurement CSS. Second revision independently reviewed and deployed on 2026-09-12 12:34 after backup and restore drill; no pending design direction or findings. Evidence: `.impeccable/review/research-cost/current.json`, including desktop, 390×844 and production verification captures. See `docs/business/研发工作台调整-2026-09-12.md`.
 
 ## 2026-09-12 trend calibration
 
@@ -26,4 +26,4 @@
 
 ## Current comparison authority
 
-See `docs/研发工作台调整-2026-09-12.md`, section 最新确认. Final controls read 全部 / 最新优先 / 库存优先. The trend, interval ranking, current gap and simulation have distinct purposes; all monetary comparisons use rounded cents, while internal formula calculation and frozen inputs retain precision. Latest implementation captures remain in `20260912-rounded-comparison`; documentation-only reconciliation and application changelog evidence are recorded separately in `.scratch/closeout-20260912/`. Historical manifests are not rewritten to claim a new review.
+See `docs/business/研发工作台调整-2026-09-12.md`, section 最新确认. Final controls read 全部 / 最新优先 / 库存优先. The trend, interval ranking, current gap and simulation have distinct purposes; all monetary comparisons use rounded cents, while internal formula calculation and frozen inputs retain precision. Latest implementation captures remain in `20260912-rounded-comparison`; documentation-only reconciliation and application changelog evidence are recorded separately in `.scratch/closeout-20260912/`. Historical manifests are not rewritten to claim a new review.

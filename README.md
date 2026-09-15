@@ -2,7 +2,7 @@
 
 面向企业日常业务的本地工作台，当前聚焦采购价格管理与研发产品成本。
 
-2026 年 9 月 15 日已完成 PostgreSQL 正式切换，原账号与业务数据保留。[发布与恢复记录](docs/正式发布-2026-09-15.md) · [当前交接](docs/当前交接.md)。
+2026 年 9 月 15 日已完成 PostgreSQL 正式切换，原账号与业务数据保留。[发布与恢复记录](docs/releases/正式发布-2026-09-15.md) · [当前交接](docs/当前交接.md)。
 
 ## 已实现
 
@@ -68,6 +68,8 @@ docs/       使用、运维、决策与历史说明
 
 ## 文档
 
-[更新日志](docs/更新日志-2026-09-15.md) · [运行与维护](docs/运行与维护.md) · [历史索引](docs/history/README.md)
+[文档导航](docs/README.md) 按业务、发布、更新日志和历史记录分类；接续工作从当前交接进入。
 
-[产品范围](PRODUCT.md) · [领域模型](CONTEXT.md) · [设计约定](DESIGN.md) · [组件复用](docs/components.md) · [研发成本与授权](docs/研发受控成本调整-2026-09-14.md)
+[更新日志](docs/changelog/更新日志-2026-09-15.md) · [运行与维护](docs/运行与维护.md) · [历史索引](docs/history/README.md)
+
+[产品范围](PRODUCT.md) · [领域模型](CONTEXT.md) · [设计约定](DESIGN.md) · [组件复用](docs/components.md) · [研发成本与授权](docs/business/研发受控成本调整-2026-09-14.md)

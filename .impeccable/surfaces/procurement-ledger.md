@@ -13,7 +13,7 @@
 ## Shared department ledger — 2026-09-11
 
 - The Materials component also renders distribution details. Department mode filters the formal catalog by department IDs and provides range-selection controls; the original ledger pricing workflow, column order, comparison policy and personal preferences remain shared.
-- See [distribution surface brief](./procurement-distribution.md) and its current evidence for the final desktop/mobile and cross-page write verification. All 107 RD5 material cells match their main-ledger equivalents. The earlier final comparison/history definitions below remain effective.
+- See [distribution surface brief](procurement-distribution.md) and its current evidence for the final desktop/mobile and cross-page write verification. All 107 RD5 material cells match their main-ledger equivalents. The earlier final comparison/history definitions below remain effective.
 
 ## Final catalog supplementation and history — 2026-09-11 19:46
 
