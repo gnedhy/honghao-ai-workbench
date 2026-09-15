@@ -18,7 +18,7 @@
 | 表单操作栏 | `WorkbenchLayout.tsx` → `FormFooter` | 左侧状态，右侧操作，主操作最后；研发编辑。台账顶部保存不迁入底部 |
 | 看板容器 | 同文件 → `DashboardPanel` | 标题、内容及尺寸由业务组合；共用 `dashboardPanel` 样式，不统一业务布局 |
 | 排行翻页 | `src/components/useMoverPaging.tsx` | 悬停、键盘、详情打开、后台和减少动态效果时暂停；采购／研发排行 |
-| 数值／页面状态 | `PriceMovement.tsx`、`WorkbenchLayout.tsx` → `PageState` | 涨跌与无对比展示；错误与重试分开，不把失败当空数据 |
+| 数值／页面状态 | `PriceMovement.tsx`、`WorkbenchLayout.tsx` → `PageState`、`WorkbenchLoading` | 涨跌与无对比展示；错误与重试分开，不把失败当空数据 |
 | 授权组合 | `src/components/ActivationGrants.tsx` | 采购／研发同界面，独立业务 scope；保留确认、权限查询和审计逻辑 |
 | 历史记录 | `WorkbenchSurface.module.css` → `historyTimeline`、`historyDate` | 日期、事件和时间布局；采购／研发历史。子记录及冻结内容仍由业务负责 |
 
@@ -31,6 +31,7 @@
 - 确认左取消右确认，危险操作红色。开关展示实际生效状态；授权确认失败时不提前变更。
 - 所有关闭方式使用同一检查；忙碌期间不可离开。退出中正文不可交互，卸载后焦点返回原入口。
 - 成功绿、待处理橙、失败红、中性灰；权限来源继续区分管理／额外／未授权。避免重复成功提示。
+- 工作台列表、模块代码与首次业务读取共用 `WorkbenchLoading`，旋转图标配合业务名称；图表、资讯、数据分流和详情通过 `local` 复用内容区样式，减少动态效果时保留静态提示。
 - 后台刷新保留已有内容；首次加载、空结果和失败分别展示。台账刷新不加整表、重排行或数字动画。
 
 ## 动效
@@ -44,5 +45,7 @@
 示例源码：`previews/components/`，不接入正式导航、不访问业务数据。运行 `node scripts/build-component-preview.mjs` 构建到忽略目录 `.scratch/component-preview`；可显式传入隔离前端输出目录，脚本拒绝正式 `dist`。
 
 验收路径：`/previews/components/index.html`。覆盖正常、禁用、加载、失败、长文本、未保存确认、嵌套抽屉、日期及分页；减少动态效果跟随系统设置。
+
+加载状态回归：`node scripts/check-workbench-loading.mjs`，拦截全部业务请求，验证实际采购、研发、资讯、分流的加载与失败，以及研发走势加载与空结果的区别。
 
 组件示例之外，必须检查采购、研发、设置、资料、帮助、反馈的实际消费者。业务回归覆盖采购跨页编辑及启用、研发原因／联动／试算／草稿锁定与恢复、权限、金额和冻结历史。正式前端替换须在隔离验收后执行。

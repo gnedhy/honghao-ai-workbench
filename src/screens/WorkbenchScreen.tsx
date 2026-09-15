@@ -1,3 +1,4 @@
+import { WorkbenchLoading } from "../components/WorkbenchLayout";
 import {
   BadgeDollarSign,
   Boxes,
@@ -147,7 +148,7 @@ export function WorkbenchScreen({ currentUser, statuses, dataState, selectedId, 
             })}
           </div>
         </aside>}
-        {dataState !== "ready" || !selected
+        {dataState === "loading" ? <WorkbenchLoading /> : dataState !== "ready" || !selected
           ? <article className="workbench-detail workspace-detail-empty"><ShieldCheck size={22} /><strong>职能工作台未加载</strong></article>
           : modes.get(selected.id) === "active"
             ? <WorkbenchModuleSlot

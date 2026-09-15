@@ -1,3 +1,4 @@
+import { WorkbenchLoading } from "../components/WorkbenchLayout";
 import { Component, lazy, Suspense, type ErrorInfo, type ReactNode } from "react";
 import { ShieldCheck } from "lucide-react";
 import type { CurrentUser, ResearchPage, ProcurementPage, WorkbenchId } from "../types";
@@ -23,14 +24,10 @@ export function WorkbenchModuleSlot(props: Props) {
   return (
     <ModuleBoundary title={props.title}>
       {props.workbenchId === "procurement"
-        ? <Suspense fallback={<Loading title={props.title} />}><ProcurementWorkbench accessLevel={accessLevel} view={props.view} page={props.procurementPage} onPageChange={props.onProcurementPageChange} onEnter={props.onEnter} /></Suspense>
-        : props.workbenchId === "research" ? <Suspense fallback={<Loading title={props.title} />}><ResearchWorkbench accessLevel={accessLevel} userId={props.currentUser.id} view={props.view} page={props.researchPage} onPageChange={props.onResearchPageChange} onEnter={props.onEnter} /></Suspense> : <Pending title={props.title} />}
+        ? <Suspense fallback={<WorkbenchLoading title={`正在加载${props.title}`} />}><ProcurementWorkbench accessLevel={accessLevel} view={props.view} page={props.procurementPage} onPageChange={props.onProcurementPageChange} onEnter={props.onEnter} /></Suspense>
+        : props.workbenchId === "research" ? <Suspense fallback={<WorkbenchLoading title={`正在加载${props.title}`} />}><ResearchWorkbench accessLevel={accessLevel} userId={props.currentUser.id} view={props.view} page={props.researchPage} onPageChange={props.onResearchPageChange} onEnter={props.onEnter} /></Suspense> : <Pending title={props.title} />}
     </ModuleBoundary>
   );
-}
-
-function Loading({ title }: { title: string }) {
-  return <article className="workbench-detail workspace-detail-empty"><strong>正在加载{title}</strong></article>;
 }
 
 function Pending({ title }: { title: string }) {

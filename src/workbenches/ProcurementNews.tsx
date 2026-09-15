@@ -1,3 +1,4 @@
+import { WorkbenchLoading } from "../components/WorkbenchLayout";
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { fetchProcurementNews } from '../api';
@@ -29,7 +30,7 @@ export function ProcurementNews({ cache }: { cache: RefObject<NewsData | null> }
     return ()=>{controller.abort();clearInterval(timer);};
   },[cache]);
   return <section className={`${styles.dashboardPanel} ${styles.updateOverview}`} aria-label="采购资讯"><div className={styles.newsHeader}><h2 className={styles.newsHeading}>采购资讯</h2>{!!data?.items.length&&<div className={styles.newsPager} aria-label="资讯分页"><button type="button" aria-label="资讯上一页" disabled={currentPage===0} onClick={()=>setPage(currentPage-1)}><ChevronLeft size={16}/></button><span aria-live="polite">{currentPage+1} / {pages}</span><button type="button" aria-label="资讯下一页" disabled={currentPage===pages-1} onClick={()=>setPage(currentPage+1)}><ChevronRight size={16}/></button></div>}</div>
-    {data?.items.length ? <div className={styles.newsPages}>{Array.from({length:pages},(_,index)=><div key={index} className={`${styles.newsPage} ${index!==currentPage?styles.newsPageInactive:''}`} aria-hidden={index!==currentPage} inert={index!==currentPage}><NewsGroups items={data.items.slice(index*5,index*5+5)}/></div>)}</div> : <p className={styles.newsEmpty}>{failed?'资讯暂时无法读取':!data?'正在读取资讯':'最近30天暂无资讯'}</p>}
+    {data?.items.length ? <div className={styles.newsPages}>{Array.from({length:pages},(_,index)=><div key={index} className={`${styles.newsPage} ${index!==currentPage?styles.newsPageInactive:''}`} aria-hidden={index!==currentPage} inert={index!==currentPage}><NewsGroups items={data.items.slice(index*5,index*5+5)}/></div>)}</div> : !data && !failed ? <WorkbenchLoading local title="正在读取采购资讯"/> : <p className={styles.newsEmpty}>{failed?'资讯暂时无法读取':'最近30天暂无资讯'}</p>}
     {(failed||data?.delayed)&&<p className={styles.newsWarning}>{failed?'资讯读取延迟，稍后自动重试':'部分来源更新延迟'}</p>}
     <footer className={styles.newsFooter}><span title={data?.updated_at?updateTime(data.updated_at):undefined}>{data?.updated_at?`更新于 ${new Date(data.updated_at).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false})}`:'等待首次更新'}</span><button ref={button} type="button" onClick={()=>setOpen(true)}>查看全部 <ChevronRight size={14}/></button></footer>
     {open&&<NewsDrawer onClose={()=>{setOpen(false);requestAnimationFrame(()=>button.current?.focus({preventScroll:true}));}}/>}
@@ -57,7 +58,7 @@ function NewsDrawer({onClose}:{onClose:()=>void}){
     <header className={styles.drawerHeader}><h2 id="news-title">采购资讯</h2><button autoFocus type="button" className="icon-button" aria-label="关闭采购资讯" onClick={close}><X size={17}/></button></header>
     <div className={styles.newsFilters}><span>最近30天</span><label>信源 <select value={source} onChange={event=>{setSource(event.target.value);setPage(1);}}><option value="all">全部</option>{['生意社','隆众资讯','商务部'].map(name=><option key={name}>{name}</option>)}</select></label></div>
     <details className={styles.newsSources}><summary>来源更新状态</summary>{data?.sources.map(s=><p key={s.name}>{s.name} · {s.status==='ok'?'正常':s.status==='pending'?'等待首次更新':'更新延迟'}{s.last_success?` · ${updateTime(s.last_success)}`:''}</p>)}</details>
-    <div className={styles.newsScroll}>{failed?<div className={styles.newsEmpty}>资讯读取失败 <button className="secondary-button" onClick={()=>setRetry(x=>x+1)}>重新加载</button></div>:!data?<p className={styles.newsEmpty}>正在读取资讯</p>:data.items.length?<ul className={styles.newsList}>{data.items.map(item=><NewsRow key={item.url} item={item}/>)}</ul>:<p className={styles.newsEmpty}>最近30天暂无资讯</p>}</div>
+    <div className={styles.newsScroll}>{failed?<div className={styles.newsEmpty}>资讯读取失败 <button className="secondary-button" onClick={()=>setRetry(x=>x+1)}>重新加载</button></div>:!data?<WorkbenchLoading local title="正在读取采购资讯"/>:data.items.length?<ul className={styles.newsList}>{data.items.map(item=><NewsRow key={item.url} item={item}/>)}</ul>:<p className={styles.newsEmpty}>最近30天暂无资讯</p>}</div>
     <footer className={styles.newsPagination}><span>{data?`共 ${data.total} 条 · ${data.page} / ${Math.max(1,Math.ceil(data.total/20))}`:'每页20条'}</span><div><button className="secondary-button" disabled={!data||data.page<=1} onClick={()=>setPage((data?.page??1)-1)}>上一页</button><button className="secondary-button" disabled={!data||data.page*20>=data.total} onClick={()=>setPage((data?.page??1)+1)}>下一页</button></div></footer>
   </dialog>;
 }

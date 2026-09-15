@@ -929,3 +929,7 @@ dialog.importPanel { position: fixed; inset: 0; margin: auto; padding: 0; width:
 .drawerDialog[open] { display: flex; flex-direction: column; }
 .drawerTitle { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .drawerTitle h2 { white-space: normal; overflow-wrap: anywhere; }
+
+.loadingSpinner { animation: workbenchSpin 1s linear infinite; }
+@keyframes workbenchSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .loadingSpinner { animation: none; } }
