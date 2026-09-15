@@ -4,6 +4,10 @@
 
 优先实现职能工作台，当前采购与研发五部工作台已上线；其他模块后续再评估，不主动扩建或删除。参见 `docs/adr/0008-工作台优先与候选验收边界.md`；运行状态以 `README.md` 和实际数据目录、服务为准，不能用端口判断正式环境。
 
+## 协作方式
+
+所有协作者遵守本仓库的业务、设计、数据、验证与授权约定；开发工具和流程可自行选择，Skill 不构成安装前置。入门步骤及等效开发流程见 [开发协作指引](docs/agents/skill-workflow.md)。
+
 ## 按任务读取
 
 | 任务 | 入口 |
@@ -13,7 +17,7 @@
 | 界面、控件、动效 | [组件索引](docs/components.md)、[设计约定](DESIGN.md)、对应 `.impeccable/surfaces/` 文档 |
 | 启动、迁移、发布、恢复 | [运行与维护](docs/运行与维护.md)及当前交接指向的发布记录 |
 | Issue 处理、任务发布 | [任务跟踪](docs/agents/issue-tracker.md)、[分流标签](docs/agents/triage-labels.md) |
-| 跨阶段开发、Skill 选择与交接 | [Skill 协作约定](docs/agents/skill-workflow.md) |
+| 跨阶段开发、Skill 选择与交接 | [开发协作与可选 Skill](docs/agents/skill-workflow.md) |
 
 历史 ADR、发布记录及 surface 中的端口、构建号、验收数字和一次性授权只代表当次状态。长期业务与设计约定继续有效，已被后续明确决策替代的部分以新决策为准。
 
