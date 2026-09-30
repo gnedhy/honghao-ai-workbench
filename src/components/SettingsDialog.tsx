@@ -398,6 +398,7 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
         <div><strong>原料行情与库存</strong><p>补入并启用9月14日、21日、28日三期正式原料价格，更新对应原料的当前库存。采购台账、价格历史及研发成本已同步到最新正式数据。</p></div>
         <div><strong>研发查看原料价格</strong><p>研发工作台新增只读原料价格，可切换配方范围和所有原料，查看正式价格及历史；页面打开时定时刷新，采购尚未启用的价格不显示。</p></div>
         <div><strong>趋势图与报价填写</strong><p>采购价格和研发成本趋势图按当前数据调整纵轴刻度，价格波动更清晰。销售报价明细先选客户类型再填客户名称，公摊等小数显示完整的前导零。</p></div>
+        <div><strong>测算工具兼容修复</strong><p>修复部分访问地址下测算工具无法打开的问题，面板新增、复制及公式调整恢复正常。</p></div>
       </div>
     </li><li>
       <div className="changelog-date"><time dateTime="2026-09-29">2026年9月29日</time></div>

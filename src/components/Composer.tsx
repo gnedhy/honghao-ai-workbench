@@ -1,5 +1,6 @@
 import { ArrowUp, Check, ChevronDown, FilePlus2, FolderClosed, LibraryBig, ListChecks, Plus, Route, WandSparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createClientId } from "../clientId";
 import { skills } from "../data";
 import type { Project } from "../types";
 
@@ -63,7 +64,7 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
   const submit = async () => {
     const content = message.trim();
     if (!content || submittingRef.current) return;
-    const submissionKey = submissionKeyRef.current ?? crypto.randomUUID();
+    const submissionKey = submissionKeyRef.current ?? createClientId();
     submissionKeyRef.current = submissionKey;
     submittingRef.current = true;
     setSubmitting(true);

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Copy, GripVertical, Info, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
 
 import { fetchJson } from "../api";
+import { createClientId as id } from "../clientId";
 import { DecimalInput } from "../components/DecimalInput";
 import { DiscardChangesDialog, useUnsavedChanges } from "../components/Interaction";
 import { WorkbenchOptionMenu } from "../components/WorkbenchMenus";
@@ -65,7 +66,6 @@ type TierDraft = { panelId: string; stepId: string; rows: Tier[]; error: string 
 const endpoint = base + "/calculator";
 const request = <T,>(path: string, body: unknown, method = "POST") =>
   fetchJson<T>(endpoint + path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-const id = () => crypto.randomUUID();
 const format = (value: string | number | null | undefined) =>
   value == null || value === "" || !Number.isFinite(Number(value))
     ? "—"
