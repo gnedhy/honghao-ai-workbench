@@ -969,6 +969,7 @@ dialog.personal-profile { width: min(505px, calc(100% - 24px)); height: fit-cont
 .scope-access-row button:disabled { cursor: default; }
 .settings-mode-control { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
 .settings-mode-control > span { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.settings-mode-activate { min-height: 28px; padding: 4px 8px; font-size: calc(12px + var(--ui-font-offset)); }
 .settings-mode-switch { width: 34px; height: 22px; border: 0; padding: 3px; border-radius: 20px; background: #d8dde1; flex: none; cursor: pointer; }
 .settings-mode-switch > span { display: block; width: 16px; height: 16px; background: #fff; border-radius: 50%; box-shadow: 0 1px 2px #0002; }
 .settings-mode-switch[aria-checked="true"] { background: var(--enabled-color); }
@@ -1152,6 +1153,12 @@ input[type="checkbox"],input[type="radio"]{accent-color:var(--enabled-color)}
   .work-thread { width: min(750px, calc(100% - 32px)); }
   .workflow-rail { grid-template-columns: 1fr; }
   .workflow-node > svg { right: 14px; transform: rotate(90deg); }
+  .workspace-layout--workbench:not(.is-module-open) { display: block; width: 100%; height: auto; min-height: 0; margin: 0; overflow: visible; border: 0; border-radius: 0; }
+  .workspace-layout--workbench:not(.is-module-open) .workbench-index { max-height: none; padding: 20px 14px; overflow: visible; border-right: 0; border-bottom: 1px solid var(--border); }
+  .workspace-layout--workbench:not(.is-module-open) .workbench-list { display: flex; gap: 8px; margin-top: 18px; padding-bottom: 3px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none; }
+  .workspace-layout--workbench:not(.is-module-open) .workbench-list::-webkit-scrollbar { display: none; }
+  .workspace-layout--workbench:not(.is-module-open) .workbench-list-item { width: min(282px, 82vw); min-width: min(282px, 82vw); scroll-snap-align: start; }
+  .workspace-layout--workbench:not(.is-module-open) .workbench-detail { padding: 23px 16px 42px; overflow: visible; }
 }
 
 @media (max-width: 760px) {

@@ -159,14 +159,32 @@ def test_inventory_permissions_and_cli_preview(inventory_data, capsys):
     assert client.get('/api/workbenches/procurement/overview').status_code == 401
 
 
+def test_partial_inventory_preserves_omitted_and_clears_blank_price(inventory_data, capsys):
+    settings, client, source, admin = inventory_data
+    apply(inventory_data)
+    report(source, [('A', 20, None), ('B', 0, 0)])
+    with pytest.raises(ValueError):
+        inventory_preview(settings.database_url, source.read_bytes())
+    assert main(['procurement-inventory', str(source), '--partial'], settings=settings) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert (preview['matched'], preview['preserved']) == (2, 1)
+    args = ['procurement-inventory', str(source), '--partial', '--apply', '--actor-id', admin,
+            '--sha256', preview['sha256'], '--catalog-sha256', preview['catalog_sha256']]
+    assert main(args, settings=settings) == 0
+    assert json.loads(capsys.readouterr().out)['updated'] == 2
+    assert stock(client) == {'A': ('20', None), 'B': ('0', None), 'C': ('7', None)}
+    assert main(args, settings=settings) == 0
+    assert json.loads(capsys.readouterr().out)['updated'] == 0
+
+
 def test_inventory_schema_verification_preserves_preferences_and_only_migrates_once(inventory_data):
     settings, _, _, admin = inventory_data
     store = ProcurementStore(settings.database_url)
     store.save_preferences(admin, ['unit', 'latest_price', 'previous_latest_price', 'inventory_price', 'in_transit_price'], 'materials', 'scroll', 100)
     expected = store.preferences(admin)
-    assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == 2
+    assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == 4
     assert store.schema_version() == 7
     assert store.preferences(admin) == expected
     store.save_preferences(admin, ['unit', 'latest_price'], 'materials', 'paged', 25)
-    assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == 2
+    assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == 4
     assert store.preferences(admin)['ledger_columns'] == ['unit', 'latest_price']

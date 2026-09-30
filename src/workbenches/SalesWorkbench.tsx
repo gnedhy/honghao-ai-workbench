@@ -1,0 +1,266 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { ArrowRight, Check, ChevronRight, Clock3, Columns3, Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+
+import { fetchJson } from "../api";
+import { Drawer } from "../components/Drawer";
+import { DecimalInput } from "../components/DecimalInput";
+import { useUnsavedChanges } from "../components/Interaction";
+import { LedgerPagination } from "../components/LedgerPagination";
+import { DashboardPanel, FormFooter, LedgerFrame, LedgerToolbar, WorkbenchLoading } from "../components/WorkbenchLayout";
+import { PriceDateRangeMenu, TrendMaterialMenu, WorkbenchOptionMenu } from "../components/WorkbenchMenus";
+import { SALES_PAGE_LABELS, type CurrentUser, type SalesPage } from "../types";
+import { adoptionExceptions, base, decimalText, defaultParameters, modes, parameterLabels, pendingProductIds, productSourceText, quoteListStatus, quoteReference, quoteTrendPoints, reasons, type Batch, type Item, type Mode, type Parameters, type Product, type Quote, type QuoteListStatus, type Trial } from "./salesModel";
+import p from "../components/WorkbenchSurface.module.css";
+import s from "./SalesWorkbench.module.css";
+import { SalesCalculator } from "./SalesCalculator";
+import { SalesProductPicker } from "./SalesProductPicker";
+
+const send = <T,>(path:string,body:unknown,method="POST") => fetchJson<T>(base+path,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+const money = (value?:string|number|null) => value == null || value === "" || !Number.isFinite(Number(value)) ? "—" : Number(value).toLocaleString("zh-CN",{minimumFractionDigits:2,maximumFractionDigits:2});
+const dateTime = (value:string) => new Date(value).toLocaleString("zh-CN",{hour12:false});
+const day = (value:string) => value.slice(0,10);
+const modeKey = (mode:Mode) => mode === "domestic_direct" ? "direct" : mode === "domestic_intermediary" ? "intermediary" : "export";
+const statusLabels:Record<QuoteListStatus,string> = {pending:"待采用",partial:"部分采用",adopted:"已采用",void:"已作废"};
+const closeMenu=(event:MouseEvent<HTMLButtonElement>)=>{const menu=event.currentTarget.closest("details");menu?.removeAttribute("open");menu?.querySelector("summary")?.focus();};
+const onMenuKeyDown=(event:KeyboardEvent<HTMLDetailsElement>)=>{if(event.key==="Escape"&&event.currentTarget.open){event.preventDefault();event.currentTarget.open=false;event.currentTarget.querySelector("summary")?.focus();}};
+const onMenuBlur=(event:FocusEvent<HTMLDetailsElement>)=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))event.currentTarget.open=false;};
+type QuoteView = "latest"|"inventory"|"compare";
+type DraftItem = Item & {product:Product;adjusting:boolean;manual:boolean};
+type Period = "14d"|"1m"|"3m"|{start:string;end:string};
+type LedgerDisplay = {view:"scroll"|"paged";pageSize:number};
+
+function useSalesLedgerDisplay(userId:string,ledger:"products"|"quotes") {
+ const key=`sales-${ledger}-ledger:${userId}`;
+ const [display,setDisplay]=useState<LedgerDisplay>(()=>{try{const saved=JSON.parse(localStorage.getItem(key)||"null");return {view:saved?.view==="scroll"?"scroll":"paged",pageSize:Number.isInteger(saved?.pageSize)&&saved.pageSize>=10&&saved.pageSize<=200?saved.pageSize:50};}catch{return {view:"paged",pageSize:50};}});
+ useEffect(()=>{try{localStorage.setItem(key,JSON.stringify(display));}catch{/* Browser storage is optional. */}},[key,display]);
+ return [display,(change:Partial<LedgerDisplay>)=>setDisplay(current=>({...current,...change}))] as const;
+}
+
+function positionSalesDisplayMenu(menu:HTMLDetailsElement) {
+ if(!menu.open)return;
+ const popup=menu.querySelector<HTMLElement>(":scope > div");if(!popup)return;
+ const rect=menu.getBoundingClientRect(),width=popup.getBoundingClientRect().width;
+ const preferred=rect.right-width>=12?rect.right-width:rect.left;
+ popup.style.left=`${Math.max(12,Math.min(preferred,window.innerWidth-width-12))-rect.left}px`;
+ popup.style.right="auto";
+}
+
+function SalesDisplayMenu({display,onChange,fields=[]}:{display:LedgerDisplay;onChange:(change:Partial<LedgerDisplay>)=>void;fields?:{label:string;checked:boolean;onChange:(checked:boolean)=>void}[]}) {
+ const menu=useRef<HTMLDetailsElement>(null);
+ useEffect(()=>{const reposition=()=>{if(menu.current)positionSalesDisplayMenu(menu.current);};window.addEventListener("resize",reposition);return()=>window.removeEventListener("resize",reposition);},[]);
+ return <details ref={menu} className={`${p.columnMenu} ${p.displayMenu} ${s.displayMenu}`} onToggle={event=>positionSalesDisplayMenu(event.currentTarget)} onBlur={onMenuBlur} onKeyDown={onMenuKeyDown}><summary onClick={event=>{const details=event.currentTarget.parentElement as HTMLDetailsElement;requestAnimationFrame(()=>positionSalesDisplayMenu(details));}}><Columns3 size={14}/>显示</summary><div>
+  {fields.length>0&&<><span className={p.menuLabel}>显示字段</span><div className={p.columnGrid}>{fields.map(field=><label key={field.label}><input type="checkbox" checked={field.checked} onChange={event=>field.onChange(event.target.checked)}/>{field.label}</label>)}</div></>}
+  <span className={p.menuLabel}>浏览方式</span><div className={p.ledgerMode} role="group" aria-label="台账查看模式"><button type="button" aria-pressed={display.view==="scroll"} onClick={()=>onChange({view:"scroll"})}>连续</button><button type="button" aria-pressed={display.view==="paged"} onClick={()=>onChange({view:"paged"})}>分页</button></div>
+  {display.view==="paged"&&<><span className={p.menuLabel}>每页条数</span><div className={`${p.pageSizeControl} ${s.pageSizeControl}`}>{[25,50,100].map(size=><button type="button" key={size} aria-pressed={display.pageSize===size} onClick={()=>onChange({pageSize:size})}>{size}</button>)}<DecimalInput key={display.pageSize} aria-label="自定义每页条目数" type="number" min="10" max="200" defaultValue={display.pageSize} onBlur={event=>{const value=Number(event.target.value);if(Number.isInteger(value)&&value>=10&&value<=200)onChange({pageSize:value});else event.target.value=String(display.pageSize);}} onKeyDown={event=>{if(event.key==="Enter")event.currentTarget.blur();}}/></div></>}
+ </div></details>;
+}
+
+function rangeFor(period:Period) {
+ const end=new Date(), start=new Date(end);
+ start.setDate(end.getDate()-(period==="14d"?13:period==="1m"?29:89));
+ const iso=(value:Date)=>value.toISOString().slice(0,10);
+ return typeof period === "string" ? {start:iso(start),end:iso(end)} : period;
+}
+
+function quoteValue(product:Product,mode:Mode,basis:"latest"|"inventory",parameters:Parameters) {
+ return quoteReference(product,basis,parameters)[modeKey(mode)];
+}
+
+function draftItem(product:Product,mode:Mode,item?:Item,selectedBasis?:"latest"|"inventory"):DraftItem {
+ const basis=item?.cost_basis??selectedBasis??(product.latest_cost!=null?"latest":"inventory");
+ return {...item,product,product_id:product.id,external_name:item?.external_name??"",cost_basis:basis,parameters:{...defaultParameters(product,mode,basis),...item?.parameters},final_price:item?.final_price??null,pricing_reasons:item?.pricing_reasons??[],pricing_note:item?.pricing_note??"",reference_prices:item?.reference_prices??{},adjusting:false,manual:!!item?.manual_price};
+}
+
+function quoteFingerprint(customer:{name:string;code:string;salesperson:string},mode:Mode,items:DraftItem[]) {
+ return JSON.stringify({customer,mode,items:items.map(({product_id,cost_basis,parameters,final_price,pricing_reasons,pricing_note,reference_prices,manual})=>({product_id,cost_basis,parameters,final_price:manual?final_price:null,pricing_reasons,pricing_note,reference_prices}))});
+}
+
+function ProductDetailDrawer({product,history,editable,onClose,onStart}:{product:Product;history:Quote[];editable:boolean;onClose:()=>void;onStart:()=>void}) {
+ const [basis,setBasis]=useState<"latest"|"inventory">("latest"),[view,setView]=useState<QuoteView>("latest"),[open,setOpen]=useState<string|null>(null);
+ const latest=quoteReference(product,"latest"), inventory=quoteReference(product,"inventory"), current=basis==="latest"?latest:inventory;
+ const card=(label:string,key:"direct"|"intermediary"|"export")=><div className={s.referenceCard}><span>{label}</span>{view==="compare"?<div className={s.comparePrice}><div><strong>{money(latest[key])}</strong><small>最新优先</small></div><div><strong>{money(inventory[key])}</strong><small>库存优先</small></div><b>价差 {latest[key]!=null&&inventory[key]!=null?`${Number(latest[key])-Number(inventory[key])>=0?"+":""}${(Number(latest[key])-Number(inventory[key])).toFixed(2)}`:"—"}</b></div>:<strong className={s.referenceValue}>{money(current[key])}<small> 元/kg</small></strong>}</div>;
+ return <Drawer className={s.productDrawer} title={product.code} label="产品配方与成本" onClose={onClose}>
+  <section className={`${s.drawerSection} ${s.basisSection}`}><div className={s.sectionHeading}><div><h3>成本依据</h3><p>{productSourceText(product)}</p></div></div><div className={s.dualCosts}><div><strong>{money(product.latest_cost)} <small>元/kg</small></strong><span>最新优先</span></div><div><strong>{money(product.inventory_cost)} <small>元/kg</small></strong><span>库存优先</span></div></div></section>
+   <section className={s.drawerSection}><div className={`${s.sectionHeading} ${s.referenceHeading}`}><h3>报价参考</h3><div className={`${p.ledgerMode} ${s.referenceModes}`} aria-label="报价成本口径"><button aria-pressed={view==="latest"} onClick={()=>{setBasis("latest");setView("latest");}}>最新优先</button><button aria-pressed={view==="inventory"} onClick={()=>{setBasis("inventory");setView("inventory");}}>库存优先</button><button aria-pressed={view==="compare"} onClick={()=>setView("compare")}>价格对比</button></div><p>按标准公式计算，仅作对外报价参考</p></div><div className={s.referenceCards}>{card("国内直接厂","direct")}{card("国内中间商","intermediary")}{card("外贸","export")}</div></section>
+  <section className={s.drawerSection}><div className={s.sectionHeading}><div><h3>价格历史</h3><p>根据产品成本计算形成的正式报价版本</p></div><span>{history.length} 条</span></div>{history.length?history.map(record=><div className={s.timelineItem} key={record.id}><button aria-expanded={open===record.id} onClick={()=>setOpen(value=>value===record.id?null:record.id)}><strong className={s.timelineDate}>{day(record.created_at)}</strong><strong className={s.timelinePrice}>{money(record.item.final_price??record.item.result?.normal_price)} <small>元/kg</small></strong><small className={s.timelineMeta}>{record.customer_name} · {modes[record.mode]} · 第 {record.version} 版</small><ChevronRight size={15}/></button>{open===record.id&&<div className={s.timelineDetail}><span>产品成本 {money(record.item.cost)}</span><span>报价参考 {money(record.item.result?.normal_price)}</span><span>最终采用 {money(record.item.final_price??record.item.result?.normal_price)}</span><span>定价依据 {record.item.pricing_reasons?.join("、")||"按标准公式"}</span></div>}</div>):<p className={s.empty}>尚未形成价格历史。</p>}</section>
+  {editable&&<FormFooter className={s.drawerFooter} status=""><button className="primary-button" onClick={onStart}>开始报价</button></FormFooter>}
+ </Drawer>;
+}
+
+function QuoteEditorDrawer({products,catalog,existing,currentUser,accessLevel,onClose,onChanged}:{products:Product[];catalog:Product[];existing?:Batch;currentUser:CurrentUser;accessLevel:number;onClose:()=>void;onChanged:()=>Promise<void>}) {
+ const initialMode=existing?.mode??"domestic_direct";
+ const initialCustomer={name:existing?.customer_name??"",code:existing?.customer_code??"",salesperson:existing?.salesperson??""};
+ const initialItems=products.map(product=>draftItem(product,initialMode,existing?.items.find(row=>row.product_id===product.id)));
+ const [customer,setCustomer]=useState(initialCustomer),[mode,setMode]=useState<Mode>(initialMode),[items,setItems]=useState<DraftItem[]>(initialItems);
+ const [savedBatch,setSavedBatch]=useState<Batch|undefined>(existing),[savedFingerprint,setSavedFingerprint]=useState(quoteFingerprint(initialCustomer,initialMode,initialItems));
+ const [busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState(""),[bulkOpen,setBulkOpen]=useState(false),[bulk,setBulk]=useState<Parameters>({});
+ const [keepCost,setKeepCost]=useState(false),[confirmLow,setConfirmLow]=useState(false);
+ const [liveProducts,setLiveProducts]=useState(catalog);
+ const fingerprint=quoteFingerprint(customer,mode,items), dirty=fingerprint!==savedFingerprint;
+ const pendingIds=pendingProductIds(items);
+ const exceptions=adoptionExceptions(savedBatch?.items??[],liveProducts,pendingIds);
+ const productNames=(rows:Item[])=>rows.map(row=>row.product?.code??row.product_id).join("、");
+ useEffect(()=>{
+  if(!savedBatch||dirty||accessLevel<4)return;
+  let active=true;
+  void fetchJson<{products:Product[]}>(base+"/products").then(result=>{if(active)setLiveProducts(result.products);}).catch(()=>{});
+  return ()=>{active=false;};
+ },[savedBatch?.id,savedBatch?.revision,dirty,accessLevel]);
+ const guard=useUnsavedChanges(dirty,busy,"放弃尚未保存的报价修改？","sales-quote-editor");
+ const updateItem=(id:string,patch:Partial<DraftItem>)=>setItems(rows=>rows.map(row=>row.product_id===id?{...row,...patch}:row));
+ const updateParameter=(id:string,key:keyof Parameters,value:string)=>setItems(rows=>rows.map(row=>row.product_id===id?{...row,parameters:{...row.parameters,[key]:value},result:null,trial_id:null}:row));
+ const switchMode=(next:Mode)=>{setMode(next);setItems(rows=>rows.map(row=>({...row,parameters:{...row.parameters,...defaultParameters(row.product,next,row.cost_basis)},result:null,trial_id:null,manual:false,final_price:null})));};
+ const applyBulk=()=>{const patch=Object.fromEntries(Object.entries(bulk).filter(([,value])=>value!==""&&value!=null)) as Parameters;if(!Object.keys(patch).length)return;setItems(rows=>rows.map(row=>({...row,parameters:{...row.parameters,...patch},result:null,trial_id:null})));setBulk({});setBulkOpen(false);};
+ const fields=(mode.startsWith("export")?["export_addition_1","export_addition_2","export_multiplier"]:["allocation","freight","barrel","tax","profit","reverse"]) as (keyof Parameters)[];
+ const invalid=items.some(row=>{const value=quoteValue(row.product,mode,row.cost_basis,row.parameters);return value==null||!Number.isFinite(value)||(row.product.special_allocation&&!mode.startsWith("export")&&(Number(row.parameters.allocation)<.3||Number(row.parameters.allocation)>1));});
+ const customerInvalid=!customer.name.trim()||!customer.salesperson.trim();
+ const save=async()=>{if(customerInvalid||invalid||(!items.length&&!savedBatch?.items.some(row=>row.adopted)))return;setBusy(true);setError("");try{
+   let current=savedBatch;
+   if(!current) current=(await send<{batch:Batch}>("/batches",{name:`${customer.name.trim()} 报价 ${new Date().toLocaleString("zh-CN",{hour12:false})}`,mode})).batch;
+   const edited=new Map(items.map(row=>[row.product_id,row])), source=current.items;
+   const merged=[...source.flatMap(row=>{const active=edited.get(row.product_id);return active?[active]:row.adopted?[row]:[];}),...items.filter(row=>!source.some(value=>value.product_id===row.product_id))];
+   const saved=(await send<{batch:Batch}>(`/batches/${current.id}/draft`,{revision:current.revision,name:current.name,mode,customer_name:customer.name,customer_code:customer.code.trim(),uncoded:!customer.code.trim(),salesperson:customer.salesperson,items:merged.map(row=>({product_id:row.product_id,external_name:row.external_name,cost_basis:row.cost_basis,parameters:row.parameters,final_price:"manual" in row&&row.manual?row.final_price:null,pricing_reasons:row.pricing_reasons,pricing_note:row.pricing_note,reference_prices:row.reference_prices??{}}))},"PUT")).batch;
+   const ids=pendingProductIds(items);
+   const calculated=ids.length?(await send<{batch:Batch}>(`/batches/${saved.id}/calculate`,{revision:saved.revision,product_ids:ids,confirm_manual_prices:true})).batch:saved;
+   const nextItems=items.map(row=>draftItem(row.product,mode,calculated.items.find(value=>value.product_id===row.product_id)));
+   setItems(nextItems);setSavedBatch(calculated);setSavedFingerprint(quoteFingerprint(customer,mode,nextItems));setKeepCost(false);setConfirmLow(false);setNotice("报价已保存，可继续确认采用");await onChanged();
+  }catch(value){setError(value instanceof Error?value.message:"保存失败，请重试");}finally{setBusy(false);}};
+ const adopt=async()=>{if(!savedBatch||dirty)return;setBusy(true);setError("");try{
+   const latest=(await fetchJson<{products:Product[]}>(base+"/products")).products;
+   setLiveProducts(latest);
+   const checks=adoptionExceptions(savedBatch.items,latest,pendingIds);
+   if((checks.stale.length&&!keepCost)||(checks.belowBreakEven.length&&!confirmLow)){setNotice("请先核对采用前提示");return;}
+   const result=(await send<{batch:Batch}>(`/batches/${savedBatch.id}/adopt`,{revision:savedBatch.revision,product_ids:pendingIds,keep_stale_cost:keepCost,confirm_below_break_even:confirmLow})).batch;
+   const nextItems=items.map(row=>draftItem(row.product,mode,result.items.find(value=>value.product_id===row.product_id)));
+   setItems(nextItems);setSavedBatch(result);setSavedFingerprint(quoteFingerprint(customer,mode,nextItems));setKeepCost(false);setConfirmLow(false);setNotice("报价已采用并成为当前有效报价");await onChanged();
+  }catch(value){setError(value instanceof Error?value.message:"采用失败，请重试");}finally{setBusy(false);}};
+ const setBasis=(row:DraftItem,basis:"latest"|"inventory")=>{const defaults=defaultParameters(row.product,mode,basis);updateItem(row.product_id,{cost_basis:basis,parameters:{...row.parameters,allocation:row.product.special_allocation?row.parameters.allocation:defaults.allocation},result:null,trial_id:null});};
+ const toggleAdjust=(id:string)=>setItems(rows=>rows.map(row=>({...row,adjusting:row.product_id===id?!row.adjusting:false})));
+ const quoteCard=(row:DraftItem)=>{
+  const current=quoteValue(row.product,mode,row.cost_basis,row.parameters);
+  return <article className={s.editorRow} key={row.product_id}>
+   <div className={s.editorRowMain}>
+    <div className={s.editorIdentity}><div className={s.editorNameRow}><strong>{row.product.code}</strong><button type="button" className={s.removeProduct} disabled={row.adopted} title={row.adopted?"已采用产品请在报价历史中作废":"从本次报价移除"} aria-label={`移除 ${row.product.code}`} onClick={()=>setItems(current=>current.filter(item=>item.product_id!==row.product_id))}><Trash2 size={13}/>移除</button></div>{row.product.name!==row.product.code&&<span>{row.product.name}</span>}<small>{row.product.department} · {productSourceText(row.product)}</small></div>
+    <div className={s.editorQuote}>
+     <div className={s.basisSwitch} role="group" aria-label={`${row.product.code}成本口径`}><button type="button" aria-pressed={row.cost_basis==="latest"} onClick={()=>setBasis(row,"latest")}>最新优先</button><button type="button" aria-pressed={row.cost_basis==="inventory"} onClick={()=>setBasis(row,"inventory")}>库存优先</button></div>
+     <strong className={s.editorPrice}>{money(row.manual?row.final_price:current)}<small>元/kg</small></strong>
+    </div>
+   </div>
+   <button type="button" className={s.adjustToggle} aria-expanded={row.adjusting} onClick={()=>toggleAdjust(row.product_id)}>{row.adjusting?"收起调整":"报价调整"}<ChevronRight size={14}/></button>
+   {row.adjusting&&<div className={s.adjustmentPanel}>
+    <h4>费用与系数</h4>
+    <div className={`${s.fieldGrid} ${s.adjustFields}`}>{fields.map(key=><label key={key}>{row.product.special_allocation&&key==="allocation"?"特殊公摊（元）":parameterLabels[key]}<DecimalInput value={decimalText(row.parameters[key])} onChange={event=>updateParameter(row.product_id,key,event.target.value)}/></label>)}</div>
+    <div className={s.outcomeFields}><label>最终报价（元/kg）<DecimalInput value={row.manual?row.final_price??"":""} placeholder={money(current)} onChange={event=>updateItem(row.product_id,{manual:!!event.target.value,final_price:event.target.value||null})}/></label><label>客户参考价（选填）<DecimalInput value={row.reference_prices?.customer??""} onChange={event=>updateItem(row.product_id,{reference_prices:{...row.reference_prices,customer:event.target.value}})}/></label></div>
+    <fieldset className={s.reasonChoices}><legend>定价依据</legend>{reasons.map(reason=><label key={reason}><input type="checkbox" checked={row.pricing_reasons.includes(reason)} onChange={event=>updateItem(row.product_id,{pricing_reasons:event.target.checked?[...row.pricing_reasons,reason]:row.pricing_reasons.filter(value=>value!==reason)})}/>{reason}</label>)}</fieldset>
+    {row.pricing_reasons.includes("其他")&&<label className={s.fullField}>其它说明<textarea value={row.pricing_note} onChange={event=>updateItem(row.product_id,{pricing_note:event.target.value})}/></label>}
+   </div>}
+  </article>;
+ };
+ return <><Drawer className={s.quoteDrawer} title="报价明细" label={`${items.length} 个产品`} busy={busy} beforeClose={guard.request} onClose={onClose}>
+ <section className={s.customerSection}>
+  <div className={s.sectionHeading}><h3>客户信息</h3><span className={s.quoteActor}>报价人 · <strong>{currentUser.display_name}</strong></span></div>
+  <div className={s.customerGrid}>
+   <div className={s.customerMode}><span>客户类型</span><WorkbenchOptionMenu label="客户类型" value={mode} options={Object.entries(modes).map(([value,label])=>({value,label}))} onSelect={value=>switchMode(value as Mode)} className={s.quoteModeMenu}/></div>
+   <label>客户名称<input value={customer.name} onChange={event=>setCustomer({...customer,name:event.target.value})}/></label>
+   <label>客户编码<input placeholder="K / SWA / WA" value={customer.code} onChange={event=>setCustomer({...customer,code:event.target.value})}/></label>
+   <label>业务员<input value={customer.salesperson} onChange={event=>setCustomer({...customer,salesperson:event.target.value})}/></label>
+  </div>
+ </section>
+ <section className={s.drawerSection}><div className={s.sectionHeading}><div><h3>报价参考</h3><p>{modes[mode]}</p></div>{items.length>1&&<button className="secondary-button" onClick={()=>setBulkOpen(value=>!value)}>{bulkOpen?"收起批量调整":"批量报价调整"}</button>}</div>{bulkOpen&&<div className={s.bulkPanel}><div className={s.fieldGrid}>{fields.map(key=><label key={key}>{parameterLabels[key]}<DecimalInput value={bulk[key]??""} placeholder="保持各产品原值" onChange={event=>setBulk({...bulk,[key]:event.target.value})}/></label>)}</div><button className="secondary-button" onClick={applyBulk}>应用到全部产品</button></div>}<div className={s.editorCards}>{items.map(quoteCard)}</div>{!items.length&&<p className={s.empty}>尚未加入产品，请从下方选择。</p>}<SalesProductPicker add products={catalog} excludeIds={[...new Set([...items.map(row=>row.product_id),...(savedBatch?.items.filter(row=>row.adopted).map(row=>row.product_id)??[])])]} onSelect={(product,basis)=>setItems(current=>[...current,draftItem(product,mode,undefined,basis)])}/></section>
+ {error&&<p className={s.error} role="alert">{error}</p>}{savedBatch&&!dirty&&accessLevel>=4&&(exceptions.stale.length>0||exceptions.belowBreakEven.length>0)&&<section className={s.adoptChecks} aria-label="采用前确认">
+  {exceptions.stale.length>0&&<label><input type="checkbox" checked={keepCost} onChange={event=>setKeepCost(event.target.checked)}/><span><strong>保留本次成本依据</strong><small>{productNames(exceptions.stale)}的产品成本或状态已更新；确认后沿用保存时的依据并留痕。</small></span></label>}
+  {exceptions.belowBreakEven.length>0&&<label><input type="checkbox" checked={confirmLow} onChange={event=>setConfirmLow(event.target.checked)}/><span><strong>确认低于盈亏平衡参考价</strong><small>{productNames(exceptions.belowBreakEven)}的最终报价低于参考价；请核对定价依据后确认。</small></span></label>}
+ </section>}
+ <FormFooter className={s.drawerFooter} status={notice||(!dirty&&savedBatch?"报价已保存":"尚未保存")}><button className="secondary-button" onClick={()=>void guard.request().then(allowed=>{if(allowed)onClose();})}>{savedBatch&&!dirty?"稍后处理":"取消"}</button>{dirty||!savedBatch?<button className="primary-button" disabled={busy||customerInvalid||invalid||(!items.length&&!savedBatch?.items.some(row=>row.adopted))} onClick={()=>void save()}>{busy?"保存中…":"保存报价"}</button>:accessLevel>=4&&pendingIds.length>0?<button className="primary-button" disabled={busy||(exceptions.stale.length>0&&!keepCost)||(exceptions.belowBreakEven.length>0&&!confirmLow)} onClick={()=>void adopt()}>{busy?"处理中…":"确认采用"}</button>:null}</FormFooter></Drawer>{guard.confirmation}</>;
+}
+
+function SalesDashboard({products,batches,trials,records,onOpen,preview=false}:{products:Product[];batches:Batch[];trials:Trial[];records:Quote[];onOpen:(batch:Batch)=>void;preview?:boolean}) {
+ const statuses=batches.filter(batch=>batch.items.length>0).map(batch=>({batch,status:quoteListStatus(batch,records)}));
+ const [period,setPeriod]=useState<Period>("3m"), range=rangeFor(period);
+ const [productId,setProductId]=useState(records[0]?.product_id??products[0]?.id??""),[mode,setMode]=useState<Mode>("domestic_direct");
+ const points=quoteTrendPoints(records,productId,mode,range.start,range.end);
+ const hot=products.map(product=>{const batchIds=new Set(trials.filter(trial=>trial.items.some(item=>item.product_id===product.id)).map(trial=>trial.batch_id));return {product,batches:batchIds.size,adopted:records.filter(row=>row.product_id===product.id).length};}).filter(row=>row.batches).sort((a,b)=>b.batches-a.batches||b.adopted-a.adopted).slice(0,6);
+ const pending=statuses.filter(row=>row.status==="pending"||row.status==="partial").sort((a,b)=>b.batch.updated_at.localeCompare(a.batch.updated_at)).slice(0,5);
+ const recent=statuses.filter(row=>row.status==="adopted"||row.status==="partial").sort((a,b)=>b.batch.updated_at.localeCompare(a.batch.updated_at)).slice(0,5);
+ const active=records.filter(row=>row.status==="active").length;
+ const metric=(label:string,value:string|number,detail:string)=><div><small>{label}</small><strong>{value}</strong><span>{detail}</span></div>;
+ return <>{!preview&&<div className={`${p.metrics} workbench-metrics`}>{metric("待采用报价单",statuses.filter(row=>row.status==="pending").length,"等待确认采用")}{metric("部分采用报价单",statuses.filter(row=>row.status==="partial").length,"仍有产品待处理")}{metric("已采用报价单",statuses.filter(row=>row.status==="adopted").length,"全部产品已处理")}{metric("当前有效报价记录",active,"可用于 CRM 核对")}</div>}<div className={`${p.dashboardGrid} ${s.dashboardGrid}`}><DashboardPanel className={s.trendPanel}><div className={p.panelHeading}><div><span>报价参考与最终采用价</span><h2>产品报价走势</h2></div><div className={p.chartActions}><PriceDateRangeMenu label="报价趋势日期范围" period={period} range={range} onChange={setPeriod}/><TrendMaterialMenu materials={products.map(row=>({id:row.id,code:row.code}))} selected={products.find(row=>row.id===productId)?.code??""} onSelect={code=>setProductId(products.find(row=>row.code===code)?.id??productId)} label="趋势产品" placeholder="搜索产品内编"/><details className={`${p.columnMenu} ${p.personMenu}`} onBlur={onMenuBlur} onKeyDown={onMenuKeyDown}><summary aria-label="报价类型"><span>{modes[mode]}</span><ChevronRight size={14}/></summary><div>{Object.entries(modes).map(([value,label])=><button type="button" key={value} aria-pressed={mode===value} onClick={event=>{setMode(value as Mode);closeMenu(event);}}>{label}{mode===value&&<Check size={14}/>}</button>)}</div></details></div></div>{points.length>=2?<div className={p.lineChart}><ResponsiveContainer width="100%" height="100%"><LineChart data={points} accessibilityLayer margin={{top:8,right:12,bottom:4,left:0}}><CartesianGrid stroke="#edf0f1" vertical={false}/><XAxis dataKey="date" minTickGap={50} interval="preserveStartEnd" tick={{fill:"#858d94",fontSize:10}} axisLine={false} tickLine={false}/><YAxis tick={{fill:"#858d94",fontSize:10}} axisLine={false} tickLine={false} width={48}/><Tooltip formatter={(value,name)=>[money(value == null ? null : Number(value)),name==="reference"?"报价参考":"最终采用价"]}/><Line type="monotone" dataKey="reference" stroke="#708ba4" strokeWidth={2} connectNulls={false}/><Line type="monotone" dataKey="adopted" stroke="#2f3337" strokeWidth={2} connectNulls={false}/></LineChart></ResponsiveContainer></div>:<div className={p.chartEmpty}><strong>{points.length?"当前范围仅有一条报价记录":"当前范围没有报价记录"}</strong><span>{points.length?<>报价参考 {money(points[0].reference)} · 最终采用价 {money(points[0].adopted)} 元/kg</>:"可切换产品、客户类型或日期范围。"}</span></div>}<div className={s.trendLegend} aria-label="报价走势图例"><span><svg width="24" height="12" viewBox="0 0 24 12" aria-hidden="true"><path d="M0 6H24" stroke="#708ba4" strokeWidth="2"/><circle cx="12" cy="6" r="3" fill="#fff" stroke="#708ba4" strokeWidth="2"/></svg>报价参考（元/kg）</span><span><svg width="24" height="12" viewBox="0 0 24 12" aria-hidden="true"><path d="M0 6H24" stroke="#2f3337" strokeWidth="2"/><circle cx="12" cy="6" r="3" fill="#fff" stroke="#2f3337" strokeWidth="2"/></svg>最终采用价（元/kg）</span></div></DashboardPanel><DashboardPanel><div className={p.panelHeading}><div><span>不同客户报价单去重</span><h2>热门报价产品</h2></div></div><div className={s.rankList}>{hot.length?hot.map((row,index)=><div key={row.product.id}><b>{index+1}</b><span><strong>{row.product.code}</strong><small>{row.batches} 张报价单 · {row.adopted} 次采用</small></span></div>):<p className={s.empty}>尚无报价数据。</p>}</div></DashboardPanel>{!preview&&<><DashboardPanel><div className={p.panelHeading}><div><h2>待处理报价</h2></div></div><div className={s.dashboardList}>{pending.length?pending.map(({batch,status})=><button key={batch.id} onClick={()=>onOpen(batch)}><span><strong>{batch.customer_name||batch.name}</strong><small>{modes[batch.mode]} · {batch.items.length} 个产品</small></span><em>{statusLabels[status]}</em><ChevronRight size={15}/></button>):<p className={s.empty}>暂无待处理报价。</p>}</div></DashboardPanel><DashboardPanel><div className={p.panelHeading}><div><h2>近期有采用的报价</h2></div></div><div className={s.dashboardList}>{recent.length?recent.map(({batch,status})=><button key={batch.id} onClick={()=>onOpen(batch)}><span><strong>{batch.customer_name||batch.name}</strong><small>{dateTime(batch.updated_at)} · {batch.items.length} 个产品</small></span><em>{statusLabels[status]}</em><ChevronRight size={15}/></button>):<p className={s.empty}>暂无已采用报价。</p>}</div></DashboardPanel></>}</div></>;
+}
+
+function QuoteDetailDrawer({batch,trials,records,accessLevel,onClose,onContinue,onChanged}:{batch:Batch;trials:Trial[];records:Quote[];accessLevel:number;onClose:()=>void;onContinue:(batch:Batch)=>void;onChanged:()=>Promise<void>}) {
+ const [action,setAction]=useState<"revise"|"void"|null>(null),[reason,setReason]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState("");
+ const status=quoteListStatus(batch,records), batchRecords=records.filter(row=>row.batch_id===batch.id), batchTrials=trials.filter(row=>row.batch_id===batch.id);
+ const pending=batch.items.filter(row=>!row.voided&&(!row.adopted||!!row.adjustment_reason)), active=batchRecords.filter(row=>row.status==="active");
+ const run=async()=>{if(!action||!reason.trim())return;setBusy(true);setError("");try{const result=(await send<{batch:Batch}>(`/batches/${batch.id}/${action}`,{revision:batch.revision,product_ids:active.map(row=>row.product_id),reason})).batch;await onChanged();if(action==="revise")onContinue(result);else onClose();}catch(value){setError(value instanceof Error?value.message:"操作失败");}finally{setBusy(false);}};
+ const timeline=[...batchTrials.map(row=>({id:row.id,time:row.created_at,title:"保存测算",detail:`${row.items.length} 个产品 · ${row.actor_name||row.actor_id}`})),...batchRecords.map(row=>({id:row.id,time:row.created_at,title:row.status==="void"?"报价作废":row.version>1?"采用调整版本":"采用报价",detail:`${row.item.product?.code||row.product_id} · ${money(row.item.final_price??row.item.result?.normal_price)} 元/kg · 第 ${row.version} 版`}))].sort((a,b)=>b.time.localeCompare(a.time));
+ return <Drawer className={s.productDrawer} title={batch.customer_name||batch.name} label="报价历史" busy={busy} onClose={onClose}><section className={s.quoteOverview}><span className={`${s.statusTag} ${s[`status_${status}`]}`}>{statusLabels[status]}</span>{batch.customer_code&&<div><span>客户编码</span><strong>{batch.customer_code}</strong></div>}<div><span>客户类型</span><strong>{modes[batch.mode]}</strong></div>{batch.salesperson&&<div><span>业务员</span><strong>{batch.salesperson}</strong></div>}<div><span>更新时间</span><strong>{dateTime(batch.updated_at)}</strong></div></section><section className={s.drawerSection}><div className={s.sectionHeading}><h3>产品报价</h3><span>{batch.items.length} 项</span></div><div className={s.quoteProducts}>{batch.items.map(item=>{const record=active.find(row=>row.product_id===item.product_id);const itemStatus=item.voided?"已作废":item.adjustment_reason?"调整中":record?"当前有效":"待采用";return <div key={item.product_id}><span><strong>{item.product?.code||item.product_id}</strong><small>{itemStatus}</small></span><strong>{money(item.final_price??item.result?.normal_price)} <small>元/kg</small></strong></div>;})}</div></section><section className={s.drawerSection}><div className={s.sectionHeading}><h3>报价时间线</h3><span>{timeline.length} 条</span></div><div className={s.quoteTimeline}>{timeline.map(row=><div key={row.id}><Clock3 size={15}/><span><strong>{row.title}</strong><small>{row.detail}</small></span><time>{dateTime(row.time)}</time></div>)}</div></section>{error&&<p className={s.error} role="alert">{error}</p>}{action&&<section className={s.actionPanel}><label>{action==="revise"?"调整原因":"作废原因"}<textarea value={reason} onChange={event=>setReason(event.target.value)}/></label><div><button className="secondary-button" onClick={()=>{setAction(null);setReason("");}}>取消</button><button className="primary-button" disabled={!reason.trim()||busy} onClick={()=>void run()}>确认</button></div></section>}<FormFooter className={s.drawerFooter} status="">{pending.length>0&&<button className="primary-button" onClick={()=>onContinue(batch)}>继续报价</button>}{accessLevel>=4&&active.length>0&&!action&&<><button className="secondary-button" onClick={()=>setAction("revise")}>调整有效报价</button><button className="secondary-button" onClick={()=>setAction("void")}>作废有效报价</button></>}</FormFooter></Drawer>;
+}
+
+function CustomerQuotes({batches,records,userId,onOpen}:{batches:Batch[];records:Quote[];userId:string;onOpen:(batch:Batch)=>void}) {
+ const [search,setSearch]=useState(""),[status,setStatus]=useState<""|QuoteListStatus>(""),[mode,setMode]=useState(""),[dateFrom,setDateFrom]=useState(""),[dateTo,setDateTo]=useState("");
+ const [display,setDisplay]=useSalesLedgerDisplay(userId,"quotes"),[page,setPage]=useState(1);
+ useEffect(()=>setPage(1),[search,status,mode,dateFrom,dateTo,display]);
+ const quoteBatches=batches.filter(batch=>batch.items.length>0);
+ const rows=quoteBatches.map(batch=>({batch,status:quoteListStatus(batch,records)})).filter(({batch,status:rowStatus})=>(!status||status===rowStatus)&&(!mode||batch.mode===mode)&&(!dateFrom||batch.updated_at.slice(0,10)>=dateFrom)&&(!dateTo||batch.updated_at.slice(0,10)<=dateTo)&&`${batch.name} ${batch.customer_name} ${batch.customer_code} ${batch.salesperson} ${batch.items.map(row=>row.product?.code||row.product_id).join(" ")}`.toLowerCase().includes(search.trim().toLowerCase()));
+ const currentPage=Math.min(page,Math.max(1,Math.ceil(rows.length/display.pageSize)));
+ const shown=display.view==="paged"?rows.slice((currentPage-1)*display.pageSize,currentPage*display.pageSize):rows;
+ return <section className={s.productSection}><LedgerFrame><LedgerToolbar className={s.productToolbar}>
+  <label className={p.searchField}><Search size={15}/><input aria-label="搜索报价历史" placeholder="搜索客户、编码、业务员或产品" value={search} onChange={event=>setSearch(event.target.value)}/></label>
+  <details className={`${p.columnMenu} ${p.personMenu}`} onBlur={onMenuBlur} onKeyDown={onMenuKeyDown}><summary>{mode?modes[mode as Mode]:"全部客户类型"}<ChevronRight size={13}/></summary><div>{[["","全部客户类型"],...Object.entries(modes)].map(([value,label])=><button type="button" key={value} aria-pressed={mode===value} onClick={event=>{setMode(value);closeMenu(event);}}>{label}{mode===value&&<Check size={14}/>}</button>)}</div></details>
+  <details className={`${p.columnMenu} ${p.personMenu}`} onBlur={onMenuBlur} onKeyDown={onMenuKeyDown}><summary>{status?statusLabels[status]:"全部状态"}<ChevronRight size={13}/></summary><div>{[["","全部状态"],...Object.entries(statusLabels)].map(([value,label])=><button type="button" key={value} aria-pressed={status===value} onClick={event=>{setStatus(value as ""|QuoteListStatus);closeMenu(event);}}>{label}{status===value&&<Check size={14}/>}</button>)}</div></details>
+  <details className={`${p.columnMenu} ${p.filterMenu} ${s.historyDateMenu}`} onBlur={onMenuBlur} onKeyDown={onMenuKeyDown}><summary><SlidersHorizontal size={14}/>日期{(dateFrom||dateTo)&&<em>1</em>}</summary><div><label>开始日期<input type="date" aria-label="开始日期" value={dateFrom} max={dateTo||undefined} onChange={event=>setDateFrom(event.target.value)}/></label><label>结束日期<input type="date" aria-label="结束日期" value={dateTo} min={dateFrom||undefined} onChange={event=>setDateTo(event.target.value)}/></label>{(dateFrom||dateTo)&&<button type="button" onClick={event=>{setDateFrom("");setDateTo("");closeMenu(event);}}>清除日期</button>}</div></details>
+  <SalesDisplayMenu display={display} onChange={setDisplay}/>
+</LedgerToolbar><div className={p.ledgerTableWrap}><table className={`${p.table} ${s.quoteTable}`}><thead><tr><th scope="col">报价单</th><th scope="col">客户 / 业务员</th><th scope="col">客户类型</th><th scope="col">产品状态</th><th scope="col">更新时间</th><th scope="col">状态</th></tr></thead><tbody>{shown.map(({batch,status:rowStatus})=>{const active=records.filter(row=>row.batch_id===batch.id&&row.status==="active").length,pending=batch.items.filter(row=>!row.voided&&(!row.adopted||!!row.adjustment_reason)).length,voided=batch.items.filter(row=>row.voided).length;return <tr key={batch.id} tabIndex={0} role="button" onClick={event=>{event.currentTarget.focus({preventScroll:true});onOpen(batch);}} onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();onOpen(batch);}}}><td><span className={s.quoteRowTitle}><strong>{batch.name}</strong><ChevronRight size={16} aria-hidden="true"/></span><small>{batch.items.length} 个产品</small></td><td>{batch.customer_name||"未填写客户"}<small>{batch.customer_code||"暂未编码"} · {batch.salesperson||"未填写业务员"}</small></td><td>{modes[batch.mode]}</td><td><span className={s.counts}>待采用 {pending} · 有效 {active} · 作废 {voided}</span></td><td>{dateTime(batch.updated_at)}</td><td><span className={`${s.statusTag} ${s[`status_${rowStatus}`]}`}>{statusLabels[rowStatus]}</span></td></tr>;})}</tbody></table>{!rows.length&&<p className={s.empty}>没有符合条件的报价记录。</p>}</div>{display.view==="paged"?<LedgerPagination total={rows.length} page={currentPage} pageSize={display.pageSize} onPageChange={setPage}/>:<div className={s.catalogFooter}><span>{rows.length} / {quoteBatches.length} 条报价记录</span></div>}</LedgerFrame></section>;
+}
+
+function ProductCatalog({products,selected,onSelect,selecting,onSelecting,onOpen,onStart,accessLevel,userId}:{products:Product[];selected:string[];onSelect:(ids:string[])=>void;selecting:boolean;onSelecting:(value:boolean)=>void;onOpen:(product:Product)=>void;onStart:(rows:Product[])=>void;accessLevel:number;userId:string}) {
+ const [search,setSearch]=useState(""),[source,setSource]=useState(""),[department,setDepartment]=useState("");
+ const [columns,setColumns]=useState({department:true,cost:true,quote:true});
+ const [display,setDisplay]=useSalesLedgerDisplay(userId,"products"),[page,setPage]=useState(1);
+ useEffect(()=>setPage(1),[search,source,department,display]);
+ const visible=products.filter(row=>(!source||row.source===source)&&(!department||row.department===department)&&`${row.code} ${row.name} ${row.department}`.toLowerCase().includes(search.trim().toLowerCase()));
+ const currentPage=Math.min(page,Math.max(1,Math.ceil(visible.length/display.pageSize)));
+ const shown=display.view==="paged"?visible.slice((currentPage-1)*display.pageSize,currentPage*display.pageSize):visible;
+ const departments=[...new Set(products.map(row=>row.department))].filter(Boolean);
+ const columnCount=1+Number(selecting)+Number(columns.department)+Number(columns.cost)+Number(columns.quote);
+ const footerActions=accessLevel>=3&&<div className={s.catalogFooterActions}>{selecting?<><span>已选 <strong>{selected.length}</strong> 项</span><button className="secondary-button" aria-label="取消批量选择" onClick={()=>{onSelect([]);onSelecting(false);}}>取消</button><button className="primary-button" disabled={!selected.length} onClick={()=>onStart(products.filter(row=>selected.includes(row.id)))}>开始报价</button></>:<button className="primary-button" onClick={()=>onSelecting(true)}>批量报价</button>}</div>;
+ return <section className={s.productSection}><LedgerFrame><LedgerToolbar className={s.productToolbar}>
+  <label className={p.searchField}><Search size={15}/><input aria-label="搜索产品" placeholder="搜索产品内编、名称或部门" value={search} onChange={event=>setSearch(event.target.value)}/></label>
+  <details className={`${p.columnMenu} ${p.personMenu}`} onBlur={onMenuBlur} onKeyDown={onMenuKeyDown}><summary>{department||"全部部门"}<ChevronRight size={13}/></summary><div>{["",...departments].map(value=><button type="button" key={value} aria-pressed={department===value} onClick={event=>{setDepartment(value);closeMenu(event);}}>{value||"全部部门"}{department===value&&<Check size={14}/>}</button>)}</div></details>
+  <details className={`${p.columnMenu} ${p.filterMenu}`} onBlur={onMenuBlur} onKeyDown={onMenuKeyDown}><summary><SlidersHorizontal size={14}/>筛选{source&&<em>1</em>}</summary><div className={p.filterGroup}><span>数据来源</span>{[["","全部来源"],["research","研发产品"],["procurement","采购原料"]].map(([value,label])=><button type="button" key={value} aria-pressed={source===value} onClick={event=>{setSource(value);closeMenu(event);}}>{label}{source===value&&<Check size={14}/>}</button>)}</div></details>
+  <SalesDisplayMenu display={display} onChange={setDisplay} fields={([["department","来源"],["cost","产品成本"],["quote","报价参考"]] as const).map(([key,label])=>({label,checked:columns[key],onChange:(checked:boolean)=>setColumns(current=>({...current,[key]:checked}))}))}/>
+ </LedgerToolbar>
+ <div className={p.ledgerTableWrap}><table className={`${p.table} ${s.catalogTable}`} data-selecting={selecting}>
+  <thead><tr>
+   {selecting&&<th><input type="checkbox" aria-label={display.view==="paged"?"选择当前页产品":"选择当前显示产品"} checked={shown.length>0&&shown.every(row=>selected.includes(row.id))} onChange={event=>onSelect(event.target.checked?[...new Set([...selected,...shown.map(row=>row.id)])]:selected.filter(id=>!shown.some(row=>row.id===id)))}/></th>}
+   <th scope="col">产品内编</th>
+   {columns.department&&<th scope="col" data-column="department">来源</th>}
+   {columns.cost&&<th scope="col" data-column="cost">产品成本</th>}
+   {columns.quote&&<th scope="col" data-column="quote">报价参考（最新优先）</th>}
+  </tr></thead>
+  <tbody>{shown.map(product=>{const reference=quoteReference(product);return <tr key={product.id}>
+   {selecting&&<td><input type="checkbox" aria-label={`选择 ${product.code}`} checked={selected.includes(product.id)} onChange={event=>onSelect(event.target.checked?[...selected,product.id]:selected.filter(id=>id!==product.id))}/></td>}
+   <td><button className={p.materialLink} type="button" onClick={()=>onOpen(product)}><span><strong title={product.code}>{product.code}</strong></span><ChevronRight size={16} aria-hidden="true"/></button></td>
+   {columns.department&&<td data-column="department"><div className={s.departmentCell}><strong>{product.department}</strong><small>{productSourceText(product)}</small></div></td>}
+   {columns.cost&&<td data-column="cost"><div className={s.costPair}><span><small>最新优先</small><strong>{money(product.latest_cost)}</strong></span><i aria-hidden="true" /><span><small>库存优先</small><strong>{money(product.inventory_cost)}</strong></span></div></td>}
+   {columns.quote&&<td data-column="quote"><div className={s.quoteRefs}><span><small>直接厂</small><strong>{money(reference.direct)}</strong></span><i aria-hidden="true" /><span><small>中间商</small><strong>{money(reference.intermediary)}</strong></span><i aria-hidden="true" /><span><small>外贸</small><strong>{money(reference.export)}</strong></span></div></td>}
+  </tr>;})}{!visible.length&&<tr><td colSpan={columnCount}><div className={s.empty}>没有符合条件的产品。</div></td></tr>}</tbody>
+ </table></div>{display.view==="paged"?<LedgerPagination total={visible.length} page={currentPage} pageSize={display.pageSize} onPageChange={setPage}>{footerActions}</LedgerPagination>:<div className={s.catalogFooter}><span>{visible.length} / {products.length} 项 · 元/公斤</span>{footerActions}</div>}</LedgerFrame></section>;
+}
+
+export function SalesWorkbench({accessLevel,currentUser,page,onPageChange:viewPageChange,view,onEnter}:{accessLevel:number;currentUser:CurrentUser;page:SalesPage;onPageChange:(page:SalesPage)=>void;view:"preview"|"full";onEnter:()=>void}) {
+ const [products,setProducts]=useState<Product[]|null>(null),[batches,setBatches]=useState<Batch[]>([]),[trials,setTrials]=useState<Trial[]>([]),[records,setRecords]=useState<Quote[]>([]),[error,setError]=useState("");
+ const [selected,setSelected]=useState<string[]>([]),[selecting,setSelecting]=useState(false);
+ const [productOpen,setProductOpen]=useState<Product|null>(null),[quoteContext,setQuoteContext]=useState<{products:Product[];batch?:Batch}|null>(null),[detailBatch,setDetailBatch]=useState<Batch|null>(null);
+ const load=useCallback(async()=>{try{const [catalog,lists,history,quotes]=await Promise.all([fetchJson<{products:Product[]}>(base+"/products"),fetchJson<{batches:Batch[]}>(base+"/batches"),fetchJson<{trials:Trial[]}>(base+"/history"),fetchJson<{records:Quote[]}>(base+"/records")]);setProducts(catalog.products);setBatches(lists.batches);setTrials(history.trials);setRecords(quotes.records);setError("");}catch(value){setError(value instanceof Error?value.message:"销售工作台加载失败");}},[]);
+ useEffect(()=>{void load();},[load]);
+ useEffect(()=>{setSelected([]);setSelecting(false);},[page]);
+ const catalog=useMemo(()=>products??[],[products]);
+ const startQuote=(rows:Product[],batch?:Batch)=>{setProductOpen(null);setDetailBatch(null);setSelected([]);setSelecting(false);setQuoteContext({products:rows,batch});};
+ const continueQuote=(batch:Batch)=>{const rows=batch.items.filter(row=>!row.voided&&(!row.adopted||!!row.adjustment_reason)).map(row=>catalog.find(product=>product.id===row.product_id)??row.product).filter((row):row is Product=>!!row);startQuote(rows,batch);};
+ const openFromDashboard=(batch:Batch)=>{if(view==="preview")onEnter();viewPageChange("quotes");setDetailBatch(batch);};
+ if(products===null)return error?<article className="workbench-detail workspace-detail-empty"><strong>销售工作台暂时不可用</strong><p role="alert">{error}</p><button className="secondary-button" onClick={()=>void load()}>重新加载</button></article>:<WorkbenchLoading title="正在加载销售工作台"/>;
+ return <article className={`workbench-detail ${p.root} ${p.full} ${s.root}`} data-preview={view==="preview"}><header className={p.header}><div>{view==="preview"&&<span className={p.eyebrow}>销售部</span>}<h1>{view==="preview"?"产品报价管理":SALES_PAGE_LABELS[page]}</h1><p>{view==="full"&&page==="quotes"?"按客户、状态和日期查找报价，查看采用、调整及作废记录。":page==="estimator"?"从产品成本或意向报价出发，对比不同公式与费用组合。":"查阅产品成本与报价参考，形成客户报价并保留采用、调整和作废记录。"}</p></div>{view==="preview"&&<button className="primary-button" onClick={onEnter}>进入工作台<ArrowRight size={15}/></button>}</header>{error&&<div className={s.error} role="alert">{error}</div>}{view==="preview"?<SalesDashboard products={catalog} batches={batches} trials={trials} records={records} onOpen={openFromDashboard} preview/>:page==="dashboard"?<SalesDashboard products={catalog} batches={batches} trials={trials} records={records} onOpen={openFromDashboard}/>:page==="calculate"?<ProductCatalog products={catalog} selected={selected} onSelect={setSelected} selecting={selecting} onSelecting={setSelecting} onOpen={setProductOpen} onStart={rows=>startQuote(rows)} accessLevel={accessLevel} userId={currentUser.id}/>:page==="estimator"?<SalesCalculator products={catalog} accessLevel={accessLevel}/>:<CustomerQuotes batches={batches} records={records} userId={currentUser.id} onOpen={setDetailBatch}/>}
+ {productOpen&&<ProductDetailDrawer product={productOpen} history={records.filter(row=>row.product_id===productOpen.id)} editable={accessLevel>=3} onClose={()=>setProductOpen(null)} onStart={()=>startQuote([productOpen])}/>} {quoteContext&&<QuoteEditorDrawer products={quoteContext.products} catalog={catalog} existing={quoteContext.batch} currentUser={currentUser} accessLevel={accessLevel} onClose={()=>{setQuoteContext(null);setSelected([]);}} onChanged={load}/>} {detailBatch&&<QuoteDetailDrawer batch={detailBatch} trials={trials} records={records} accessLevel={accessLevel} onClose={()=>setDetailBatch(null)} onContinue={continueQuote} onChanged={load}/>}</article>;
+}

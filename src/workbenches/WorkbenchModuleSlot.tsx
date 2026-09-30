@@ -1,7 +1,9 @@
 import { WorkbenchLoading } from "../components/WorkbenchLayout";
 import { Component, lazy, Suspense, type ErrorInfo, type ReactNode } from "react";
 import { ShieldCheck } from "lucide-react";
-import type { CurrentUser, ResearchPage, ProcurementPage, WorkbenchId } from "../types";
+import type { CurrentUser, ResearchPage, SalesPage, ProcurementPage, WorkbenchId } from "../types";
+
+const SalesWorkbench = lazy(() => import("./SalesWorkbench").then(module => ({ default: module.SalesWorkbench })));
 
 const ProcurementWorkbench = lazy(() => import("./ProcurementWorkbench").then((module) => ({ default: module.ProcurementWorkbench })));
 
@@ -12,6 +14,8 @@ type Props = {
   title: string;
   currentUser: CurrentUser;
   view: "preview" | "full";
+  salesPage: SalesPage;
+  onSalesPageChange: (page: SalesPage) => void;
   researchPage: ResearchPage;
   onResearchPageChange: (page: ResearchPage) => void;
   procurementPage: ProcurementPage;
@@ -25,7 +29,7 @@ export function WorkbenchModuleSlot(props: Props) {
     <ModuleBoundary title={props.title}>
       {props.workbenchId === "procurement"
         ? <Suspense fallback={<WorkbenchLoading title={`正在加载${props.title}`} />}><ProcurementWorkbench accessLevel={accessLevel} view={props.view} page={props.procurementPage} onPageChange={props.onProcurementPageChange} onEnter={props.onEnter} /></Suspense>
-        : props.workbenchId === "research" ? <Suspense fallback={<WorkbenchLoading title={`正在加载${props.title}`} />}><ResearchWorkbench accessLevel={accessLevel} userId={props.currentUser.id} view={props.view} page={props.researchPage} onPageChange={props.onResearchPageChange} onEnter={props.onEnter} /></Suspense> : <Pending title={props.title} />}
+        : props.workbenchId === "research" ? <Suspense fallback={<WorkbenchLoading title={`正在加载${props.title}`} />}><ResearchWorkbench accessLevel={accessLevel} userId={props.currentUser.id} view={props.view} page={props.researchPage} onPageChange={props.onResearchPageChange} onEnter={props.onEnter} /></Suspense> : props.workbenchId === "sales" ? <Suspense fallback={<WorkbenchLoading title="正在加载销售工作台" />}><SalesWorkbench accessLevel={accessLevel} currentUser={props.currentUser} page={props.salesPage} onPageChange={props.onSalesPageChange} view={props.view} onEnter={props.onEnter}/></Suspense> : <Pending title={props.title} />}
     </ModuleBoundary>
   );
 }

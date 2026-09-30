@@ -372,5 +372,18 @@ export type TaskItem = {
   latest_run: string | null;
 };
 
-export type ResearchPage = "dashboard" | "products" | "formulas" | "history";
-export const RESEARCH_PAGE_LABELS: Record<ResearchPage, string> = { dashboard: "研发看板", products: "产品成本", formulas: "配方管理", history: "价格历史" };
+export type ResearchPage = "dashboard" | "materials" | "products" | "formulas" | "history";
+export const RESEARCH_PAGE_LABELS: Record<ResearchPage, string> = { dashboard: "研发看板", materials: "原料价格", products: "产品成本", formulas: "配方管理", history: "价格历史" };
+
+export type ResearchMaterial = ProcurementMaterial & { in_formula_scope: boolean };
+export type ResearchMaterialPrices = {
+  batch: { version: number; price_date: string | null } | null;
+  batches: Array<{ id: string; comparison?: { added_material_ids?: string[] } }>;
+  ledger_comparison: ProcurementBatch["comparison"] | null;
+  materials: ResearchMaterial[];
+};
+export type ResearchMaterialDetail = Pick<ProcurementMaterialDetail, "material" | "comparison" | "official_history" | "sources" | "adjustments" | "changes">;
+
+
+export type SalesPage = "dashboard" | "calculate" | "estimator" | "quotes";
+export const SALES_PAGE_LABELS: Record<SalesPage,string> = {dashboard:"销售看板",calculate:"产品报价",estimator:"测算工具",quotes:"报价历史"};

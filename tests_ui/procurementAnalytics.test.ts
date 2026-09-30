@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildPriceMovement, buildPriceUpdateOverview, buildRangeDistribution, buildPublishedPriceMovement, buildPriceTrend, buildVersionMovers, moverDateRange, sortBatchPrices, countValidPrices } from "../src/workbenches/procurementAnalytics.ts";
+import { buildPriceMovement, buildPriceUpdateOverview, buildRangeDistribution, buildPublishedPriceMovement, buildPriceTrend, buildVersionMovers, focusedTrendAxis, moverDateRange, sortBatchPrices, countValidPrices } from "../src/workbenches/procurementAnalytics.ts";
 import type { ProcurementBatchDetail } from "../src/types.ts";
 
 const batch = (version: number, prices: Record<string, string | null>, dates: Record<string, string> = {}): ProcurementBatchDetail => ({
   id: `b${version}`, version, published_at: `2026-09-0${version}`, price_date: `2026-09-0${version}`, item_count: Object.keys(prices).length,
   items: Object.entries(prices).map(([code, latest_price]) => ({ material_id: code, code, name: code, unit: "kg", latest_price })),
   snapshot_sources: Object.fromEntries(Object.entries(prices).map(([code, raw_price]) => [code, { price_date: dates[code] ?? `2026-09-0${version}`, raw_price, price_kind: raw_price?.includes("-") ? "range" : "number", sheet: null, cell: null }])),
+});
+
+test("价格趋势纵轴聚焦有效价格，同时覆盖双线、持平与零价", () => {
+  assert.deepEqual(focusedTrendAxis([{ values: [7, 8.2, 10.8] }]).ticks, [6, 8, 10, 12]);
+  assert.deepEqual(focusedTrendAxis([{ values: [2.8, 3.45] }, { values: [3.09, null, 2.9] }]).ticks, [2.75, 3, 3.25, 3.5]);
+  assert.deepEqual(focusedTrendAxis([{ values: [8, 8] }]).ticks, [7.5, 8, 8.5]);
+  assert.equal(focusedTrendAxis([{ values: [0, 0] }]).domain[0], 0);
 });
 
 test("更新概况使用报价来源日期，沿用与同价重报分开，缺来源不以版本日期补齐", () => {

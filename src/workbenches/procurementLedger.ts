@@ -66,11 +66,14 @@ export function filterLedgerRows(rows: ReturnType<typeof buildLedgerRows>, optio
   const value = (row: typeof rows[number]): number | string | null => {
     const item = row.material;
     if (sort === "price_date") return item.published_price_date || null;
+    if (sort === "unit") return item.unit;
+    if (sort === "modifier") return item.price_modifier?.name || null;
+    if (sort === "status") return item.published_price == null ? "未定价" : "有效";
     if (sort === "change") {
       const change = edit ? draftLedgerChange(item, values[item.id] ?? edit.originals[item.id] ?? "", comparison) : row.input ? draftLedgerChange(item, row.input.draft_price ?? "", comparison) : formalLedgerChange(item, comparison);
       return typeof change === "number" ? change : null;
     }
-    const raw = sort === "inventory_quantity" ? item.inventory_quantity : sort === "draft_price" ? edit ? values[item.id] ?? edit.originals[item.id] : row.input?.draft_price : sort === "previous_latest_price" ? item.previous_published_price : item.published_price;
+    const raw = sort === "inventory_quantity" ? item.inventory_quantity : sort === "inventory_price" ? item.inventory_price : sort === "in_transit_price" ? item.in_transit_price : sort === "suggested_price" ? item.suggested_price : sort === "draft_price" ? edit ? values[item.id] ?? edit.originals[item.id] : row.input?.draft_price : sort === "previous_latest_price" ? item.previous_published_price : item.published_price;
     return raw == null || !/^\d+(\.\d+)?$/.test(String(raw).trim()) || !Number.isFinite(Number(raw)) ? null : Number(raw);
   };
   return rows.filter(row => {

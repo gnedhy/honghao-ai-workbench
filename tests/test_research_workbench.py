@@ -2,12 +2,14 @@
 import copy
 import json
 import psycopg
-from decimal import Decimal
+from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
+from io import BytesIO
 from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 import api.research as research
 from api.identity import IdentityStore
@@ -16,6 +18,7 @@ from api.postgres import transaction
 from api.procurement_inventory import import_inventory, inventory_preview
 from api.procurement_rd5 import revise_preparation
 from api.research import ResearchStore, capture, enqueue
+from api.research_export import build_cost_workbook
 from api.research_formulas import DEFAULT_COMPOSITE, calculate
 from tests.test_procurement_isolation import confirm_risks, import_prices, publish
 from tests.test_procurement_rd5 import data, trial_data, table_rows
@@ -332,10 +335,14 @@ def test_http_permissions_apply_to_each_operation(ready, scope, level, view, edi
         department='研发五部', password='Research-Password-2026', scope_levels={scope: level} if level else {})
     _, receipt = saved(store, actor)
     key = quote(K, safe='')
+    material_id = store.material_prices()['materials'][0]['id']
     with TestClient(create_app(settings)) as client:
         assert client.post('/api/login', json={'username': 'rd-user', 'password': 'Research-Password-2026'}).status_code == 200
-        for path in ['/products', '/overview', '/history', '/trials', f'/products/{key}']:
+        for path in ['/products', '/products/export', '/overview', '/history', '/trials', f'/products/{key}',
+                     '/material-prices', f'/material-prices/{material_id}']:
             assert client.get(PREFIX + path).status_code == view, path
+        if scope == 'research' and level == 2:
+            assert client.post('/api/workbenches/procurement/materials', json={'code': 'READ-ONLY-CHECK'}).status_code == 403
         body = body_for(store)
         response = client.post(PREFIX + f'/products/{key}/simulate', json=body)
         assert response.status_code == edit, response.text
@@ -350,6 +357,100 @@ def test_http_permissions_apply_to_each_operation(ready, scope, level, view, edi
         if edit == 403:
             response = client.request('DELETE', PREFIX + f'/products/{key}/draft', json={'revision': receipt['revision']})
             assert response.status_code == 403
+
+
+def test_research_material_prices_show_only_formal_values_and_active_formula_scope(ready):
+    settings, client, _, store = ready
+    before = store.material_prices()
+    materials = {item['code']: item for item in before['materials']}
+    assert materials['A']['published_price'] == '30'
+    assert materials['CF020D']['in_formula_scope']
+    assert not materials['CF020C']['in_formula_scope']
+    assert not materials['CF401B']['in_formula_scope']
+    assert materials['纯水']['in_formula_scope']
+    assert all('draft_price' not in item and 'draft_status' not in item for item in before['materials'])
+    assert set(before) == {'batch', 'batches', 'ledger_comparison', 'materials'}
+
+    pending = import_prices(client, '2026-09-12', [('A', 31)])
+    during = store.material_prices()
+    assert next(item for item in during['materials'] if item['code'] == 'A')['published_price'] == '30'
+    assert store.material_price_detail(materials['A']['id'])['official_history'][-1]['latest_price'] == '30'
+    assert set(store.material_price_detail(materials['A']['id'])) == {'material', 'comparison', 'official_history', 'sources', 'adjustments'}
+    confirm_risks(client, pending)
+    assert publish(client, pending).status_code == 200
+    after = store.material_prices()
+    assert next(item for item in after['materials'] if item['code'] == 'A')['published_price'] == '31'
+    assert after['batch']['version'] > before['batch']['version']
+
+
+def test_cost_export_contains_all_active_products_and_frozen_recipe_prices(ready):
+    settings, client, _, store = ready
+    before = records(settings.database_url)
+    response = client.get(PREFIX + '/products/export')
+    assert response.status_code == 200, response.text
+    assert response.headers['cache-control'] == 'no-store'
+    book = load_workbook(BytesIO(response.content), data_only=False)
+    products = store.listing()['products']
+    assert book.sheetnames[0] == '总览'
+    assert book['总览'].max_row == len(products) + 3
+    assert book['总览'].page_setup.orientation == 'landscape'
+    assert set(book.sheetnames[1:]) == {product['owner'] for product in products}
+    with transaction(settings.database_url) as db:
+        frozen = json.loads(db.execute('SELECT payload FROM research_cost_records WHERE product_id=%s ORDER BY sequence DESC LIMIT 1', (K,)).fetchone()[0])
+    sheet = book[frozen['owner']]
+    title_row = next(row[0].row for row in sheet.iter_rows() if isinstance(row[0].value, str) and row[0].value.startswith(frozen['name'] + '  ·'))
+    first_line = title_row + 4
+    assert sheet.page_setup.orientation == 'landscape'
+    assert book.calculation.calcMode == 'auto'
+    assert sheet.cell(title_row + 2, 1).value == '配方与投料'
+    assert sheet.cell(title_row + 1, 4).value == f'=SUM(D{first_line}:D{first_line + len(frozen["formula"]["lines"]) - 1})'
+    last_line = first_line + len(frozen['formula']['lines']) - 1
+    assert sheet.cell(title_row + 2, 7).value == f'=ROUND(SUM(G{first_line}:G{last_line})/(D{title_row + 1}*B{title_row + 1}),2)'
+    assert sheet.cell(title_row + 2, 10).value == f'=ROUND(SUM(J{first_line}:J{last_line})/(D{title_row + 1}*B{title_row + 1}),2)'
+    assert sheet.cell(title_row + 2, 7).number_format == '0.00'
+    assert sheet.cell(first_line, 2).value == frozen['formula']['lines'][0]['code']
+    assert sheet.cell(first_line, 4).value == pytest.approx(float(frozen['formula']['lines'][0]['quantity']))
+    assert sheet.cell(first_line, 5).value == pytest.approx(float(frozen['latest']['lines'][0]['unit_cost']))
+    assert sheet.cell(first_line, 8).value == pytest.approx(float(frozen['inventory']['lines'][0]['unit_cost']))
+    assert sheet.cell(first_line, 7).value == f'=D{first_line}*E{first_line}'
+    assert sheet.cell(first_line, 10).value == f'=D{first_line}*H{first_line}'
+    for policy, column in [('latest', 5), ('inventory', 8)]:
+        weighted = sum(Decimal(str(sheet.cell(first_line + index, 4).value)) * Decimal(str(sheet.cell(first_line + index, column).value))
+                       for index in range(len(frozen['formula']['lines'])))
+        total = sum(Decimal(line['quantity']) for line in frozen['formula']['lines'])
+        expected = (weighted / total / Decimal(frozen['formula']['yield'])).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        assert expected == Decimal(frozen[policy]['cost']).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    assert records(settings.database_url) == before
+
+
+def test_cost_export_keeps_zero_missing_and_untrusted_codes_distinct():
+    formula = {'revision': 2, 'yield': '1', 'lines': [{'code': '=2+2', 'ratio': '25', 'quantity': '5'}]}
+    rows = [
+        {'product': {'name': '=1+1', 'owner': '甲/乙', 'status': 'missing', 'recorded_at': '2026-09-29T08:00:00Z'},
+         'formula': formula,
+         'latest': {'cost': '0', 'cost_source': 'manual', 'total_input': '20', 'lines': [{'unit_cost': '0', 'amount': '0', 'basis': 'latest'}]},
+         'inventory': {'cost': None, 'cost_source': 'auto', 'lines': [{'unit_cost': None, 'amount': None, 'basis': 'missing'}]}},
+        {'product': {'name': '待核算', 'owner': '甲/乙', 'status': 'updating'},
+         'formula': {'revision': 1, 'yield': '1', 'lines': []}, 'latest': None, 'inventory': None},
+    ]
+    book = load_workbook(BytesIO(build_cost_workbook(rows)), data_only=False)
+    assert book.sheetnames == ['总览', '甲_乙']
+    assert book['总览']['A4'].data_type == 's'
+    assert book['总览']['C4'].value == 0
+    assert book['总览']['D4'].value is None
+    assert book['总览']['J4'].value == datetime(2026, 9, 29, 16, 0)
+    assert book['总览']['J4'].number_format == 'yyyy-mm-dd hh:mm:ss'
+    assert book['总览']['I5'].value == '更新中（尚无成本记录）'
+    owner = book['甲_乙']
+    assert owner['I5'].value == datetime(2026, 9, 29, 16, 0)
+    assert owner['G6'].value == 0  # 手动成本保持明确的手动值。
+    assert owner['B8'].value == '=2+2' and owner['B8'].data_type == 's'
+    assert owner['C8'].value == pytest.approx(0.25)
+    assert owner['E8'].value == 0 and owner['H8'].value is None
+    assert owner['G8'].value == '=D8*E8' and owner['J8'].value is None
+    rounded = load_workbook(BytesIO(build_cost_workbook([dict(rows[0], latest=dict(rows[0]['latest'], cost='1.235'))])), data_only=False)
+    assert rounded['总览']['C4'].value == 1.24
+    assert rounded['甲_乙']['G6'].value == 1.24
 
 
 def test_http_disabled_module_and_invalid_payload_are_guarded(ready):

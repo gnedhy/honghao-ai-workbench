@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request, Query
+from fastapi import APIRouter, HTTPException, Request, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from api import procurement_collaboration as activation_grants
@@ -219,6 +219,80 @@ class ResearchStore:
     def listing(self):
         with transaction(self.url) as db:
             return self._rows(db)
+
+    def material_prices(self):
+        from api.procurement import ProcurementStore
+
+        procurement = ProcurementStore(self.url)
+        # ponytail: reuse procurement's official snapshot; split a focused query only if 10-second polling becomes costly.
+        overview = procurement.overview()
+        with transaction(self.url) as db:
+            package = capture(db)["package"]
+        formulas = {formula["id"]: formula for formula in package["recipes"]}
+        replacements = package["current_policy"]["material_replacements"]
+        used, visited = set(), set()
+
+        def visit(key):
+            if key in visited or key not in formulas:
+                return
+            visited.add(key)
+            for line in formulas[key]["lines"]:
+                if Decimal(str(line["quantity"])) <= 0:
+                    continue
+                kind, ref = line["kind"], line["ref"]
+                if kind == "material":
+                    ref = replacements.get(ref, ref)
+                    if ref == "CF401B":
+                        kind, ref = "composite", package["default_composite"]
+                if kind == "material":
+                    used.add(ref)
+                else:
+                    visit(ref)
+
+        for formula in package["recipes"]:
+            if formula["kind"] == "recipe":
+                visit(formula["id"])
+
+        batch = overview["batches"][0] if overview["batches"] else None
+        authors = activation_grants.price_authorship(self.url)["batches"].get(batch["id"], {}) if batch else {}
+        materials = []
+        for item in overview["materials"]:
+            author = authors.get(item["id"])
+            modifier = {"kind": author["kind"], "name": author["name"], "id": str(author["id"]) if author["id"] else None} if author else None
+            person = {"id": modifier["id"] or modifier["name"], "name": modifier["name"]} if modifier and modifier["name"] else None
+            materials.append({key: item.get(key) for key in (
+                "id", "code", "name", "unit", "inventory_quantity", "inventory_price", "published_price",
+                "previous_published_price", "published_price_date", "updated_at"
+            )} | {"price_date": item.get("published_price_date") or "", "price_modifier": modifier,
+                 "participants": [person] if person else [], "in_formula_scope": item["code"] in used})
+        return {
+            "batch": {"version": batch["version"], "price_date": batch["price_date"]} if batch else None,
+            "batches": [{"id": row["id"], "comparison": {"added_material_ids": (row.get("comparison") or {}).get("added_material_ids", [])}} for row in overview["batches"]],
+            "ledger_comparison": overview["ledger_comparison"],
+            "materials": materials,
+        }
+
+    def material_price_detail(self, material_id):
+        from api.procurement import ProcurementStore
+
+        detail = ProcurementStore(self.url).material_detail(material_id)
+        if detail is None:
+            return None
+        return {"material": detail["material"], "comparison": detail["comparison"],
+                "official_history": detail["official_history"], "sources": [], "adjustments": []}
+
+    def export_costs(self):
+        from api.research_export import build_cost_workbook
+
+        with transaction(self.url) as db:
+            products = self._rows(db)["products"]
+            rows = []
+            for product in products:
+                record = db.execute("SELECT payload FROM research_cost_records WHERE product_id=%s ORDER BY sequence DESC LIMIT 1", (product["id"],)).fetchone()
+                payload = json.loads(record[0]) if record else {}
+                rows.append({"product": product, "formula": payload.get("formula", product),
+                             "latest": payload.get("latest"), "inventory": payload.get("inventory")})
+        return build_cost_workbook(rows)
 
     def backfill_history(self):
         from api.research_history import backfill
@@ -561,6 +635,24 @@ def create_research_router(store, settings):
     def products(request:Request):
         actor(request)
         return store.listing()
+    @router.get("/material-prices")
+    def material_prices(request:Request,response:Response):
+        actor(request)
+        response.headers["Cache-Control"] = "no-store"
+        return run(store.material_prices)
+    @router.get("/material-prices/{material_id}")
+    def material_price_detail(material_id:str,request:Request,response:Response):
+        actor(request)
+        detail = run(store.material_price_detail,material_id)
+        if detail is None:
+            raise HTTPException(404,"原料不存在")
+        response.headers["Cache-Control"] = "no-store"
+        return detail
+    @router.get("/products/export")
+    def export_costs(request:Request):
+        actor(request)
+        return Response(run(store.export_costs), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": "attachment; filename=research-costs.xlsx", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
     @router.get('/formulas')
     def formulas(request:Request):
         actor(request)

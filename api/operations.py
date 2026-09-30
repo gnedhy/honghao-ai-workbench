@@ -431,7 +431,8 @@ def _data_directory_status(settings: Settings) -> tuple[str, bool]:
 def _expected_schema_versions() -> dict[str, int]:
     return {'schema_version': SCHEMA_VERSION, 'identity_schema_version': IDENTITY_SCHEMA_VERSION,
             'authorization_schema_version': AUTHORIZATION_SCHEMA_VERSION, 'knowledge_schema_version': KNOWLEDGE_SCHEMA_VERSION,
-            'organization_schema_version': 1, 'workbench_procurement_schema_version': PROCUREMENT_SCHEMA_VERSION, 'workbench_research_schema_version': 2}
+            'organization_schema_version': 1, 'workbench_procurement_schema_version': PROCUREMENT_SCHEMA_VERSION,
+            'workbench_research_schema_version': 2, 'workbench_sales_schema_version': 2}
 
 
 def _core_schema_versions_valid(versions: dict[str, int]) -> bool:

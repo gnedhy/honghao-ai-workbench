@@ -1,4 +1,4 @@
-"""Current inventory from a complete source report, independent of price rounds."""
+"""Current inventory from full or explicit partial reports, independent of price rounds."""
 from __future__ import annotations
 
 import hashlib
@@ -13,7 +13,7 @@ from api.procurement_collaboration import admin_event
 from api.procurement_excel import TOTAL, price_value, read_workbook, text
 
 
-def _preview(db: Connection, content: bytes) -> dict:
+def _preview(db: Connection, content: bytes, *, partial: bool = False) -> dict:
     sheets = read_workbook(content)
     if TOTAL not in sheets:
         raise ValueError("需要原料行情总表")
@@ -49,21 +49,22 @@ def _preview(db: Connection, content: bytes) -> dict:
             raise ValueError(f"第{row_number}行库存数量或库存价无效：{code}")
         rows.append({"material_id": material_id, "code": code, "quantity": quantity,
                      "price": None if price == "0" else price, "raw_price": raw_price, "source_row": row_number})
-    if not rows or seen != set(known):
+    if not rows or (not partial and seen != set(known)):
         raise ValueError("报表未完整匹配现有在用原料，请核对后重新预检")
     return {"sha256": hashlib.sha256(content).hexdigest(),
             "catalog_sha256": hashlib.sha256(json.dumps(catalog, ensure_ascii=False).encode()).hexdigest(),
-            "sheet": TOTAL, "matched": len(rows), "priced": sum(row["price"] is not None for row in rows),
+            "sheet": TOTAL, "matched": len(rows), "preserved": len(known) - len(seen),
+            "priced": sum(row["price"] is not None for row in rows),
             "missing_price": sum(row["price"] is None for row in rows),
             "zero_quantity": sum(row["quantity"] == "0" for row in rows), "rows": rows}
 
 
-def inventory_preview(url: str, content: bytes) -> dict:
+def inventory_preview(url: str, content: bytes, *, partial: bool = False) -> dict:
     with transaction(url) as db:
-        return _preview(db, content)
+        return _preview(db, content, partial=partial)
 
 
-def import_inventory(url: str, source: Path, actor_id: str, *, data_dir: Path, expected_sha256: str, expected_catalog_sha256: str) -> dict:
+def import_inventory(url: str, source: Path, actor_id: str, *, data_dir: Path, expected_sha256: str, expected_catalog_sha256: str, partial: bool = False) -> dict:
     content = source.read_bytes()
     digest = hashlib.sha256(content).hexdigest()
     if digest != expected_sha256:
@@ -75,7 +76,7 @@ def import_inventory(url: str, source: Path, actor_id: str, *, data_dir: Path, e
             admin = db.execute("SELECT access_level,is_active FROM identity_users WHERE id=%s", (actor_id,)).fetchone()
             if admin != (5, 1):
                 raise PermissionError("库存导入仅限有效系统管理员")
-            preview = _preview(db, content)
+            preview = _preview(db, content, partial=partial)
             if preview["catalog_sha256"] != expected_catalog_sha256:
                 raise ValueError("原料匹配已变化，请重新预检")
             stored.parent.mkdir(parents=True, exist_ok=True)

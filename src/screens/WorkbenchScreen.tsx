@@ -12,7 +12,7 @@ import {
 import { useEffect } from "react";
 import { TopBar, type ScreenChromeProps } from "../components/TopBar";
 import { WorkbenchModuleSlot } from "../workbenches/WorkbenchModuleSlot";
-import { PROCUREMENT_PAGE_LABELS, RESEARCH_PAGE_LABELS, type ResearchPage, type CurrentUser, type ProcurementPage, type WorkbenchId, type WorkbenchStatus } from "../types";
+import { PROCUREMENT_PAGE_LABELS, RESEARCH_PAGE_LABELS, SALES_PAGE_LABELS, type ResearchPage, type SalesPage, type CurrentUser, type ProcurementPage, type WorkbenchId, type WorkbenchStatus } from "../types";
 
 export const workbenches = [
   {
@@ -61,15 +61,15 @@ export const workbenches = [
     id: "sales",
     department: "销售部",
     title: "产品报价管理",
-    summary: "基于已确认成本、客户条件和目标毛利生成报价并保留审批记录。",
+    summary: "查阅产品成本与报价参考，对比不同成本口径并查看价格历史。",
     icon: BadgeDollarSign,
-    metrics: [["有效报价", "9 份", "当前仍在有效期内"], ["目标毛利", "18.5%", "示例平均目标"], ["待审批", "3 份", "等待销售负责人确认"]],
-    columns: ["客户", "产品", "含税报价", "毛利率", "状态"],
-    rows: [["华南经销商", "A 系列助剂", "¥8,260 / 吨", "17.2%", "待审批"], ["重点客户 B", "净水材料", "¥7,980 / 吨", "19.1%", "已确认"], ["渠道客户 C", "工业处理剂", "¥9,460 / 吨", "16.8%", "测算中"]],
-    modules: ["成本基线引用", "毛利与费用测算", "报价版本及审批"],
-    source: "已确认产品成本、运费税费与客户条件",
-    output: "可审批、可追溯的产品报价方案",
-    owner: "销售经办人与销售负责人",
+    metrics: [["成本口径", "2 种", "最新优先与库存优先"], ["报价参考", "3 类", "直接厂、中间商与外贸"], ["价格历史", "可追溯", "保留测算参数与版本"]],
+    columns: ["产品内编", "最新优先成本", "库存优先成本", "报价参考", "历史版本"],
+    rows: [["示例产品 A", "4.99", "5.10", "直接厂 8.22", "2 个版本"], ["示例产品 B", "10.00", "9.80", "中间商 14.96", "3 个版本"], ["示例原料 C", "8.60", "—", "外贸 12.65", "暂无记录"]],
+    modules: ["双成本与报价对比", "产品价格历史", "报价系数测算调整"],
+    source: "研发产品成本、采购原料价格与报价参数",
+    output: "可追溯的产品报价参考与测算记录",
+    owner: "销售经理",
   },
 ] as const;
 
@@ -83,13 +83,15 @@ type WorkbenchScreenProps = ScreenChromeProps & {
   onSelectedIdChange: (id: WorkbenchId) => void;
   openedWorkbenchId: WorkbenchId | null;
   onOpenedWorkbenchIdChange: (id: WorkbenchId | null) => void;
+  salesPage: SalesPage;
+  onSalesPageChange: (page: SalesPage) => void;
   researchPage: ResearchPage;
   onResearchPageChange: (page: ResearchPage) => void;
   procurementPage: ProcurementPage;
   onProcurementPageChange: (page: ProcurementPage) => void;
 };
 
-export function WorkbenchScreen({ currentUser, statuses, dataState, selectedId, onSelectedIdChange, openedWorkbenchId, onOpenedWorkbenchIdChange, procurementPage, onProcurementPageChange, researchPage, onResearchPageChange, ...chrome }: WorkbenchScreenProps) {
+export function WorkbenchScreen({ currentUser, statuses, dataState, selectedId, onSelectedIdChange, openedWorkbenchId, onOpenedWorkbenchIdChange, procurementPage, onProcurementPageChange, salesPage, onSalesPageChange, researchPage, onResearchPageChange, ...chrome }: WorkbenchScreenProps) {
   const modes = new Map(statuses.map((status) => [status.id, status.mode]));
   const visibleWorkbenches = dataState === "ready"
     ? workbenches.filter((item) => {
@@ -113,7 +115,7 @@ export function WorkbenchScreen({ currentUser, statuses, dataState, selectedId, 
 
   return (
     <main className="app-main">
-      <TopBar {...chrome} title={procurementOpen ? "采购工作台" : openedWorkbenchId === "research" ? "研发工作台" : "工作台"} subtitle={procurementOpen ? PROCUREMENT_PAGE_LABELS[procurementPage] : openedWorkbenchId === "research" ? RESEARCH_PAGE_LABELS[researchPage] : subtitle} tabs={null} contextEnabled={false} />
+      <TopBar {...chrome} title={procurementOpen ? "采购工作台" : openedWorkbenchId === "research" ? "研发工作台" : openedWorkbenchId === "sales" ? "销售工作台" : "工作台"} subtitle={procurementOpen ? PROCUREMENT_PAGE_LABELS[procurementPage] : openedWorkbenchId === "research" ? RESEARCH_PAGE_LABELS[researchPage] : openedWorkbenchId === "sales" ? SALES_PAGE_LABELS[salesPage] : subtitle} tabs={null} contextEnabled={false} />
       <section className={`workspace-layout workspace-layout--workbench${openedWorkbenchId ? " is-module-open" : ""}`}>
         {!openedWorkbenchId && <aside className="workspace-list-panel workbench-index">
           <div className="workspace-panel-title">
@@ -156,6 +158,8 @@ export function WorkbenchScreen({ currentUser, statuses, dataState, selectedId, 
                 title={selected.title}
                 currentUser={currentUser}
                 view={openedWorkbenchId === selected.id ? "full" : "preview"}
+                salesPage={salesPage}
+                onSalesPageChange={onSalesPageChange}
                 researchPage={researchPage}
                 onResearchPageChange={onResearchPageChange}
                 procurementPage={procurementPage}

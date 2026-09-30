@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CalendarDays, Check, ChevronRight, Search } from "lucide-react";
+import { CalendarDays, Check, ChevronRight, Search, Trash2 } from "lucide-react";
 import styles from "./WorkbenchSurface.module.css";
 
 export function TrendMaterialMenu({ materials, selected, onSelect, label = "趋势原料", placeholder = "搜索原料编号" }: { materials: { id: string; code: string }[]; selected: string; onSelect: (code: string) => void; label?: string; placeholder?: string }) {
@@ -65,5 +65,55 @@ export function PriceDateRangeMenu({ period, range, onChange, label = "排行日
       <button className="primary-button" type="submit" disabled={!start || !end || start >= end}>应用</button>
     </form>}
     </div>
+  </details>;
+}
+
+export function WorkbenchOptionMenu({ label, value, options, onSelect, onDelete, display, className = "" }: {
+  label: string;
+  value: string;
+  options: { value: string; label: string; disabled?: boolean; title?: string }[];
+  onSelect: (value: string) => void;
+  onDelete?: (value: string) => void;
+  display?: string;
+  className?: string;
+}) {
+  const menu = useRef<HTMLDetailsElement>(null);
+  const [openUp, setOpenUp] = useState(false);
+  const close = () => { if (menu.current) menu.current.open = false; menu.current?.querySelector("summary")?.focus(); };
+  return <details ref={menu} className={`${styles.columnMenu} ${styles.personMenu} ${className}`} data-open-up={openUp}
+    onToggle={event => {
+      if (!event.currentTarget.open) return;
+      const summary = event.currentTarget.querySelector("summary")?.getBoundingClientRect();
+      const list = event.currentTarget.querySelector(":scope > div")?.getBoundingClientRect();
+      if (!summary || !list) return;
+      let boundary = event.currentTarget.parentElement;
+      while (boundary && boundary !== document.body && !/(auto|scroll|hidden|clip)/.test(getComputedStyle(boundary).overflowY)) boundary = boundary.parentElement;
+      const top = Math.max(0, boundary?.getBoundingClientRect().top ?? 0);
+      const bottom = Math.min(window.innerHeight, boundary?.getBoundingClientRect().bottom ?? window.innerHeight);
+      const above = summary.top - top;
+      const below = bottom - summary.bottom;
+      setOpenUp(below < list.height + 4 && above > below);
+    }}
+    onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }}
+    onKeyDown={event => {
+      if (event.key === "Escape" && menu.current?.open) { event.preventDefault(); event.stopPropagation(); close(); }
+      if (!menu.current?.open || !["ArrowDown", "ArrowUp"].includes(event.key)) return;
+      event.preventDefault();
+      const buttons = Array.from(menu.current.querySelectorAll<HTMLButtonElement>("button[data-option]:not(:disabled)"));
+      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === "ArrowDown" ? (index + 1) % buttons.length : (index < 0 ? buttons.length : index) - 1;
+      buttons[next]?.focus();
+    }}>
+    <summary aria-label={label}><span>{display ?? options.find(option => option.value === value)?.label ?? "请选择"}</span><ChevronRight size={13} /></summary>
+    <div>{options.length ? options.map(option => {
+      const choose = <button type="button" key={option.value} data-option disabled={option.disabled} title={option.title}
+        aria-pressed={value === option.value} onClick={() => { onSelect(option.value); close(); }}>
+        {option.label}{value === option.value && <Check size={14} />}</button>;
+      return onDelete ? <div className={styles.optionRow} key={option.value}>{choose}
+        <button type="button" className={styles.optionDelete} aria-label={`删除“${option.label}”`}
+          onClick={() => { close(); onDelete(option.value); }}><Trash2 size={14} /></button></div>
+        : choose;
+    })
+      : <button type="button" disabled>暂无已存公式</button>}</div>
   </details>;
 }

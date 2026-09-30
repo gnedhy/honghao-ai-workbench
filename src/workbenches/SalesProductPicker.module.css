@@ -1,0 +1,44 @@
+.picker { position:relative; min-width:0; font-size:calc(12px + var(--ui-font-offset)); }
+.picker > summary { display:flex; align-items:center; gap:8px; box-sizing:border-box; min-width:265px; max-width:min(420px,100%); min-height:34px; padding:5px 9px; border:1px solid var(--border); border-radius:6px; background:#fff; list-style:none; cursor:pointer; }
+.picker > summary::-webkit-details-marker { display:none; }
+.picker > summary strong { min-width:0; max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:calc(12px + var(--ui-font-offset)); }
+.picker > summary span { flex:none; color:#58646c; font-size:calc(11px + var(--ui-font-offset)); white-space:nowrap; }
+.picker > summary b { flex:none; font-size:calc(14px + var(--ui-font-offset)); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.picker > summary small { color:#68747b; font-size:calc(10px + var(--ui-font-offset)); font-weight:400; }
+.picker > summary > svg:last-child { flex:none; margin-left:auto; color:#68747b; transition:transform var(--duration-short,160ms) var(--ease-out,ease); }
+.picker[open] > summary > svg:last-child { transform:rotate(180deg); }
+.picker :is(summary,input,select,button):focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }
+.popover { position:absolute; z-index:30; top:calc(100% + 5px); left:0; box-sizing:border-box; width:min(440px,calc(100vw - 32px)); max-height:390px; overflow:auto; padding:8px; border:1px solid var(--border); border-radius:8px; background:#fff; box-shadow:0 8px 22px #18222b18; }
+.filters { position:sticky; top:-8px; z-index:1; display:grid; grid-template-columns:minmax(0,1fr) 132px; gap:6px; padding:5px; background:#fff; }
+.search { display:flex; align-items:center; gap:6px; min-width:0; color:#68747b; }
+.search input { box-sizing:border-box; min-width:0; width:100%; min-height:32px; padding:5px 7px; border:1px solid var(--border); border-radius:6px; background:#fff; color:var(--text); font:inherit; }
+.search input { flex:1; }
+.picker .departmentMenu > summary { box-sizing:border-box; width:100%; min-width:0; max-width:none; height:32px; min-height:32px; justify-content:space-between; padding:0 8px; border-radius:6px; font-size:calc(11px + var(--ui-font-offset)); white-space:nowrap; }
+.picker .departmentMenu > div { top:36px; z-index:4; }
+.picker .departmentMenu > summary > svg:last-child { margin-left:auto; transform:rotate(90deg); }
+.picker .departmentMenu[open] > summary > svg:last-child { transform:rotate(270deg); }
+.options { display:grid; }
+.option { display:grid; grid-template-columns:minmax(85px,1fr) 94px 94px; align-items:stretch; gap:5px; padding:7px 3px; border-top:1px solid #edf0f1; }
+.identity { display:grid; align-content:center; min-width:0; gap:3px; padding-left:5px; }
+.identity strong,.identity small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.identity small { color:#68747b; font-size:calc(10px + var(--ui-font-offset)); }
+.option button { position:relative; display:grid; align-content:center; justify-items:start; gap:2px; min-height:44px; padding:4px 7px; border:1px solid transparent; border-radius:5px; background:#f7f8f9; color:var(--text); font:inherit; text-align:left; cursor:pointer; }
+.option button:disabled { cursor:not-allowed; opacity:.45; }
+.option button:hover:not(:disabled),.option button[aria-pressed="true"] { border-color:var(--border); background:#eef2f4; }
+.option button span { color:#58646c; font-size:calc(10px + var(--ui-font-offset)); }
+.option button b { font-variant-numeric:tabular-nums; }
+.option button svg { position:absolute; right:5px; bottom:7px; }
+.options > p { margin:8px; color:#68747b; }
+.addPicker { display:block; margin-top:10px; }
+.addPicker > summary { min-width:0; width:100%; max-width:none; border-style:dashed; color:#46545e; }
+.addPicker > summary:hover { background:#f7f9fa; }
+@media (max-width:600px) {
+  .picker { max-width:100%; }
+  .picker > summary { min-width:0; width:min(100%,360px); }
+  .picker > summary strong { max-width:105px; }
+  .addPicker > summary { width:100%; }
+  .popover { width:min(360px,calc(100vw - 32px)); }
+  .filters { grid-template-columns:1fr; }
+  .option { grid-template-columns:minmax(70px,1fr) 85px 85px; }
+}
+@media (prefers-reduced-motion:reduce) { .picker summary > svg:last-child { transition:none; } }

@@ -18,11 +18,15 @@ def legacy(tmp_path, pg_targets):
     path = snapshot / 'honghao.db'
     with sqlite3.connect(path) as source, postgres.transaction(pg_targets[0]) as target:
         for table in ops._table_names(target):
+            if table in migration.POST_SQLITE_TABLES:
+                continue
             columns = target.execute("SELECT column_name,data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=%s AND column_name!='_order' ORDER BY ordinal_position", (table,)).fetchall()
             declarations = [migration._quote(name) + (' INTEGER PRIMARY KEY AUTOINCREMENT' if table == 'research_cost_records' and name == 'sequence' else ' ' + ('INTEGER' if kind in {'integer','bigint'} else 'BLOB' if kind == 'bytea' else 'TEXT')) for name, kind in columns]
             source.execute(f'CREATE TABLE {migration._quote(table)} ({",".join(declarations)})')
             names = ','.join(migration._quote(name) for name, _ in columns)
             rows = target.execute(f'SELECT {names},_order FROM public.{migration._quote(table)} ORDER BY _order').fetchall()
+            if table == 'schema_metadata':
+                rows = [row for row in rows if row[0] != migration.POST_SQLITE_VERSION]
             source.executemany(f'INSERT INTO {migration._quote(table)} ({names},rowid) VALUES ({",".join("?" for _ in range(len(columns)+1))})', rows)
         source.execute("INSERT INTO identity_users(id,username,display_name,password_salt,password_hash,is_active,created_at,access_level,rowid) VALUES(?,?,?,?,?,1,'2026-09-14T01:02:03+00:00',1,19)", ('u1', 'MixedCase', '长姓名·测试', b'\x00\x01\xff', b'\x00secret-hash\xfe'))
         source.execute("INSERT INTO identity_user_roles VALUES('u1','employee')")
@@ -73,6 +77,8 @@ def test_complete_import_preserves_order_bytes_precision_paths_sequences_and_con
     assert len(result['tables']) == 58
     assert ops._sha256(path) == before
     with postgres.transaction(pg_targets[0]) as db:
+        assert db.execute("SELECT value FROM schema_metadata WHERE key='workbench_sales_schema_version'").fetchone() == (2,)
+        assert all(db.execute(f'SELECT COUNT(*) FROM {migration._quote(table)}').fetchone() == (0,) for table in migration.POST_SQLITE_TABLES)
         assert db.execute('SELECT password_salt,password_hash,_order FROM identity_users').fetchone() == (b'\x00\x01\xff', b'\x00secret-hash\xfe', 19)
         assert db.execute('SELECT latest_price,inventory_price FROM procurement_materials').fetchone() == ('0.00000000000000100','0')
         assert db.execute("SELECT stored_path FROM procurement_source_imports").fetchone()[0] == str(settings.data_dir / 'controlled-work/procurement-sources/original.xlsx')

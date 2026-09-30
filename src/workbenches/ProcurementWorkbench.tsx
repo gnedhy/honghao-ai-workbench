@@ -12,8 +12,8 @@ import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, ArrowUpDown, CalendarDay
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { createProcurementMaterial, bulkAdjustProcurementPrices, cancelProcurementUpdate, adjustProcurementPrice, cancelProcurementSchedule, confirmProcurementImport, fetchProcurementBatch, fetchProcurementMaterial, fetchProcurementOverview, fetchProcurementPreferences, previewProcurementImport, publishProcurementUpdate, reviewProcurementIssue, saveProcurementPreferences, updateProcurementMaterial } from "../api";
-import type { ProcurementBatchDetail, ProcurementImportPreview, ProcurementMaterial, ProcurementMaterialDetail, ProcurementOverview, ProcurementPage, ProcurementPreferences, ProcurementUpdate } from "../types";
-import { buildPriceMovement, buildRangeDistribution, buildPublishedPriceMovement, buildVersionMovers, moverDateRange, sortBatchPrices } from "./procurementAnalytics";
+import type { ProcurementBatchDetail, ProcurementImportPreview, ProcurementMaterial, ProcurementMaterialDetail, ProcurementOverview, ProcurementPage, ProcurementPreferences, ProcurementUpdate, ResearchMaterialDetail } from "../types";
+import { buildPriceMovement, buildRangeDistribution, buildPublishedPriceMovement, buildVersionMovers, focusedTrendAxis, moverDateRange, sortBatchPrices } from "./procurementAnalytics";
 import { defaultProcurementPage } from "./procurementWorkflow";
 import { buildLedgerRows, collectPriceEdits, draftLedgerChange, filterLedgerRows, formalLedgerChange, summarizeUpdate } from "./procurementLedger";
 import { PRICE_REASONS, REVIEW_REASONS, resolveReason, type ReasonSelection } from "./procurementReasons";
@@ -159,6 +159,7 @@ function PriceTrendPanel({ data, className = "" }: { data: ProcurementOverview; 
   const defaultMaterial = movement.ranked[0]?.code ?? data.materials[0]?.code ?? "";
   const [selectedMaterial, setSelectedMaterial] = useState(defaultMaterial);
   const trend = (history ?? []).filter(item => item.version_date.slice(0, 10) >= range.start && item.version_date.slice(0, 10) <= range.end && item.latest_price != null && Number.isFinite(Number(item.latest_price))).map(item => ({recordedAt: item.version_date, value: Number(item.latest_price)}));
+  const axis = focusedTrendAxis([{ values: trend.map(item => item.value) }]);
   useEffect(() => {
     const material = data.materials.find(item => item.code === selectedMaterial);
     if (!material) return;
@@ -174,7 +175,7 @@ function PriceTrendPanel({ data, className = "" }: { data: ProcurementOverview; 
 
   return <DashboardPanel className={`${styles.dashboardPanel} ${styles.trendPanel}${className ? ` ${className}` : ""}`}>
     <div className={styles.panelHeading}><div><span>历史价格记录</span><h2>原料价格走势</h2></div><div className={styles.chartActions}><PriceDateRangeMenu label="走势日期范围" period={period} range={range} onChange={setPeriod} /><TrendMaterialMenu materials={data.materials} selected={selectedMaterial} onSelect={setSelectedMaterial} /></div></div>
-    {failed ? <ChartEmpty title="价格历史暂时不可用" detail="稍后重新进入该页面。" /> : history === null ? <WorkbenchLoading local title="正在读取采购价格趋势" /> : trend.length < 2 ? <ChartEmpty title="暂无可比较周期" detail="至少需要两期单值价格才会生成趋势线。" /> : <div className={styles.lineChart} aria-label={`${selectedMaterial}价格趋势`}><ResponsiveContainer width="100%" height="100%"><LineChart data={trend} accessibilityLayer margin={{ top: 8, right: 12, bottom: 4, left: 0 }}><CartesianGrid stroke="#edf0f1" vertical={false} /><XAxis dataKey="recordedAt" tickFormatter={shortDate} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} width={44} /><Tooltip labelFormatter={(value) => formatPriceDate(String(value))} formatter={(value) => [price(String(value)), "最新价"]} /><Line type="monotone" dataKey="value" stroke="#2f3337" strokeWidth={2} dot={{ r: 3, fill: "#fff", strokeWidth: 2 }} activeDot={{ r: 4 }} /></LineChart></ResponsiveContainer></div>}
+    {failed ? <ChartEmpty title="价格历史暂时不可用" detail="稍后重新进入该页面。" /> : history === null ? <WorkbenchLoading local title="正在读取采购价格趋势" /> : trend.length < 2 ? <ChartEmpty title="暂无可比较周期" detail="至少需要两期单值价格才会生成趋势线。" /> : <div className={styles.lineChart} aria-label={`${selectedMaterial}价格趋势`}><ResponsiveContainer width="100%" height="100%"><LineChart data={trend} accessibilityLayer margin={{ top: 8, right: 12, bottom: 4, left: 0 }}><CartesianGrid stroke="#edf0f1" vertical={false} /><XAxis dataKey="recordedAt" tickFormatter={shortDate} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis domain={axis.domain} ticks={axis.ticks} interval="preserveStartEnd" minTickGap={6} tickFormatter={value => Number(value).toFixed(2)} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} width={52} /><Tooltip labelFormatter={(value) => formatPriceDate(String(value))} formatter={(value) => [price(String(value)), "最新价"]} /><Line type="monotone" dataKey="value" stroke="#2f3337" strokeWidth={2} dot={{ r: 3, fill: "#fff", strokeWidth: 2 }} activeDot={{ r: 4 }} /></LineChart></ResponsiveContainer></div>}
   </DashboardPanel>;
 }
 
@@ -647,19 +648,19 @@ function LedgerPanel({ title, busy, onClose, children }: { fixedBody?: boolean; 
   return <Drawer title={title} busy={busy} onClose={onClose} bodyClassName={styles.ledgerPanelBody} closeLabel="关闭本轮面板">{children}</Drawer>;
 }
 
-function ledgerCell(item: ProcurementMaterial, column: string, pending: boolean) {
+export function ledgerCell(item: ProcurementMaterial, column: string, pending: boolean) {
   if (column === "modifier") {
     const modifier = item.price_modifier;
     return modifier?.name ? <span className={styles.modifierCell}><span>{modifier.name}</span>{(item.round_participants?.length ?? 0) > 1 && <details><summary>本轮 {item.round_participants?.length} 人</summary><small>{item.round_participants?.map(person => person.name).join("、")}</small></details>}</span> : !modifier && item.published_price == null && item.source_purchasers?.length ? <span className={styles.modifierCell}>{item.source_purchasers.join("、")}</span> : "未记录";
   }
   if (column === "unit") return item.unit;
-  if (column === "inventory_quantity") return item.inventory_quantity == null ? "—" : <span title={`${item.inventory_quantity} ${item.unit}`}>{Number(item.inventory_quantity) === 0 ? "—" : Math.trunc(Number(item.inventory_quantity))}</span>;
+  if (column === "inventory_quantity") return item.inventory_quantity == null ? "—" : <span title={`${item.inventory_quantity} ${item.unit}`}>{Math.trunc(Number(item.inventory_quantity))}</span>;
   if (column === "latest_price") return item.published_price == null ? "—" : <strong>{price(item.published_price)}</strong>;
   if (column === "previous_latest_price") return item.previous_published_price == null ? "—" : <strong>{price(item.previous_published_price)}</strong>;
   if (column === "price_date") return item.published_price_date ? formatPriceDate(item.published_price_date) : "—";
   if (column === "status") return <span className={`${styles.statusPill} ${pending ? styles.statusPending : item.published_price == null ? styles.statusMissing : styles.statusOk}`}>{pending ? "待处理" : item.published_price == null ? "未定价" : "有效"}</span>;
   if (column === "in_transit_price") return price(item.in_transit_price);
-  if (column === "inventory_price") return item.inventory_price == null || Number(item.inventory_price) === 0 ? "—" : <strong>{price(item.inventory_price)}</strong>;
+  if (column === "inventory_price") return item.inventory_price == null ? "—" : <strong>{price(item.inventory_price)}</strong>;
   return price(item.suggested_price);
 }
 
@@ -683,8 +684,8 @@ function ReasonSelect({ label, options, placeholder, value = { selected: "", cus
   </div>;
 }
 
-function MaterialDrawer({ batches, materialId, canEdit, canManage, onClose, onChanged, currentPriceDate, startWithNewPrice = false }: { batches: ProcurementOverview["batches"]; materialId: string; canEdit: boolean; canManage: boolean; onClose: () => void; onChanged?: () => void; currentPriceDate?: string; startWithNewPrice?: boolean }) {
-  const [detail, setDetail] = useState<ProcurementMaterialDetail | null>(null);
+export function MaterialDrawer({ batches, materialId, canEdit, canManage, onClose, onChanged, currentPriceDate, startWithNewPrice = false, loadMaterial = fetchProcurementMaterial, refreshEveryMs }: { batches: Array<{ id: string; comparison?: { added_material_ids?: string[] } | null }>; materialId: string; canEdit: boolean; canManage: boolean; onClose: () => void; onChanged?: () => void; currentPriceDate?: string; startWithNewPrice?: boolean; loadMaterial?: (id: string, signal?: AbortSignal) => Promise<ResearchMaterialDetail>; refreshEveryMs?: number }) {
+  const [detail, setDetail] = useState<ResearchMaterialDetail | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const { closing, close: finishClose } = useExitTransition(onClose);
   const [editing, setEditing] = useState<string | null>(startWithNewPrice ? "new" : null);
@@ -701,14 +702,14 @@ function MaterialDrawer({ batches, materialId, canEdit, canManage, onClose, onCh
   const [error, setError] = useState("");
   const dateInput = useRef<HTMLInputElement>(null);
   const load = useCallback((signal?: AbortSignal) => {
-    setLoadState("loading");
-    return fetchProcurementMaterial(materialId, signal)
+    setLoadState(state => state === "ready" ? state : "loading");
+    return loadMaterial(materialId, signal)
       .then((value) => { setDetail(value); setLoadState("ready"); })
       .catch((failure: unknown) => {
         if (!(failure instanceof DOMException && failure.name === "AbortError")) setLoadState("error");
       });
-  }, [materialId]);
-  useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
+  }, [loadMaterial, materialId]);
+  useEffect(() => { const controller = new AbortController(); void load(controller.signal); const timer = refreshEveryMs ? window.setInterval(() => void load(controller.signal), refreshEveryMs) : null; return () => { controller.abort(); if (timer !== null) clearInterval(timer); }; }, [load, refreshEveryMs]);
   const unsaved = identityStep ? Boolean(detail && identityCode.trim() !== detail.material.code) : Boolean(priceValue);
   const close = (discard = false) => { if (closing || saving) return; if (unsaved && !discard) { setDiscardTarget("drawer"); return; } setDiscardTarget(null); finishClose(); };
   const closePanel = (saved = false) => {
@@ -760,7 +761,8 @@ function MaterialDrawer({ batches, materialId, canEdit, canManage, onClose, onCh
   return <div inert={closing} className={`${styles.drawerLayer} ${closing ? styles.closing : ""}`} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); panelOpen ? closePanel() : close(); } else recordDialogKeys(event); }}>
     <aside className={styles.drawer} role="dialog" aria-modal="true" aria-label="原料价格详情">
       <header className={styles.drawerHeader}><div><span>原料详情</span><h2>{detail ? detail.material.code : "正在读取"}</h2></div><div className={styles.drawerHeaderActions}>{detail && canEdit && <button className="primary-button" type="button" onClick={() => startEdit(null)}><Pencil size={14} />录入新价格</button>}{detail && canManage && <button className="secondary-button" type="button" onClick={startIdentityEdit}><Pencil size={14} />编辑资料</button>}<button className="icon-button" type="button" aria-label="关闭详情" ref={focusWithoutScroll} onClick={() => close()}><X size={17} /></button></div></header>
-      {loadState === "error" ? <div className={styles.drawerLoading}><span><strong>原料详情暂时不可用</strong><small>请重新加载后再录入价格。</small><button className="secondary-button" type="button" onClick={() => void load()}>重新加载</button></span></div> : !detail ? <WorkbenchLoading local title="正在读取原料详情" /> : <div className={styles.drawerBody}>
+      {loadState === "error" && !detail ? <div className={styles.drawerLoading}><span><strong>原料详情暂时不可用</strong><button className="secondary-button" type="button" onClick={() => void load()}>重新加载</button></span></div> : !detail ? <WorkbenchLoading local title="正在读取原料详情" /> : <div className={styles.drawerBody}>
+        {loadState === "error" && <p role="alert" className={styles.error}>价格更新失败，当前显示上次读取的内容。<button type="button" onClick={() => void load()}>重试</button></p>}
         <div className={styles.detailMetrics}><div><span>最新价格</span><strong>{price(latestOfficial?.latest_price)}</strong></div><div><span>上版价格</span><strong>{price(previousPrice)}</strong></div><div><span>涨跌</span><Movement value={change} /></div><div><span>价格日期</span><strong>{latestOfficial?.price_date ? formatPriceDate(latestOfficial.price_date) : "—"}</strong></div></div>
         <section className={styles.drawerSection}><div><span>价格版本</span><h3>有效价格走势</h3></div>{trend.length < 2 ? <ChartEmpty title="暂无可比较周期" detail="至少需要两期有效价格。" /> : <div className={styles.detailChart}><ResponsiveContainer width="100%" height="100%"><LineChart data={trend}><CartesianGrid stroke="#edf0f1" vertical={false} /><XAxis dataKey="date" tickFormatter={shortDate} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} width={42} /><Tooltip formatter={(value) => [price(String(value)), "参考价"]} /><Line type="monotone" dataKey="price" stroke="#2f3337" strokeWidth={2} dot={{ r: 2.5 }} /></LineChart></ResponsiveContainer></div>}</section>
         <section className={styles.drawerSection}><div><span>历史记录</span><h3>{validPriceCount} 期有效价格</h3></div><div className={styles.priceHistory}><div className={styles.priceHistoryHeading} aria-hidden="true"><span>版本日期</span><span>价格</span><span>修改人</span><span /></div>{[...official].reverse().map(item => <details key={item.id}><summary aria-label={`v${item.version} ${formatPriceDate(item.version_date)}，价格 ${item.latest_price == null ? item.raw_price ?? "未定价" : price(item.latest_price)}，修改人 ${item.modifier?.name || "未记录"}`}><span className={styles.historyDate}>{formatPriceDate(item.version_date)}<small>v{item.version}</small></span><strong>{item.latest_price == null ? item.raw_price ?? "未定价" : price(item.latest_price)}</strong><span>{item.modifier?.name || "未记录"}</span><ChevronRight size={13} aria-hidden="true" /></summary><dl className={styles.historySource}><div><dt>价格来源日期</dt><dd>{item.price_date ? formatPriceDate(item.price_date) : "未记录"}</dd></div><div><dt>数据位置</dt><dd>{[item.sheet, item.cell].filter(Boolean).join(" · ") || "未记录"}</dd></div></dl></details>)}</div></section>

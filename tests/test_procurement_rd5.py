@@ -265,8 +265,8 @@ def test_quantity_nullable_schema_preserves_source_and_preferences(data):
     settings, _, _, admin = data
     before = table_rows(settings.database_url)['procurement_inventory']
     preferences = ProcurementStore(settings.database_url).preferences(admin)
-    assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == 2
-    assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == 2
+    assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == 4
+    assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == 4
     assert ProcurementStore(settings.database_url).schema_version() == 7
     assert table_rows(settings.database_url)['procurement_inventory'] == before
     assert ProcurementStore(settings.database_url).preferences(admin) == preferences

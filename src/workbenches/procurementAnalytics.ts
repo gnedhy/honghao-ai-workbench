@@ -48,6 +48,20 @@ export function buildPriceTrend(history: PriceHistoryItem[], materialCode: strin
     .sort((left, right) => left.recordedAt.localeCompare(right.recordedAt));
 }
 
+export function focusedTrendAxis(series: Array<{ values: Array<number | null> }>) {
+  const values = series.flatMap(item => item.values).filter((value): value is number => value !== null && Number.isFinite(value));
+  if (!values.length) return { domain: [0, 1] as [number, number], ticks: [0, 1] };
+  const low = Math.min(...values), high = Math.max(...values);
+  const target = Math.max((high - low) / 3, high * 0.05, 0.01);
+  const unit = 10 ** Math.floor(Math.log10(target));
+  const step = [1, 2, 2.5, 5, 10].map(value => value * unit).find(value => value >= target)!;
+  const padding = Math.max((high - low) * 0.05, step * 0.1);
+  const start = Math.max(0, Math.floor((low - padding) / step) * step);
+  const end = Math.ceil((high + padding) / step) * step;
+  const ticks = Array.from({ length: Math.round((end - start) / step) + 1 }, (_, index) => Number((start + index * step).toFixed(6)));
+  return { domain: [ticks[0], ticks.at(-1)!] as [number, number], ticks };
+}
+
 export function buildPublishedPriceMovement(materials: Array<{ id: string; code: string }>, comparison?: { up: number; down: number; unchanged: number; first: number; missing: number; items?: Record<string, { change: number | null }> }) {
   const ranked = materials.flatMap(item => {
     const change = comparison?.items?.[item.id]?.change;

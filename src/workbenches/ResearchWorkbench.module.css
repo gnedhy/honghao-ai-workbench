@@ -1,4 +1,5 @@
 .root { min-width: 0; }
+.materialDisplayMenu { margin-left: auto; }
 .root :where(h2) { font-size: calc(18px + var(--ui-font-offset)); margin: 0; }
 .root h3 { font-size: calc(15px + var(--ui-font-offset)); margin: 0; }
 .ledgerPage { display: flex; flex-direction: column; overflow: hidden; }
@@ -38,6 +39,9 @@
 .ledgerSection { display: flex; flex-direction: column; min-height: 0; flex: 1; padding-top: 20px; }
 .sectionHeading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; flex: none; margin-bottom: 16px; }
 .sectionHeading > span { font-size: calc(12px + var(--ui-font-offset)); color: var(--muted); }
+.costHeadingText { display: flex; flex: 1 1 auto; min-width: 0; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; }
+.costHeadingText span { color: var(--muted); font-size: calc(12px + var(--ui-font-offset)); }
+.costHeadingText + button { flex: none; margin-left: auto; white-space: nowrap; }
 .frame { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .toolbar { flex-wrap: wrap; }
 .tableScroll { flex: 1; min-height: 160px; overflow: auto; }

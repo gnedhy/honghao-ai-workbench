@@ -35,12 +35,13 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
     history.add_argument("--apply", action="store_true")
     history.add_argument("--actor-id")
     history.add_argument("--sha256")
-    inventory = subcommands.add_parser("procurement-inventory", help="管理员导入完整库存报表；默认只预检")
+    inventory = subcommands.add_parser("procurement-inventory", help="管理员导入库存报表；默认只预检且要求完整匹配")
     inventory.add_argument("source", type=Path)
     inventory.add_argument("--apply", action="store_true")
     inventory.add_argument("--actor-id")
     inventory.add_argument("--sha256")
     inventory.add_argument("--catalog-sha256")
+    inventory.add_argument("--partial", action="store_true", help="仅更新报表中列出的原料；其余保持不变")
     rd5 = subcommands.add_parser("procurement-rd5", help="管理员补齐研发五部原料并准备配方数据；默认只预检")
     rd5.add_argument("source", type=Path)
     rd5.add_argument("--apply", action="store_true")
@@ -125,12 +126,13 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
             return 0
         if args.command == "procurement-inventory":
             from api.procurement_inventory import inventory_preview, import_inventory
-            result = inventory_preview(runtime_settings.database_url, args.source.read_bytes())
+            result = inventory_preview(runtime_settings.database_url, args.source.read_bytes(), partial=args.partial)
             if args.apply:
                 if not args.actor_id or not args.sha256 or not args.catalog_sha256:
                     raise ValueError("执行导入须提供有效管理员ID、预检文件SHA256及目录SHA256")
                 result = import_inventory(runtime_settings.database_url, args.source, args.actor_id,
-                                          data_dir=runtime_settings.data_dir, expected_sha256=args.sha256, expected_catalog_sha256=args.catalog_sha256)
+                                          data_dir=runtime_settings.data_dir, expected_sha256=args.sha256, expected_catalog_sha256=args.catalog_sha256,
+                                          partial=args.partial)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         if args.command == "procurement-history":

@@ -45,6 +45,7 @@ from api.operations import readiness_checks, service_marker
 from api.procurement import ProcurementStore, create_procurement_router
 from api.procurement_collaboration import capabilities
 from api.research import ResearchStore, create_research_router
+from api.sales import SalesStore, create_sales_router
 
 
 API_VERSION = "0.1.0"
@@ -315,6 +316,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     procurement = ProcurementStore(runtime_settings.database_url)
     feedback = FeedbackStore(runtime_settings.database_url)
     research = ResearchStore(runtime_settings.database_url)
+    sales = SalesStore(runtime_settings.database_url)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -1144,6 +1146,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
 
     app.include_router(create_procurement_router(procurement, authorization, runtime_settings))
     app.include_router(create_research_router(research, runtime_settings))
+    app.include_router(create_sales_router(sales, runtime_settings))
     app.include_router(create_feedback_router(feedback, current_user))
 
     if static_root is not None:

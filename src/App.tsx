@@ -13,7 +13,7 @@ import { ConversationScreen } from "./screens/ConversationScreen";
 import { KnowledgeScreen } from "./screens/KnowledgeScreen";
 import { TaskBoardScreen } from "./screens/TaskBoardScreen";
 import { workbenches, WorkbenchScreen } from "./screens/WorkbenchScreen";
-import type { Conversation, ConversationMessage, ConversationView, CurrentUser, ModuleStatus, ModuleVisibility, ResearchPage, ProcurementPage, Project, Section, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
+import type { Conversation, ConversationMessage, ConversationView, CurrentUser, ModuleStatus, ModuleVisibility, ResearchPage, SalesPage, ProcurementPage, Project, Section, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
 import { PROCUREMENT_PAGE_LABELS } from "./types";
 
 type AppProps = {
@@ -83,6 +83,7 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
   const [workbenchRegistryState, setWorkbenchRegistryState] = useState<"loading" | "ready" | "error">("loading");
   const [selectedWorkbenchId, setSelectedWorkbenchId] = useState<WorkbenchId>("management");
   const [openedWorkbenchId, setOpenedWorkbenchId] = useState<WorkbenchId | null>(null);
+  const [salesPage, setSalesPage] = useState<SalesPage>("dashboard");
   const [researchPage, setResearchPage] = useState<ResearchPage>("dashboard");
   const [procurementPage, setProcurementPage] = useState<ProcurementPage>("dashboard");
   const [knowledgeScope, setKnowledgeScope] = useState<"个人" | "公共">("个人");
@@ -374,6 +375,8 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
         enabledModules={enabledModules}
         environment={runtimeEnvironment}
         openedWorkbenchId={openedWorkbenchId}
+        salesPage={salesPage}
+        onSalesPageChange={async (next) => { if (await allowProcurementLeave()) setSalesPage(next); }}
         researchPage={researchPage}
         onResearchPageChange={async (next) => { if (await allowProcurementLeave()) setResearchPage(next); }}
         procurementPage={procurementPage}
@@ -396,7 +399,7 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
       {section === "chat" && enabledModules.chat && <ConversationScreen {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversationId) { const update = projectUpdatePromise.current.catch(() => undefined).then(async () => { const updated = await setConversationProject(selectedConversationId, projectId); setConversations((current) => current.map((conversation) => conversation.id === updated.id ? updated : conversation)); }); projectUpdatePromise.current = update; void update.catch(() => setWorkbenchDataState("error")); } else { setCurrentProjectId(projectId); } }} messages={messages} messagesState={messagesState} onSubmit={submitMessage} />}
       {section === "knowledge" && enabledModules.knowledge && <KnowledgeScreen {...screenChrome} scopeTab={knowledgeScope} onScopeTabChange={setKnowledgeScope} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
       {section === "automation" && enabledModules.automation && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
-      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} currentUser={currentUser} statuses={workbenchStatuses} dataState={workbenchRegistryState} selectedId={selectedWorkbenchId} onSelectedIdChange={async (id) => { if (!await allowProcurementLeave()) return; setSelectedWorkbenchId(id); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); }} openedWorkbenchId={openedWorkbenchId} onOpenedWorkbenchIdChange={async (next) => { if (await allowProcurementLeave()) setOpenedWorkbenchId(next); }} researchPage={researchPage} onResearchPageChange={async (next) => { if (await allowProcurementLeave()) setResearchPage(next); }} procurementPage={procurementPage} onProcurementPageChange={setProcurementPage} />}
+      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} currentUser={currentUser} statuses={workbenchStatuses} dataState={workbenchRegistryState} selectedId={selectedWorkbenchId} onSelectedIdChange={async (id) => { if (!await allowProcurementLeave()) return; setSelectedWorkbenchId(id); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); }} openedWorkbenchId={openedWorkbenchId} onOpenedWorkbenchIdChange={async (next) => { if (await allowProcurementLeave()) setOpenedWorkbenchId(next); }} salesPage={salesPage} onSalesPageChange={async (next) => { if (await allowProcurementLeave()) setSalesPage(next); }} researchPage={researchPage} onResearchPageChange={async (next) => { if (await allowProcurementLeave()) setResearchPage(next); }} procurementPage={procurementPage} onProcurementPageChange={setProcurementPage} />}
       {section === "tasks" && enabledModules.tasks && <TaskBoardScreen {...screenChrome} tasks={tasks} projects={projects} conversations={conversations} dataState={workbenchDataState} selectedTask={selectedTask} onSelectedTaskChange={(task) => setSelectedTaskId(task.id)} />}
       <ContextSidebar
         section={section}

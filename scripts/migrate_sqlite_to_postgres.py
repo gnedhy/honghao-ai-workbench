@@ -20,6 +20,10 @@ from api import operations as ops
 from api.postgres import database_lease, transaction
 from api.settings import Settings
 
+# The frozen SQLite baseline predates sales. New PostgreSQL tables stay empty.
+POST_SQLITE_TABLES = {'sales_batches', 'sales_trials', 'sales_records', 'sales_events', 'sales_calculator_saved'}
+POST_SQLITE_VERSION = 'workbench_sales_schema_version'
+
 
 def _quote(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
@@ -70,7 +74,8 @@ def _prepare(baseline: Path, staging: Path, environment: str) -> tuple[dict, lis
 def _source_evidence(source: sqlite3.Connection) -> dict:
     if source.execute('PRAGMA integrity_check').fetchall() != [('ok',)] or source.execute('PRAGMA foreign_key_check').fetchall():
         raise ValueError('SQLite 完整性或外键校验失败')
-    if dict(source.execute('SELECT key,value FROM schema_metadata')) != ops._expected_schema_versions():
+    expected = {key: value for key, value in ops._expected_schema_versions().items() if key != POST_SQLITE_VERSION}
+    if dict(source.execute('SELECT key,value FROM schema_metadata')) != expected:
         raise ValueError('SQLite 业务版本与迁移工具不兼容')
     tables = {}
     for (table,) in source.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall():
@@ -113,13 +118,23 @@ def _source_paths(source: sqlite3.Connection, staging: Path, target: Path, recor
     return mappings
 
 
+def _legacy_evidence(db, mappings=None):
+    evidence = {key: value for key, value in ops._table_evidence(db, mappings).items() if key not in POST_SQLITE_TABLES}
+    rows = db.execute('SELECT * FROM schema_metadata WHERE key!=%s ORDER BY _order', (POST_SQLITE_VERSION,)).fetchall()
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update(json.dumps(row, ensure_ascii=False, separators=(',', ':')).encode('utf-8') + b'\n')
+    evidence['schema_metadata'].update(count=len(rows), sha256=digest.hexdigest())
+    return evidence
+
+
 def _target_check(db, settings: Settings, tables: dict) -> None:
     ops._database_header(db, settings.database_environment)
     if not db.execute("SELECT has_table_privilege(current_user,'honghao_meta.schema_migrations','INSERT')").fetchone()[0]:
         raise PermissionError('迁入须使用迁移账号')
     if not ops._empty_restore_target(db):
         raise ValueError('迁入仅允许空业务数据库；现有数据保持不变')
-    target = ops._table_evidence(db)
+    target = _legacy_evidence(db)
     if target.keys() != tables.keys() or any(target[name]['columns'] != item['columns'] for name, item in tables.items()):
         raise ValueError('源与目标的表或字段不一致')
 
@@ -129,10 +144,10 @@ def _copy_rows(source: sqlite3.Connection, db, tables: dict, mappings: dict[str,
     for table, parent in db.execute("SELECT child.relname,parent.relname FROM pg_constraint c "
             "JOIN pg_class child ON child.oid=c.conrelid JOIN pg_class parent ON parent.oid=c.confrelid "
             "JOIN pg_namespace n ON n.oid=child.relnamespace WHERE c.contype='f' AND n.nspname='public'"):
-        if table != parent:
+        if table in graph and table != parent:
             graph[table].add(parent)
     order = tuple(TopologicalSorter(graph).static_order())
-    db.execute(sql.SQL('TRUNCATE {} RESTART IDENTITY').format(sql.SQL(',').join(sql.Identifier('public', name) for name in tables)))
+    db.execute(sql.SQL('TRUNCATE {} RESTART IDENTITY').format(sql.SQL(',').join(sql.Identifier('public', name) for name in ops._table_names(db))))
     for table in order:
         columns = tables[table]['columns']
         command = sql.SQL('COPY public.{} ({}) FROM STDIN').format(sql.Identifier(table), sql.SQL(',').join(map(sql.Identifier, columns)))
@@ -144,7 +159,7 @@ def _copy_rows(source: sqlite3.Connection, db, tables: dict, mappings: dict[str,
                     row[index] = mappings[row[index]]
                 copier.write_row(row)
     # COPY checks native FKs (including self references) at statement end. No constraints are disabled.
-    actual = ops._table_evidence(db, {new: old for old, new in mappings.items()})
+    actual = _legacy_evidence(db, {new: old for old, new in mappings.items()})
     if actual != tables:
         raise ValueError('迁入后的内容、主键或行顺序不一致，事务已撤回')
     original_sequences = dict(source.execute('SELECT name,seq FROM sqlite_sequence')) if source.execute("SELECT 1 FROM sqlite_master WHERE name='sqlite_sequence'").fetchone() else {}
@@ -156,6 +171,7 @@ def _copy_rows(source: sqlite3.Connection, db, tables: dict, mappings: dict[str,
         next_value = max(highest, original_sequences.get(table, 0) if column != '_order' else 0, 0) + 1
         db.execute(sql.SQL('ALTER SEQUENCE {} RESTART WITH {}').format(sql.Identifier(*sequence.split('.')), sql.Literal(next_value)))
         sequences[f'{table}.{column}'] = next_value
+    db.execute('INSERT INTO schema_metadata(key,value) VALUES(%s,%s)', (POST_SQLITE_VERSION, ops._expected_schema_versions()[POST_SQLITE_VERSION]))
     return sequences
 
 
@@ -197,7 +213,7 @@ def import_baseline(settings: Settings, baseline: Path, *, apply: bool = False) 
                     result['next_sequences'] = _copy_rows(source, db, tables, mappings)
                 committed = True
                 with transaction(settings.database_url) as db:
-                    if ops._table_evidence(db, {new: old for old, new in mappings.items()}) != tables:
+                    if _legacy_evidence(db, {new: old for old, new in mappings.items()}) != tables:
                         raise RuntimeError('提交后核验失败；保留现场，禁止启动')
                     ops._references(db, settings.data_dir)
                 marker.unlink()

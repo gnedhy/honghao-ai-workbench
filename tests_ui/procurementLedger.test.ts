@@ -21,6 +21,15 @@ test("台账与上版正式价格比较：当前持平不沿用早先涨跌，�
   assert.deepEqual(ids(materials, { comparison: current, sort: "change" }), ["CF040", "CF298", "new"]);
 });
 
+test("正式台账按库存价和修改人排序，不借用最新价格", () => {
+  const materials = [
+    material("A", { published_price: "50", inventory_price: "2", price_modifier: { kind: "system", name: "张", id: "z" } }),
+    material("B", { published_price: "10", inventory_price: "8", price_modifier: { kind: "system", name: "李", id: "l" } }),
+  ];
+  assert.deepEqual(ids(materials, { sort: "inventory_price" }), ["A", "B"]);
+  assert.deepEqual(ids(materials, { sort: "modifier" }), ["B", "A"]);
+});
+
 test("待发布项优先，保存后的变化按待发布价比较，编辑输入不移动行", () => {
   const list = [material("old", { published_price: "20", previous_published_price: "10" }), material("down", { published_price: "10", previous_published_price: "1" }), material("up", { published_price: "10", previous_published_price: "100" })];
   const current = { input_items: [{ material_id: "down", draft_price: "8" }, { material_id: "up", draft_price: "12" }], issues: [] } as unknown as ProcurementUpdate;
