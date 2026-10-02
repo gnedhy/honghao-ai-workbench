@@ -11,6 +11,7 @@
 | 公共组件、控件与动效 | [组件索引](components.md)、[设计约定](../DESIGN.md) |
 | 业务范围与术语 | [产品范围](../PRODUCT.md)、[领域模型](../CONTEXT.md) |
 | 开发规范与可选工作方法 | [协作指引](agents/skill-workflow.md)、[任务跟踪](agents/issue-tracker.md) |
+| 工作台变更、实际消费者与隔离回归 | [关键回归地图](agents/workbench-regression.md) |
 | 架构与业务决策 | [ADR 目录](adr/) |
 | 数据安全与模块启用 | [安全审查目录](security/) |
 
@@ -62,6 +63,8 @@
 - [更新日志-2026-09-15](changelog/更新日志-2026-09-15.md)
 
 ## 历史验证与收尾
+
+- [W1 基线与回归-2026-10-02](history/records/W1-基线与回归-2026-10-02.md)
 
 - [知识收尾与推送准备-2026-09-30](history/records/知识收尾与推送准备-2026-09-30.md)
 - [发布审查-2026-09-09](history/records/发布审查-2026-09-09.md)
