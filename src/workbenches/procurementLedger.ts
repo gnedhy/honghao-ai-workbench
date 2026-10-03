@@ -92,7 +92,7 @@ export function filterLedgerRows(rows: ReturnType<typeof buildLedgerRows>, optio
     if (sort === "code") return sortDirection === "ascending" ? codeOrder : -codeOrder;
     const av = value(a), bv = value(b);
     if (av === null || bv === null) return av === bv ? codeOrder : av === null ? 1 : -1;
-    const result = typeof av === "string" && typeof bv === "string" ? av.localeCompare(bv) : Number(av) - Number(bv);
+    const result = typeof av === "string" && typeof bv === "string" ? av.localeCompare(bv, "zh-CN") : Number(av) - Number(bv);
     return (sortDirection === "ascending" ? result : -result) || codeOrder;
   });
 }
