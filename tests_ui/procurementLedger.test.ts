@@ -28,6 +28,7 @@ test("正式台账按库存价和修改人排序，不借用最新价格", () =>
   ];
   assert.deepEqual(ids(materials, { sort: "inventory_price" }), ["A", "B"]);
   assert.deepEqual(ids(materials, { sort: "modifier" }), ["B", "A"]);
+  assert.deepEqual(ids(materials, { sort: "modifier", sortDirection: "descending" }), ["A", "B"]);
 });
 
 test("待发布项优先，保存后的变化按待发布价比较，编辑输入不移动行", () => {

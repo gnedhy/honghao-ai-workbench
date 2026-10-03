@@ -26,7 +26,7 @@ type Props = {
 export function WorkbenchModuleSlot(props: Props) {
   const accessLevel = props.currentUser.is_system_admin ? 4 : props.currentUser.scope_levels[props.workbenchId] ?? 0;
   return (
-    <ModuleBoundary title={props.title}>
+    <ModuleBoundary key={`${props.currentUser.id}:${props.workbenchId}`} title={props.title}>
       {props.workbenchId === "procurement"
         ? <Suspense fallback={<WorkbenchLoading title={`正在加载${props.title}`} />}><ProcurementWorkbench accessLevel={accessLevel} view={props.view} page={props.procurementPage} onPageChange={props.onProcurementPageChange} onEnter={props.onEnter} /></Suspense>
         : props.workbenchId === "research" ? <Suspense fallback={<WorkbenchLoading title={`正在加载${props.title}`} />}><ResearchWorkbench accessLevel={accessLevel} userId={props.currentUser.id} view={props.view} page={props.researchPage} onPageChange={props.onResearchPageChange} onEnter={props.onEnter} /></Suspense> : props.workbenchId === "sales" ? <Suspense fallback={<WorkbenchLoading title="正在加载销售工作台" />}><SalesWorkbench accessLevel={accessLevel} currentUser={props.currentUser} page={props.salesPage} onPageChange={props.onSalesPageChange} view={props.view} onEnter={props.onEnter}/></Suspense> : <Pending title={props.title} />}
@@ -57,6 +57,6 @@ class ModuleBoundary extends Component<{ title: string; children: ReactNode }, {
 
   render() {
     if (!this.state.failed) return this.props.children;
-    return <Pending title={`${this.props.title}加载失败`} />;
+    return <article className="workbench-detail workspace-detail-empty" role="alert"><ShieldCheck size={24}/><strong>{this.props.title}加载失败</strong><p>请重新加载页面后重试。</p><button className="secondary-button" onClick={() => window.location.reload()}>重新加载页面</button></article>;
   }
 }

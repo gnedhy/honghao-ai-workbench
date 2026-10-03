@@ -15,8 +15,8 @@ export type FeedbackDraft = { kind: string; text: string; image: string };
 export const emptyFeedbackDraft: FeedbackDraft = { kind: "问题反馈", text: "", image: "" };
 const date = (value: string) => new Date(value).toLocaleString("zh-CN", { hour12: false });
 class FeedbackError extends Error { constructor(message: string, readonly status: number) { super(message); } }
-async function request<T>(path = "", method = "GET", body?: unknown): Promise<T> {
-  const response = await fetch(`/api/feedback${path}`, { method, ...(body !== undefined ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}) });
+async function request<T>(path = "", method = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`/api/feedback${path}`, { method, signal, ...(body !== undefined ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}) });
   const data = await response.json().catch(() => null);
   if (!response.ok) throw new FeedbackError(typeof data?.detail === "string" ? data.detail : "操作未完成，请稍后重试。", response.status);
   return data as T;
@@ -32,6 +32,10 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
   const bodyRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
   const fileSequence = useRef(0);
+  const lifetime = useRef<AbortController | null>(null);
+  const readSequence = useRef(0);
+  const listRequest = useRef<AbortController | null>(null);
+  const alive = () => lifetime.current !== null && !lifetime.current.signal.aborted;
   const { closing, close } = useExitTransition(onClose);
   const [records, setRecords] = useState<Feedback[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,17 +59,29 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
   const dirty = view === "new" ? !!(text || image || kind !== "问题反馈") : view === "detail" && admin && !!selected && (status !== selected.status || result !== (selected.result || ""));
 
   async function refresh() {
-    const rows = await request<Feedback[]>();
-    setRecords(rows);
-    return rows;
+    listRequest.current?.abort();
+    const controller = new AbortController();
+    listRequest.current = controller;
+    try {
+      const rows = await request<Feedback[]>("", "GET", undefined, controller.signal);
+      if (!alive() || controller.signal.aborted) return [];
+      setRecords(rows);
+      return rows;
+    } catch (error) {
+      if (!alive() || controller.signal.aborted) return [];
+      throw error;
+    }
   }
   useEffect(() => {
     const previous = previousFocus.current;
-    dialog.current?.showModal();
-    let active = true;
-    request<Feedback[]>().then(rows => { if (active) setRecords(rows); }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); });
     const element = dialog.current;
-    return () => { active = false; fileSequence.current++; element?.close(); if (previous?.isConnected) previous.focus(); };
+    const files = fileSequence;
+    const controller = new AbortController();
+    lifetime.current = controller;
+    element?.showModal();
+    const sequence = readSequence.current;
+    void refresh().catch(e => { if (!controller.signal.aborted && sequence === readSequence.current) setError(e.message); }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => { controller.abort(); listRequest.current?.abort(); files.current++; element?.close(); if (previous?.isConnected) previous.focus(); };
   }, []);
   useEffect(() => {
     const prevent = (event: BeforeUnloadEvent) => { if (dirty) { event.preventDefault(); event.returnValue = ""; } };
@@ -78,16 +94,18 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
     if (busyRef.current || imageLoading || closing) return;
     if (dirty && view === "detail") setPending(() => action); else action();
   }
-  function list() { setView("list"); setError(""); void refresh().catch(e => setError(e.message)); }
+  function list() { const sequence = ++readSequence.current; setView("list"); setError(""); void refresh().catch(e => { if (alive() && sequence === readSequence.current) setError(e.message); }); }
   async function open(row: Feedback) {
     if (busyRef.current) return;
+    const sequence = ++readSequence.current;
     setSelected(row); setStatus(row.status); setResult(row.result || ""); setError(""); setNotice(""); setView("detail");
     if (!row.unread) return;
     try {
-      await request(`/${encodeURIComponent(row.id)}/read`, "POST", { revision: row.revision });
-      setRecords(old => old.map(item => item.id === row.id ? { ...item, unread: false } : item));
+      await request(`/${encodeURIComponent(row.id)}/read`, "POST", { revision: row.revision }, lifetime.current?.signal);
+      if (!alive()) return;
+      setRecords(old => old.map(item => item.id === row.id && item.revision === row.revision ? { ...item, unread: false } : item));
       onUnreadChanged();
-    } catch { setError("未能标记已读，消息提醒已保留。"); }
+    } catch { if (alive() && sequence === readSequence.current) setError("未能标记已读，消息提醒已保留。"); }
   }
   async function chooseImage(file?: File) {
     if (!file) return;
@@ -98,9 +116,9 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
     try {
       const data = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error("图片无法读取。")); reader.readAsDataURL(file); });
       await new Promise<void>((resolve, reject) => { const picture = new Image(); picture.onload = () => resolve(); picture.onerror = () => reject(new Error("图片无法读取，请重新选择。")); picture.src = data; });
-      if (sequence === fileSequence.current) setImage(data);
-    } catch (e) { if (sequence === fileSequence.current) setError((e as Error).message); }
-    finally { if (sequence === fileSequence.current) setImageLoading(false); }
+      if (alive() && sequence === fileSequence.current) setImage(data);
+    } catch (e) { if (alive() && sequence === fileSequence.current) setError((e as Error).message); }
+    finally { if (alive() && sequence === fileSequence.current) setImageLoading(false); }
   }
   async function save() {
     if (busyRef.current || imageLoading) return;
@@ -110,21 +128,25 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
     busyRef.current = true; setBusy(true); setError("");
     try {
       if (view === "new") {
-        await request("", "POST", { kind, text: text.trim(), context, version, ...(image ? { image } : {}) });
+        await request("", "POST", { kind, text: text.trim(), context, version, ...(image ? { image } : {}) }, lifetime.current?.signal);
+        if (!alive()) return;
         setText(""); setImage(""); setKind("问题反馈"); setFilter("全部"); setView("list"); setNotice("反馈已提交，处理结果会在这里通知你。");
       } else if (selected) {
-        const updated = await request<Feedback>(`/${encodeURIComponent(selected.id)}`, "PATCH", { status, result: result.trim(), revision: selected.revision });
+        const updated = await request<Feedback>(`/${encodeURIComponent(selected.id)}`, "PATCH", { status, result: result.trim(), revision: selected.revision }, lifetime.current?.signal);
+        if (!alive()) return;
         setSelected(updated); setStatus(updated.status); setResult(updated.result || "");
         setNotice(status === "已处理" ? "处理结果已保存。" : "处理状态已保存。");
       }
       onUnreadChanged();
-      await refresh().catch(() => setError("已保存，但列表刷新失败，请返回列表重试。"));
+      await refresh().catch(() => { if (alive()) setError("已保存，但列表刷新失败，请返回列表重试。"); });
     } catch (e) {
+      if (!alive()) return;
       if (e instanceof FeedbackError && e.status === 409 && selected) {
-        try { const rows = await refresh(); const latest = rows.find(row => row.id === selected.id); if (latest) setSelected(latest); } catch { /* Keep the original revision so another save cannot overwrite newer data. */ }
+        try { const rows = await refresh(); const latest = rows.find(row => row.id === selected.id); if (alive() && latest) setSelected(latest); } catch { /* Keep the original revision so another save cannot overwrite newer data. */ }
+        if (!alive()) return;
         setError("该反馈已被其他管理员更新。你的输入已保留，请核对最新状态后再保存。");
       } else setError((e as Error).message);
-    } finally { busyRef.current = false; setBusy(false); }
+    } finally { busyRef.current = false; if (alive()) setBusy(false); }
   }
   const rows = records.filter(row => (admin || row.owner_id === currentUser.id) && (!onlyMine || row.owner_id === currentUser.id) && (filter === "全部" || row.status === filter));
   return <dialog inert={closing} ref={dialog} className="feedback-dialog" data-closing={closing || undefined} aria-labelledby="feedback-title" onClick={event => { if (view === "list" && event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) leave(close); } }} onCancel={event => { if (event.target !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); if (!pending) leave(close); }} onKeyDown={event => { if (event.key === "Escape") event.stopPropagation(); }}>
@@ -132,7 +154,7 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
       <header className="feedback-header">
         {view !== "list" && <button ref={backButton} className="feedback-icon" aria-label="返回列表" title="返回列表" disabled={busy || imageLoading} onClick={() => leave(list)}><ArrowLeft size={19} /></button>}
         <h2 id="feedback-title">{view === "new" ? "新建反馈" : view === "detail" ? "反馈详情" : admin ? "用户反馈" : "我的反馈"}</h2>
-        {view === "list" && <button className="secondary-button" onClick={() => { setError(""); setNotice(""); setView("new"); }}>{hasDraft ? "继续填写" : "新建反馈"}</button>}
+        {view === "list" && <button className="secondary-button" onClick={() => { readSequence.current++; setError(""); setNotice(""); setView("new"); }}>{hasDraft ? "继续填写" : "新建反馈"}</button>}
         <button className="feedback-icon" aria-label="关闭反馈" disabled={busy || imageLoading} onClick={() => leave(close)}><X size={19} /></button>
       </header>
       <div key={view} className="feedback-body" data-view={view} ref={bodyRef}>
@@ -160,7 +182,7 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
           {admin && <form id="feedback-process" className="feedback-process" onSubmit={e => { e.preventDefault(); void save(); }}><fieldset disabled={busy}><label htmlFor="feedback-status">处理状态</label><select id="feedback-status" value={status} onChange={e => setStatus(e.target.value)}>{statuses.map(value => <option key={value}>{value}</option>)}</select><label htmlFor="feedback-result">处理结果 <span>（完成时必填，对提交人可见）</span></label><textarea id="feedback-result" maxLength={2000} value={result} onChange={e => setResult(e.target.value)} placeholder="说明已做的改进、解决办法或暂不处理的原因。" /></fieldset></form>}
         </>}
       </div>
-      {error && <p className="feedback-error" role="alert">{error}{view === "list" && <button onClick={() => { setError(""); setLoading(true); void refresh().catch(e => setError(e.message)).finally(() => setLoading(false)); }}>重试</button>}</p>}
+      {error && <p className="feedback-error" role="alert">{error}{view === "list" && <button onClick={() => { const sequence = readSequence.current; setError(""); setLoading(true); void refresh().catch(e => { if (alive() && sequence === readSequence.current) setError(e.message); }).finally(() => { if (alive()) setLoading(false); }); }}>重试</button>}</p>}
       {view !== "list" && <footer className="feedback-actions">{view === "new" && <small className="feedback-privacy"><LockKeyhole size={14} />仅本人和管理员可查看</small>}{view === "new" && !!(text.trim() || image) && <button className="secondary-button" disabled={busy || imageLoading} onClick={() => setPending(() => () => { onDraftChange(emptyFeedbackDraft); list(); })}>放弃草稿</button>}{view === "detail" && <button className="secondary-button" disabled={busy || imageLoading} onClick={() => leave(list)}>返回列表</button>}{(view === "new" || admin) && <button className="primary-button" type="submit" form={view === "new" ? "feedback-compose" : "feedback-process"} disabled={busy || imageLoading || (view === "new" ? !text.trim() : !dirty)}>{busy ? "正在保存…" : view === "new" ? "提交反馈" : "保存处理"}</button>}</footer>}
     </div>
     {pending && <DiscardChangesDialog {...(view === "new" ? { title: "放弃这份草稿？", description: "反馈类型、正文和截图将被清空。", confirmLabel: "放弃草稿", cancelLabel: "继续填写" } : {})} onCancel={() => setPending(null)} onDiscard={() => { const action = pending; setPending(null); action(); }} />}

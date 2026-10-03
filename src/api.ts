@@ -37,7 +37,7 @@ export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T>
     const message = typeof detail === "string" ? detail : Array.isArray(detail)
       ? detail.map(item => typeof item?.msg === "string" ? item.msg : "输入格式不正确").join("；")
       : `请求未完成（${response.status}），请核对输入后重试`;
-    throw new Error(message);
+    throw Object.assign(new Error(message), { status: response.status });
   }
   return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }
@@ -75,7 +75,7 @@ export function fetchWorkbenches(signal?: AbortSignal): Promise<WorkbenchStatus[
   return fetchJson<WorkbenchStatus[]>("/api/workbenches", { signal });
 }
 
-export function fetchProcurementNews(source = 'all', page = 1, signal?: AbortSignal): Promise<import('./workbenches/ProcurementNews').NewsData> {
+export function fetchProcurementNews(source = 'all', page = 1, signal?: AbortSignal): Promise<import('./types').NewsData> {
   return fetchJson(`/api/workbenches/procurement/news?source=${encodeURIComponent(source)}&page=${page}`, {signal});
 }
 

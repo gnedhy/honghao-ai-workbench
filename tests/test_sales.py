@@ -125,7 +125,12 @@ def test_calculator_custom_steps_and_reverse_tiers():
 
 
 def test_calculator_private_saved_workspace_and_source(sales):
+    from api.operations import _table_evidence
+
     _, client, store, actor = sales
+    with transaction(store.url) as db:
+        formal_before = {name: evidence for name, evidence in _table_evidence(db).items()
+                         if name.startswith(('sales_', 'procurement_', 'research_')) and name != 'sales_calculator_saved'}
     calculator = CalculatorStore(store)
     product = store.products(actor)['products'][0]
     body = Evaluation(source={'kind': 'product', 'product_id': product['id'], 'basis': 'latest'},
@@ -157,6 +162,17 @@ def test_calculator_private_saved_workspace_and_source(sales):
     calculator.delete(unnamed['id'], actor)
     calculator.delete(template['id'], actor)
     assert calculator.list_saved(actor)['saved'] == []
+    manual = body.model_dump()
+    manual['source'] = {'kind': 'manual', 'cost': '4'}
+    response = client.post('/api/workbenches/sales/calculator/evaluate', json=manual)
+    assert response.status_code == 200 and response.json()['results'][0]['result']['price'] == '4.00'
+    manual_saved = calculator.save(SavedInput(kind='workspace', name='手工成本试算', payload=manual), actor)
+    assert manual_saved['payload']['source']['kind'] == 'manual'
+    calculator.delete(manual_saved['id'], actor)
+    with transaction(store.url) as db:
+        formal_after = {name: evidence for name, evidence in _table_evidence(db).items()
+                        if name.startswith(('sales_', 'procurement_', 'research_')) and name != 'sales_calculator_saved'}
+    assert formal_after == formal_before
 
 
 def test_catalog_is_whitelisted_and_composite_uses_research(sales):

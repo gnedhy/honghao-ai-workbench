@@ -14,7 +14,9 @@
     "test:count": "uv --cache-dir .uv-cache run python -m api.test_count_gate",
     "test:api": "uv --cache-dir .uv-cache run python -m pytest",
     "test:frontend": "node --test tests_ui/*.test.ts",
-    "verify": "npm run test:count && npm run test:api && npm run test:frontend && npm run build && npm run security:check"
+    "verify": "node scripts/verify.mjs",
+    "check:frontend": "node scripts/check-frontend-quality.mjs",
+    "test:browser": "node scripts/check-workbench-loading.mjs && node scripts/check-client-ids.mjs && node scripts/check-sales-baseline.mjs --scenario all"
   },
   "dependencies": {
     "lucide-react": "1.31.0",
@@ -28,6 +30,7 @@
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "6.0.5",
     "concurrently": "^10.0.5",
+    "oxlint": "1.86.0",
     "typescript": "7.0.2",
     "vite": "8.2.1"
   }

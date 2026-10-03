@@ -387,3 +387,5 @@ export type ResearchMaterialDetail = Pick<ProcurementMaterialDetail, "material" 
 
 export type SalesPage = "dashboard" | "calculate" | "estimator" | "quotes";
 export const SALES_PAGE_LABELS: Record<SalesPage,string> = {dashboard:"销售看板",calculate:"产品报价",estimator:"测算工具",quotes:"报价历史"};
+export type NewsItem = { title: string; source: string; url: string; published_at: string };
+export type NewsData = { items: NewsItem[]; total: number; page: number; page_size: number; updated_at: string | null; delayed: boolean; sources: { name: string; status: 'ok' | 'pending' | 'delayed'; last_success: string | null }[] };

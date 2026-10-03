@@ -2,6 +2,10 @@
 
 > 文档中的端口、构建号、测试结果与一次性授权为当次历史证据；不作为新任务授权。持续有效的界面约定按后续明确修订更新，现役入口见 [当前交接](../../docs/当前交接.md)。
 
+## W6 module entry — 2026-10-03
+
+W6（2026-10-03）将台账组合迁至 `ProcurementMaterials.tsx`，查询、编辑会话和共用价格核对各自维护；公开只读展示在 `ProcurementMaterialView.tsx`，采购可写详情在 `ProcurementMaterialDrawer.tsx`。布局、列顺序、比较和历史口径继续沿用本页约定。候选验证与实际消费者入口见 [W6 记录](../../docs/history/records/W6-采购台账与原料公开展示模块化-2026-10-03.md)。
+
 ## Draft price alignment fix — 2026-09-11
 
 - User reported the 待发布价 header no longer centered above its input. Route: evolve / operate / small, restoration of the existing approved column alignment.

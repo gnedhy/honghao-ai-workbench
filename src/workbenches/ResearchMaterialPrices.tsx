@@ -6,7 +6,7 @@ import { LedgerPagination } from "../components/LedgerPagination";
 import { WorkbenchOptionMenu } from "../components/WorkbenchMenus";
 import { PriceMovement } from "../components/PriceMovement";
 import type { ProcurementMaterial, ResearchMaterialDetail, ResearchMaterialPrices as MaterialPrices } from "../types";
-import { MaterialDrawer, ledgerCell } from "./ProcurementWorkbench";
+import { ReadOnlyMaterialDrawer, ledgerCell } from "./ProcurementMaterialView";
 import { buildLedgerRows, filterLedgerRows, formalLedgerChange } from "./procurementLedger";
 import styles from "../components/WorkbenchSurface.module.css";
 import researchStyles from "./ResearchWorkbench.module.css";
@@ -32,7 +32,9 @@ export function ResearchMaterialPrices({ userId }: { userId: string }) {
   const [data, setData] = useState<MaterialPrices | null>(null);
   const [error, setError] = useState("");
   const inFlight = useRef<AbortSignal | undefined | null>(null);
+  const lifetime = useRef<AbortController | null>(null);
   const load = useCallback(async (signal?: AbortSignal) => {
+    signal ??= lifetime.current?.signal;
     if (inFlight.current !== null && !inFlight.current?.aborted) return;
     inFlight.current = signal;
     try {
@@ -44,6 +46,7 @@ export function ResearchMaterialPrices({ userId }: { userId: string }) {
   }, []);
   useEffect(() => {
     const controller = new AbortController();
+    lifetime.current = controller;
     void load(controller.signal);
     const timer = window.setInterval(() => void load(controller.signal), 10000);
     return () => { controller.abort(); clearInterval(timer); };
@@ -108,6 +111,6 @@ export function ResearchMaterialPrices({ userId }: { userId: string }) {
         {preferences.view === "paged" && <LedgerPagination total={rows.length} page={safePage} pageSize={preferences.pageSize} onPageChange={setPage}/>}
       </LedgerFrame>}
     </section>
-    {selected && data && <MaterialDrawer batches={data.batches} materialId={selected} canEdit={false} canManage={false} loadMaterial={detail} refreshEveryMs={10000} onClose={() => { const id = selected; setSelected(null); requestAnimationFrame(() => document.getElementById(`research-material-${id}`)?.focus()); }} />}
+    {selected && data && <ReadOnlyMaterialDrawer batches={data.batches} materialId={selected} loadMaterial={detail} refreshEveryMs={10000} onClose={() => { const id = selected; setSelected(null); requestAnimationFrame(() => document.getElementById(`research-material-${id}`)?.focus()); }} />}
   </article>;
 }

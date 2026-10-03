@@ -242,7 +242,7 @@
 .adjustToggle svg { transition:transform var(--duration-short,160ms) var(--ease-out,ease); }
 .adjustToggle[aria-expanded="true"] svg { transform:rotate(90deg); }
 .adjustToggle:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }
-.adjustmentPanel { padding:13px 14px 14px; border-top:1px solid var(--border); }
+.adjustmentPanel { margin:0; min-width:0; border:0; padding:13px 14px 14px; border-top:1px solid var(--border); }
 .adjustmentPanel h4 { margin:0 0 10px; color:var(--text); font-size:calc(11px + var(--ui-font-offset)); font-weight:600; }
 .fieldGrid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
 .adjustFields { grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px 14px; }

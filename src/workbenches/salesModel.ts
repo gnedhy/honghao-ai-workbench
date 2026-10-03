@@ -23,8 +23,9 @@ export function adoptionExceptions(items:Item[], products:Product[], productIds:
   belowBreakEven: selected.filter(item => item.final_price != null && item.result?.break_even_price != null && Number(item.final_price) < Number(item.result.break_even_price)),
  };
 }
-export function patchItems(items:Item[],ids:string[],patch:Partial<Item>,parameters:Parameters = {}):Item[] {
- return items.map(item => ids.includes(item.product_id) && (!item.adopted || !!item.adjustment_reason) ? {...item,...patch,parameters:{...item.parameters,...parameters},result:null,trial_id:null,manual_price_confirmed:false} : item);
+export const canEditQuoteItem = (item:Pick<Item,"adopted"|"adjustment_reason">) => !item.adopted || !!item.adjustment_reason;
+export function patchItems<T extends Item>(items:T[],ids:string[],patch:Partial<T>,parameters:Parameters = {}):T[] {
+ return items.map(item => ids.includes(item.product_id) && canEditQuoteItem(item) ? {...item,...patch,parameters:{...item.parameters,...parameters},result:null,trial_id:null,manual_price_confirmed:false} : item);
 }
 export const parameterLabels:Record<keyof Parameters,string> = {allocation:"公摊（元）",freight:"运费（元）",barrel:"桶费（元）",tax:"税提成系数",profit:"利润系数",reverse:"反推核算比例",export_addition_1:"外贸加项一（元）",export_addition_2:"外贸加项二（元）",export_multiplier:"外贸系数"};
 export const decimalText = (value:string|null|undefined) => value?.replace(/^(-?)\.(\d+)$/, "$10.$2") ?? "";
@@ -95,4 +96,29 @@ export function quoteReference(product: Product, basis:"latest"|"inventory" = "l
  const domestic = (tax:number, reverse:number) => !Number.isFinite(allocation) ? null : Math.round((cost + allocation + value("freight",.3) + value("barrel",.5)) * value("tax",tax) * value("profit",1.1) * value("reverse",reverse) * 100) / 100;
  const exportPrice = Math.round((cost + value("export_addition_1",.75) + value("export_addition_2",1.65)) * value("export_multiplier",1.15) * 100) / 100;
  return {direct:domestic(1.11,1.07), intermediary:domestic(1.09,1.04), export:exportPrice};
+}
+
+export type DraftItem = Item & {product:Product;adjusting:boolean;manual:boolean};
+export const money = (value?:string|number|null) => value == null || value === "" || !Number.isFinite(Number(value)) ? "—" : Number(value).toLocaleString("zh-CN",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+export function quoteValue(product:Product,mode:Mode,basis:"latest"|"inventory",parameters:Parameters) {
+ return quoteReference(product,basis,parameters)[mode === "domestic_direct" ? "direct" : mode === "domestic_intermediary" ? "intermediary" : "export"];
+}
+
+export function draftItem(product:Product,mode:Mode,item?:Item,selectedBasis?:"latest"|"inventory"):DraftItem {
+ product=item?.product??product;
+ const basis=item?.cost_basis??selectedBasis??(product.latest_cost!=null?"latest":"inventory");
+ return {...item,product,product_id:product.id,external_name:item?.external_name??"",cost_basis:basis,parameters:{...defaultParameters(product,mode,basis),...item?.parameters},final_price:item?.final_price??null,pricing_reasons:item?.pricing_reasons??[],pricing_note:item?.pricing_note??"",reference_prices:item?.reference_prices??{},adjusting:false,manual:!!item?.manual_price};
+}
+
+export function quoteFingerprint(customer:{name:string;code:string;salesperson:string},mode:Mode,items:DraftItem[]) {
+ return JSON.stringify({customer,mode,items:items.map(({product_id,cost_basis,parameters,final_price,pricing_reasons,pricing_note,reference_prices,manual})=>({product_id,cost_basis,parameters,final_price:manual?final_price:null,pricing_reasons,pricing_note,reference_prices}))});
+}
+
+export function quoteDraftItems(source:Item[],items:DraftItem[]) {
+ const edited=new Map(items.map(row=>[row.product_id,row]));
+ const merged=[...source.flatMap(row=>row.adopted&&!row.adjustment_reason?[row]:edited.has(row.product_id)?[edited.get(row.product_id)!]:row.adopted?[row]:[]),...items.filter(row=>!source.some(value=>value.product_id===row.product_id))];
+ return merged.map(row=>({product_id:row.product_id,external_name:row.external_name,cost_basis:row.cost_basis,parameters:row.parameters,
+  final_price:row.adopted&&!row.adjustment_reason||("manual" in row&&row.manual)?row.final_price:null,
+  pricing_reasons:row.pricing_reasons,pricing_note:row.pricing_note,reference_prices:row.reference_prices??{}}));
 }

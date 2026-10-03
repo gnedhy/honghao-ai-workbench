@@ -3,8 +3,8 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { fetchProcurementNews } from '../api';
 import styles from '../components/WorkbenchSurface.module.css';
-export type NewsItem = { title: string; source: string; url: string; published_at: string };
-export type NewsData = { items: NewsItem[]; total: number; page: number; page_size: number; updated_at: string | null; delayed: boolean; sources: { name: string; status: 'ok' | 'pending' | 'delayed'; last_success: string | null }[] };
+import type { NewsItem, NewsData } from '../types';
+export type { NewsItem, NewsData } from '../types';
 const updateTime = (value: string) => new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
 function NewsRow({ item }: { item: NewsItem }) {
   const [day, clock] = item.published_at.split('T'); const [y,m,d] = day.split('-');

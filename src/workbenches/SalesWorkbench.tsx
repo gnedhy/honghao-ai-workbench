@@ -1,32 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { ArrowRight, Check, ChevronRight, Clock3, Columns3, Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { ArrowRight, Check, ChevronRight, Clock3, Columns3, Search, SlidersHorizontal } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { fetchJson } from "../api";
 import { Drawer } from "../components/Drawer";
 import { DecimalInput } from "../components/DecimalInput";
-import { useUnsavedChanges } from "../components/Interaction";
 import { LedgerPagination } from "../components/LedgerPagination";
 import { DashboardPanel, FormFooter, LedgerFrame, LedgerToolbar, WorkbenchLoading } from "../components/WorkbenchLayout";
 import { PriceDateRangeMenu, TrendMaterialMenu, WorkbenchOptionMenu } from "../components/WorkbenchMenus";
 import { SALES_PAGE_LABELS, type CurrentUser, type SalesPage } from "../types";
-import { adoptionExceptions, base, decimalText, defaultParameters, modes, parameterLabels, pendingProductIds, productSourceText, quoteListStatus, quoteReference, quoteTrendPoints, reasons, type Batch, type Item, type Mode, type Parameters, type Product, type Quote, type QuoteListStatus, type Trial } from "./salesModel";
+import { base, modes, money, productSourceText, quoteListStatus, quoteReference, quoteTrendPoints, type Batch, type Mode, type Product, type Quote, type QuoteListStatus, type Trial } from "./salesModel";
 import p from "../components/WorkbenchSurface.module.css";
 import s from "./SalesWorkbench.module.css";
+import { SalesQuoteEditor } from "./SalesQuoteEditor";
 import { SalesCalculator } from "./SalesCalculator";
-import { SalesProductPicker } from "./SalesProductPicker";
 
 const send = <T,>(path:string,body:unknown,method="POST") => fetchJson<T>(base+path,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-const money = (value?:string|number|null) => value == null || value === "" || !Number.isFinite(Number(value)) ? "—" : Number(value).toLocaleString("zh-CN",{minimumFractionDigits:2,maximumFractionDigits:2});
 const dateTime = (value:string) => new Date(value).toLocaleString("zh-CN",{hour12:false});
 const day = (value:string) => value.slice(0,10);
-const modeKey = (mode:Mode) => mode === "domestic_direct" ? "direct" : mode === "domestic_intermediary" ? "intermediary" : "export";
 const statusLabels:Record<QuoteListStatus,string> = {pending:"待采用",partial:"部分采用",adopted:"已采用",void:"已作废"};
 const closeMenu=(event:MouseEvent<HTMLButtonElement>)=>{const menu=event.currentTarget.closest("details");menu?.removeAttribute("open");menu?.querySelector("summary")?.focus();};
 const onMenuKeyDown=(event:KeyboardEvent<HTMLDetailsElement>)=>{if(event.key==="Escape"&&event.currentTarget.open){event.preventDefault();event.currentTarget.open=false;event.currentTarget.querySelector("summary")?.focus();}};
 const onMenuBlur=(event:FocusEvent<HTMLDetailsElement>)=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))event.currentTarget.open=false;};
 type QuoteView = "latest"|"inventory"|"compare";
-type DraftItem = Item & {product:Product;adjusting:boolean;manual:boolean};
 type Period = "14d"|"1m"|"3m"|{start:string;end:string};
 type LedgerDisplay = {view:"scroll"|"paged";pageSize:number};
 
@@ -63,19 +59,6 @@ function rangeFor(period:Period) {
  return typeof period === "string" ? {start:iso(start),end:iso(end)} : period;
 }
 
-function quoteValue(product:Product,mode:Mode,basis:"latest"|"inventory",parameters:Parameters) {
- return quoteReference(product,basis,parameters)[modeKey(mode)];
-}
-
-function draftItem(product:Product,mode:Mode,item?:Item,selectedBasis?:"latest"|"inventory"):DraftItem {
- const basis=item?.cost_basis??selectedBasis??(product.latest_cost!=null?"latest":"inventory");
- return {...item,product,product_id:product.id,external_name:item?.external_name??"",cost_basis:basis,parameters:{...defaultParameters(product,mode,basis),...item?.parameters},final_price:item?.final_price??null,pricing_reasons:item?.pricing_reasons??[],pricing_note:item?.pricing_note??"",reference_prices:item?.reference_prices??{},adjusting:false,manual:!!item?.manual_price};
-}
-
-function quoteFingerprint(customer:{name:string;code:string;salesperson:string},mode:Mode,items:DraftItem[]) {
- return JSON.stringify({customer,mode,items:items.map(({product_id,cost_basis,parameters,final_price,pricing_reasons,pricing_note,reference_prices,manual})=>({product_id,cost_basis,parameters,final_price:manual?final_price:null,pricing_reasons,pricing_note,reference_prices}))});
-}
-
 function ProductDetailDrawer({product,history,editable,onClose,onStart}:{product:Product;history:Quote[];editable:boolean;onClose:()=>void;onStart:()=>void}) {
  const [basis,setBasis]=useState<"latest"|"inventory">("latest"),[view,setView]=useState<QuoteView>("latest"),[open,setOpen]=useState<string|null>(null);
  const latest=quoteReference(product,"latest"), inventory=quoteReference(product,"inventory"), current=basis==="latest"?latest:inventory;
@@ -88,92 +71,6 @@ function ProductDetailDrawer({product,history,editable,onClose,onStart}:{product
  </Drawer>;
 }
 
-function QuoteEditorDrawer({products,catalog,existing,currentUser,accessLevel,onClose,onChanged}:{products:Product[];catalog:Product[];existing?:Batch;currentUser:CurrentUser;accessLevel:number;onClose:()=>void;onChanged:()=>Promise<void>}) {
- const initialMode=existing?.mode??"domestic_direct";
- const initialCustomer={name:existing?.customer_name??"",code:existing?.customer_code??"",salesperson:existing?.salesperson??""};
- const initialItems=products.map(product=>draftItem(product,initialMode,existing?.items.find(row=>row.product_id===product.id)));
- const [customer,setCustomer]=useState(initialCustomer),[mode,setMode]=useState<Mode>(initialMode),[items,setItems]=useState<DraftItem[]>(initialItems);
- const [savedBatch,setSavedBatch]=useState<Batch|undefined>(existing),[savedFingerprint,setSavedFingerprint]=useState(quoteFingerprint(initialCustomer,initialMode,initialItems));
- const [busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState(""),[bulkOpen,setBulkOpen]=useState(false),[bulk,setBulk]=useState<Parameters>({});
- const [keepCost,setKeepCost]=useState(false),[confirmLow,setConfirmLow]=useState(false);
- const [liveProducts,setLiveProducts]=useState(catalog);
- const fingerprint=quoteFingerprint(customer,mode,items), dirty=fingerprint!==savedFingerprint;
- const pendingIds=pendingProductIds(items);
- const exceptions=adoptionExceptions(savedBatch?.items??[],liveProducts,pendingIds);
- const productNames=(rows:Item[])=>rows.map(row=>row.product?.code??row.product_id).join("、");
- useEffect(()=>{
-  if(!savedBatch||dirty||accessLevel<4)return;
-  let active=true;
-  void fetchJson<{products:Product[]}>(base+"/products").then(result=>{if(active)setLiveProducts(result.products);}).catch(()=>{});
-  return ()=>{active=false;};
- },[savedBatch?.id,savedBatch?.revision,dirty,accessLevel]);
- const guard=useUnsavedChanges(dirty,busy,"放弃尚未保存的报价修改？","sales-quote-editor");
- const updateItem=(id:string,patch:Partial<DraftItem>)=>setItems(rows=>rows.map(row=>row.product_id===id?{...row,...patch}:row));
- const updateParameter=(id:string,key:keyof Parameters,value:string)=>setItems(rows=>rows.map(row=>row.product_id===id?{...row,parameters:{...row.parameters,[key]:value},result:null,trial_id:null}:row));
- const switchMode=(next:Mode)=>{setMode(next);setItems(rows=>rows.map(row=>({...row,parameters:{...row.parameters,...defaultParameters(row.product,next,row.cost_basis)},result:null,trial_id:null,manual:false,final_price:null})));};
- const applyBulk=()=>{const patch=Object.fromEntries(Object.entries(bulk).filter(([,value])=>value!==""&&value!=null)) as Parameters;if(!Object.keys(patch).length)return;setItems(rows=>rows.map(row=>({...row,parameters:{...row.parameters,...patch},result:null,trial_id:null})));setBulk({});setBulkOpen(false);};
- const fields=(mode.startsWith("export")?["export_addition_1","export_addition_2","export_multiplier"]:["allocation","freight","barrel","tax","profit","reverse"]) as (keyof Parameters)[];
- const invalid=items.some(row=>{const value=quoteValue(row.product,mode,row.cost_basis,row.parameters);return value==null||!Number.isFinite(value)||(row.product.special_allocation&&!mode.startsWith("export")&&(Number(row.parameters.allocation)<.3||Number(row.parameters.allocation)>1));});
- const customerInvalid=!customer.name.trim()||!customer.salesperson.trim();
- const save=async()=>{if(customerInvalid||invalid||(!items.length&&!savedBatch?.items.some(row=>row.adopted)))return;setBusy(true);setError("");try{
-   let current=savedBatch;
-   if(!current) current=(await send<{batch:Batch}>("/batches",{name:`${customer.name.trim()} 报价 ${new Date().toLocaleString("zh-CN",{hour12:false})}`,mode})).batch;
-   const edited=new Map(items.map(row=>[row.product_id,row])), source=current.items;
-   const merged=[...source.flatMap(row=>{const active=edited.get(row.product_id);return active?[active]:row.adopted?[row]:[];}),...items.filter(row=>!source.some(value=>value.product_id===row.product_id))];
-   const saved=(await send<{batch:Batch}>(`/batches/${current.id}/draft`,{revision:current.revision,name:current.name,mode,customer_name:customer.name,customer_code:customer.code.trim(),uncoded:!customer.code.trim(),salesperson:customer.salesperson,items:merged.map(row=>({product_id:row.product_id,external_name:row.external_name,cost_basis:row.cost_basis,parameters:row.parameters,final_price:"manual" in row&&row.manual?row.final_price:null,pricing_reasons:row.pricing_reasons,pricing_note:row.pricing_note,reference_prices:row.reference_prices??{}}))},"PUT")).batch;
-   const ids=pendingProductIds(items);
-   const calculated=ids.length?(await send<{batch:Batch}>(`/batches/${saved.id}/calculate`,{revision:saved.revision,product_ids:ids,confirm_manual_prices:true})).batch:saved;
-   const nextItems=items.map(row=>draftItem(row.product,mode,calculated.items.find(value=>value.product_id===row.product_id)));
-   setItems(nextItems);setSavedBatch(calculated);setSavedFingerprint(quoteFingerprint(customer,mode,nextItems));setKeepCost(false);setConfirmLow(false);setNotice("报价已保存，可继续确认采用");await onChanged();
-  }catch(value){setError(value instanceof Error?value.message:"保存失败，请重试");}finally{setBusy(false);}};
- const adopt=async()=>{if(!savedBatch||dirty)return;setBusy(true);setError("");try{
-   const latest=(await fetchJson<{products:Product[]}>(base+"/products")).products;
-   setLiveProducts(latest);
-   const checks=adoptionExceptions(savedBatch.items,latest,pendingIds);
-   if((checks.stale.length&&!keepCost)||(checks.belowBreakEven.length&&!confirmLow)){setNotice("请先核对采用前提示");return;}
-   const result=(await send<{batch:Batch}>(`/batches/${savedBatch.id}/adopt`,{revision:savedBatch.revision,product_ids:pendingIds,keep_stale_cost:keepCost,confirm_below_break_even:confirmLow})).batch;
-   const nextItems=items.map(row=>draftItem(row.product,mode,result.items.find(value=>value.product_id===row.product_id)));
-   setItems(nextItems);setSavedBatch(result);setSavedFingerprint(quoteFingerprint(customer,mode,nextItems));setKeepCost(false);setConfirmLow(false);setNotice("报价已采用并成为当前有效报价");await onChanged();
-  }catch(value){setError(value instanceof Error?value.message:"采用失败，请重试");}finally{setBusy(false);}};
- const setBasis=(row:DraftItem,basis:"latest"|"inventory")=>{const defaults=defaultParameters(row.product,mode,basis);updateItem(row.product_id,{cost_basis:basis,parameters:{...row.parameters,allocation:row.product.special_allocation?row.parameters.allocation:defaults.allocation},result:null,trial_id:null});};
- const toggleAdjust=(id:string)=>setItems(rows=>rows.map(row=>({...row,adjusting:row.product_id===id?!row.adjusting:false})));
- const quoteCard=(row:DraftItem)=>{
-  const current=quoteValue(row.product,mode,row.cost_basis,row.parameters);
-  return <article className={s.editorRow} key={row.product_id}>
-   <div className={s.editorRowMain}>
-    <div className={s.editorIdentity}><div className={s.editorNameRow}><strong>{row.product.code}</strong><button type="button" className={s.removeProduct} disabled={row.adopted} title={row.adopted?"已采用产品请在报价历史中作废":"从本次报价移除"} aria-label={`移除 ${row.product.code}`} onClick={()=>setItems(current=>current.filter(item=>item.product_id!==row.product_id))}><Trash2 size={13}/>移除</button></div>{row.product.name!==row.product.code&&<span>{row.product.name}</span>}<small>{row.product.department} · {productSourceText(row.product)}</small></div>
-    <div className={s.editorQuote}>
-     <div className={s.basisSwitch} role="group" aria-label={`${row.product.code}成本口径`}><button type="button" aria-pressed={row.cost_basis==="latest"} onClick={()=>setBasis(row,"latest")}>最新优先</button><button type="button" aria-pressed={row.cost_basis==="inventory"} onClick={()=>setBasis(row,"inventory")}>库存优先</button></div>
-     <strong className={s.editorPrice}>{money(row.manual?row.final_price:current)}<small>元/kg</small></strong>
-    </div>
-   </div>
-   <button type="button" className={s.adjustToggle} aria-expanded={row.adjusting} onClick={()=>toggleAdjust(row.product_id)}>{row.adjusting?"收起调整":"报价调整"}<ChevronRight size={14}/></button>
-   {row.adjusting&&<div className={s.adjustmentPanel}>
-    <h4>费用与系数</h4>
-    <div className={`${s.fieldGrid} ${s.adjustFields}`}>{fields.map(key=><label key={key}>{row.product.special_allocation&&key==="allocation"?"特殊公摊（元）":parameterLabels[key]}<DecimalInput value={decimalText(row.parameters[key])} onChange={event=>updateParameter(row.product_id,key,event.target.value)}/></label>)}</div>
-    <div className={s.outcomeFields}><label>最终报价（元/kg）<DecimalInput value={row.manual?row.final_price??"":""} placeholder={money(current)} onChange={event=>updateItem(row.product_id,{manual:!!event.target.value,final_price:event.target.value||null})}/></label><label>客户参考价（选填）<DecimalInput value={row.reference_prices?.customer??""} onChange={event=>updateItem(row.product_id,{reference_prices:{...row.reference_prices,customer:event.target.value}})}/></label></div>
-    <fieldset className={s.reasonChoices}><legend>定价依据</legend>{reasons.map(reason=><label key={reason}><input type="checkbox" checked={row.pricing_reasons.includes(reason)} onChange={event=>updateItem(row.product_id,{pricing_reasons:event.target.checked?[...row.pricing_reasons,reason]:row.pricing_reasons.filter(value=>value!==reason)})}/>{reason}</label>)}</fieldset>
-    {row.pricing_reasons.includes("其他")&&<label className={s.fullField}>其它说明<textarea value={row.pricing_note} onChange={event=>updateItem(row.product_id,{pricing_note:event.target.value})}/></label>}
-   </div>}
-  </article>;
- };
- return <><Drawer className={s.quoteDrawer} title="报价明细" label={`${items.length} 个产品`} busy={busy} beforeClose={guard.request} onClose={onClose}>
- <section className={s.customerSection}>
-  <div className={s.sectionHeading}><h3>客户信息</h3><span className={s.quoteActor}>报价人 · <strong>{currentUser.display_name}</strong></span></div>
-  <div className={s.customerGrid}>
-   <div className={s.customerMode}><span>客户类型</span><WorkbenchOptionMenu label="客户类型" value={mode} options={Object.entries(modes).map(([value,label])=>({value,label}))} onSelect={value=>switchMode(value as Mode)} className={s.quoteModeMenu}/></div>
-   <label>客户名称<input value={customer.name} onChange={event=>setCustomer({...customer,name:event.target.value})}/></label>
-   <label>客户编码<input placeholder="K / SWA / WA" value={customer.code} onChange={event=>setCustomer({...customer,code:event.target.value})}/></label>
-   <label>业务员<input value={customer.salesperson} onChange={event=>setCustomer({...customer,salesperson:event.target.value})}/></label>
-  </div>
- </section>
- <section className={s.drawerSection}><div className={s.sectionHeading}><div><h3>报价参考</h3><p>{modes[mode]}</p></div>{items.length>1&&<button className="secondary-button" onClick={()=>setBulkOpen(value=>!value)}>{bulkOpen?"收起批量调整":"批量报价调整"}</button>}</div>{bulkOpen&&<div className={s.bulkPanel}><div className={s.fieldGrid}>{fields.map(key=><label key={key}>{parameterLabels[key]}<DecimalInput value={bulk[key]??""} placeholder="保持各产品原值" onChange={event=>setBulk({...bulk,[key]:event.target.value})}/></label>)}</div><button className="secondary-button" onClick={applyBulk}>应用到全部产品</button></div>}<div className={s.editorCards}>{items.map(quoteCard)}</div>{!items.length&&<p className={s.empty}>尚未加入产品，请从下方选择。</p>}<SalesProductPicker add products={catalog} excludeIds={[...new Set([...items.map(row=>row.product_id),...(savedBatch?.items.filter(row=>row.adopted).map(row=>row.product_id)??[])])]} onSelect={(product,basis)=>setItems(current=>[...current,draftItem(product,mode,undefined,basis)])}/></section>
- {error&&<p className={s.error} role="alert">{error}</p>}{savedBatch&&!dirty&&accessLevel>=4&&(exceptions.stale.length>0||exceptions.belowBreakEven.length>0)&&<section className={s.adoptChecks} aria-label="采用前确认">
-  {exceptions.stale.length>0&&<label><input type="checkbox" checked={keepCost} onChange={event=>setKeepCost(event.target.checked)}/><span><strong>保留本次成本依据</strong><small>{productNames(exceptions.stale)}的产品成本或状态已更新；确认后沿用保存时的依据并留痕。</small></span></label>}
-  {exceptions.belowBreakEven.length>0&&<label><input type="checkbox" checked={confirmLow} onChange={event=>setConfirmLow(event.target.checked)}/><span><strong>确认低于盈亏平衡参考价</strong><small>{productNames(exceptions.belowBreakEven)}的最终报价低于参考价；请核对定价依据后确认。</small></span></label>}
- </section>}
- <FormFooter className={s.drawerFooter} status={notice||(!dirty&&savedBatch?"报价已保存":"尚未保存")}><button className="secondary-button" onClick={()=>void guard.request().then(allowed=>{if(allowed)onClose();})}>{savedBatch&&!dirty?"稍后处理":"取消"}</button>{dirty||!savedBatch?<button className="primary-button" disabled={busy||customerInvalid||invalid||(!items.length&&!savedBatch?.items.some(row=>row.adopted))} onClick={()=>void save()}>{busy?"保存中…":"保存报价"}</button>:accessLevel>=4&&pendingIds.length>0?<button className="primary-button" disabled={busy||(exceptions.stale.length>0&&!keepCost)||(exceptions.belowBreakEven.length>0&&!confirmLow)} onClick={()=>void adopt()}>{busy?"处理中…":"确认采用"}</button>:null}</FormFooter></Drawer>{guard.confirmation}</>;
-}
 
 function SalesDashboard({products,batches,trials,records,onOpen,preview=false}:{products:Product[];batches:Batch[];trials:Trial[];records:Quote[];onOpen:(batch:Batch)=>void;preview?:boolean}) {
  const statuses=batches.filter(batch=>batch.items.length>0).map(batch=>({batch,status:quoteListStatus(batch,records)}));
@@ -253,14 +150,16 @@ export function SalesWorkbench({accessLevel,currentUser,page,onPageChange:viewPa
  const [products,setProducts]=useState<Product[]|null>(null),[batches,setBatches]=useState<Batch[]>([]),[trials,setTrials]=useState<Trial[]>([]),[records,setRecords]=useState<Quote[]>([]),[error,setError]=useState("");
  const [selected,setSelected]=useState<string[]>([]),[selecting,setSelecting]=useState(false);
  const [productOpen,setProductOpen]=useState<Product|null>(null),[quoteContext,setQuoteContext]=useState<{products:Product[];batch?:Batch}|null>(null),[detailBatch,setDetailBatch]=useState<Batch|null>(null);
- const load=useCallback(async()=>{try{const [catalog,lists,history,quotes]=await Promise.all([fetchJson<{products:Product[]}>(base+"/products"),fetchJson<{batches:Batch[]}>(base+"/batches"),fetchJson<{trials:Trial[]}>(base+"/history"),fetchJson<{records:Quote[]}>(base+"/records")]);setProducts(catalog.products);setBatches(lists.batches);setTrials(history.trials);setRecords(quotes.records);setError("");}catch(value){setError(value instanceof Error?value.message:"销售工作台加载失败");}},[]);
+ const previousView=useRef(view);
+ useEffect(()=>{if(previousView.current==="full"&&view==="preview"){setProductOpen(null);setQuoteContext(null);setDetailBatch(null);}previousView.current=view;},[view]);
+ const load=useCallback(async()=>{setError("");try{const [catalog,lists,history,quotes]=await Promise.all([fetchJson<{products:Product[]}>(base+"/products"),fetchJson<{batches:Batch[]}>(base+"/batches"),fetchJson<{trials:Trial[]}>(base+"/history"),fetchJson<{records:Quote[]}>(base+"/records")]);setProducts(catalog.products);setBatches(lists.batches);setTrials(history.trials);setRecords(quotes.records);setError("");}catch(value){setError(value instanceof Error?value.message:"销售工作台加载失败");}},[]);
  useEffect(()=>{void load();},[load]);
  useEffect(()=>{setSelected([]);setSelecting(false);},[page]);
  const catalog=useMemo(()=>products??[],[products]);
  const startQuote=(rows:Product[],batch?:Batch)=>{setProductOpen(null);setDetailBatch(null);setSelected([]);setSelecting(false);setQuoteContext({products:rows,batch});};
- const continueQuote=(batch:Batch)=>{const rows=batch.items.filter(row=>!row.voided&&(!row.adopted||!!row.adjustment_reason)).map(row=>catalog.find(product=>product.id===row.product_id)??row.product).filter((row):row is Product=>!!row);startQuote(rows,batch);};
+ const continueQuote=(batch:Batch)=>{const rows=batch.items.filter(row=>!row.voided&&(!row.adopted||!!row.adjustment_reason)).map(row=>row.product??catalog.find(product=>product.id===row.product_id)).filter((row):row is Product=>!!row);startQuote(rows,batch);};
  const openFromDashboard=(batch:Batch)=>{if(view==="preview")onEnter();viewPageChange("quotes");setDetailBatch(batch);};
  if(products===null)return error?<article className="workbench-detail workspace-detail-empty"><strong>销售工作台暂时不可用</strong><p role="alert">{error}</p><button className="secondary-button" onClick={()=>void load()}>重新加载</button></article>:<WorkbenchLoading title="正在加载销售工作台"/>;
  return <article className={`workbench-detail ${p.root} ${p.full} ${s.root}`} data-preview={view==="preview"}><header className={p.header}><div>{view==="preview"&&<span className={p.eyebrow}>销售部</span>}<h1>{view==="preview"?"产品报价管理":SALES_PAGE_LABELS[page]}</h1><p>{view==="full"&&page==="quotes"?"按客户、状态和日期查找报价，查看采用、调整及作废记录。":page==="estimator"?"从产品成本或意向报价出发，对比不同公式与费用组合。":"查阅产品成本与报价参考，形成客户报价并保留采用、调整和作废记录。"}</p></div>{view==="preview"&&<button className="primary-button" onClick={onEnter}>进入工作台<ArrowRight size={15}/></button>}</header>{error&&<div className={s.error} role="alert">{error}</div>}{view==="preview"?<SalesDashboard products={catalog} batches={batches} trials={trials} records={records} onOpen={openFromDashboard} preview/>:page==="dashboard"?<SalesDashboard products={catalog} batches={batches} trials={trials} records={records} onOpen={openFromDashboard}/>:page==="calculate"?<ProductCatalog products={catalog} selected={selected} onSelect={setSelected} selecting={selecting} onSelecting={setSelecting} onOpen={setProductOpen} onStart={rows=>startQuote(rows)} accessLevel={accessLevel} userId={currentUser.id}/>:page==="estimator"?<SalesCalculator products={catalog} accessLevel={accessLevel}/>:<CustomerQuotes batches={batches} records={records} userId={currentUser.id} onOpen={setDetailBatch}/>}
- {productOpen&&<ProductDetailDrawer product={productOpen} history={records.filter(row=>row.product_id===productOpen.id)} editable={accessLevel>=3} onClose={()=>setProductOpen(null)} onStart={()=>startQuote([productOpen])}/>} {quoteContext&&<QuoteEditorDrawer products={quoteContext.products} catalog={catalog} existing={quoteContext.batch} currentUser={currentUser} accessLevel={accessLevel} onClose={()=>{setQuoteContext(null);setSelected([]);}} onChanged={load}/>} {detailBatch&&<QuoteDetailDrawer batch={detailBatch} trials={trials} records={records} accessLevel={accessLevel} onClose={()=>setDetailBatch(null)} onContinue={continueQuote} onChanged={load}/>}</article>;
+ {productOpen&&<ProductDetailDrawer product={productOpen} history={records.filter(row=>row.product_id===productOpen.id)} editable={accessLevel>=3} onClose={()=>setProductOpen(null)} onStart={()=>startQuote([productOpen])}/>} {quoteContext&&<SalesQuoteEditor key={quoteContext.batch?.id??"new"} products={quoteContext.products} catalog={catalog} existing={quoteContext.batch} currentUser={currentUser} accessLevel={accessLevel} onClose={()=>{setQuoteContext(null);setSelected([]);}} onChanged={load}/>} {detailBatch&&<QuoteDetailDrawer batch={detailBatch} trials={trials} records={records} accessLevel={accessLevel} onClose={()=>setDetailBatch(null)} onContinue={continueQuote} onChanged={load}/>}</article>;
 }

@@ -56,7 +56,15 @@ uv sync --group dev
 npm run verify
 ```
 
-`verify` 包含测试、类型检查、构建与安全扫描；接口测试要求独立 PostgreSQL 测试库，不能指向业务数据库。隔离构建和单入口启动见 [运行与维护](docs/运行与维护.md#构建后的单入口运行)。
+`verify` 包含完整用例数量门禁、增量 React／依赖检查、Node 逻辑、实际组件浏览器、类型与隔离构建、安全扫描及完整接口测试。构建输出为 `.scratch/verify/all/dist`；接口测试要求独立 PostgreSQL 测试库，缺少环境会失败。按影响检查可用 `npm run verify -- --scope sales|procurement|research`（选择一个值），不能替代提交前完整门禁。命令、环境与 CI 边界见 [关键回归地图](docs/agents/workbench-regression.md)。单入口启动见 [运行与维护](docs/运行与维护.md#构建后的单入口运行)。
+
+2026-10-02 本地 W4 报价编辑会话候选承接 W2／W3，拆分业务协调和展示，并修复部分采用保存及旧成本显示；实现与验收见 [W4 记录](docs/history/records/W4-客户报价编辑会话模块化-2026-10-02.md)。源码、CI 与正式发布分别按当前授权推进。
+
+2026-10-03 用户继续批准 W5，独立测算候选分离工作区／请求和面板编辑，修复保存交错及草稿退出保护，校正等级 2 只读测算权限；完整 486 API 及最后修复后的销售范围 20 API 均通过，最终候选见 [W5 记录](docs/history/records/W5-独立测算工作区模块化-2026-10-03.md)。尚未提交、推送或部署。
+
+W6 阶段（2026-10-03）：候选分支 `codex/w6-procurement-ledger`，HEAD 保持 W1，保留 W2—W5。采购原料公开只读展示、查询和编辑会话已拆分，11 个真实消费者场景及完整 487 用例门禁通过。结果见 [W6 记录](docs/history/records/W6-采购台账与原料公开展示模块化-2026-10-03.md)；当时尚未提交、推送或部署。
+
+同日获准继续 W7；当时分支 `codex/w7-research-lifecycle`，HEAD 保持 W1，保留 W2—W6。研发详情、编辑会话与根读取已拆分，18 个真实场景及完整 488 用例门禁通过，见 [W7 记录](docs/history/records/W7-研发编辑试算与读取生命周期-2026-10-03.md)。尚未提交、推送或部署。
 
 ## 项目结构
 
@@ -79,3 +87,5 @@ docs/       使用、运维、决策与历史说明
 [更新日志](docs/changelog/更新日志-2026-09-24至30.md) · [运行与维护](docs/运行与维护.md) · [历史索引](docs/history/README.md)
 
 [产品范围](PRODUCT.md) · [领域模型](CONTEXT.md) · [设计约定](DESIGN.md) · [组件复用](docs/components.md) · [研发成本与授权](docs/business/研发受控成本调整-2026-09-14.md)
+
+2026-10-03 W1–W8 本地验收通过，用户批准进入提交、推送及 PR 评审；当前分支 `codex/w8-app-static-entry`，实际交付状态以实时 Git 和 [#58 进展](https://github.com/gnedhy/honghao-ai-workbench/issues/58)为准。提交前补修研发权限变化时保留输入并刷新授权详情，最终完整门禁为 489 API／52 Node／17 模拟／95 真实场景（App 40），规范与需求两轴复核通过；正式尚未替换。最新证据与恢复准备见[整体交付清单](docs/history/records/W1-W8整体验收与交付准备-2026-10-03.md)，原 W8 的 39 场景为[阶段记录](docs/history/records/W8-App反馈与静态接入收敛-2026-10-03.md)，静态接入见[接入入口](docs/agents/workbench-integration.md)。

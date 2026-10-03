@@ -1,88 +1,41 @@
-import { WorkbenchLoading } from "../components/WorkbenchLayout";
-import { DecimalInput } from "../components/DecimalInput";
-import { FormFooter, LedgerFrame, LedgerToolbar, DashboardPanel } from "../components/WorkbenchLayout";
-import { Switch } from "../components/Switch";
-import { Drawer as SharedDrawer } from "../components/Drawer";
-import { PriceDateRangeMenu, TrendMaterialMenu } from "../components/WorkbenchMenus";
-import { useMoverPaging } from "../components/useMoverPaging";
-import { DiscardChangesDialog, useUnsavedChanges } from "../components/Interaction";
-import { LedgerPagination } from "../components/LedgerPagination";
-import { RecordFilters } from "../components/RecordFilters";
-import { ResearchMaterialPrices } from "./ResearchMaterialPrices";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Columns3, Download, GripVertical, Check, Info, Pencil, Plus, Search, SlidersHorizontal, Trash2, TrendingUp, TrendingDown, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { fetchJson } from "../api";
-import { PriceMovement } from "../components/PriceMovement";
-import { focusedTrendAxis, moverDateRange } from "./procurementAnalytics";
-import { rankCostGaps, priceCents, priceChange, compareCostPeriods, type CostGapDirection } from "./researchAnalytics";
+import {useResearchData} from "./researchData";
+import {type Product, type Version, type Detail, type RecordRow, type Formula, type Calculation, base, productPath, request, cost, yieldText, date, lineCount, errorText, recordDate} from "./researchModel";
+import {ProductLink, Money, CostSource, Movement, Status, Menu, Options, OwnerMenu, Drawer, HistoricalFormula} from "./ResearchProductView";
+import {ResearchProductDrawer} from "./ResearchProductDrawer";
+import {WorkbenchLoading} from "../components/WorkbenchLayout";
+import {DecimalInput} from "../components/DecimalInput";
+import {LedgerFrame, LedgerToolbar, DashboardPanel} from "../components/WorkbenchLayout";
+import {Switch} from "../components/Switch";
+
+import {PriceDateRangeMenu, TrendMaterialMenu} from "../components/WorkbenchMenus";
+import {useMoverPaging} from "../components/useMoverPaging";
+import {useUnsavedChanges} from "../components/Interaction";
+import {LedgerPagination} from "../components/LedgerPagination";
+import {RecordFilters} from "../components/RecordFilters";
+import {ResearchMaterialPrices} from "./ResearchMaterialPrices";
+import {ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpDown, ChevronRight, Columns3, Download, Info, Plus, Search, SlidersHorizontal, TrendingUp, TrendingDown, X} from "lucide-react";
+import {useEffect, useMemo, useRef, useState} from "react";
+import {CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis} from "recharts";
+import {fetchJson} from "../api";
+import {PriceMovement} from "../components/PriceMovement";
+import {focusedTrendAxis, moverDateRange} from "./procurementAnalytics";
+import {rankCostGaps, priceCents, priceChange, type CostGapDirection} from "./researchAnalytics";
 import type { ResearchPage } from "../types";
 import p from "../components/WorkbenchSurface.module.css";
 import s from "./ResearchWorkbench.module.css";
 
-type InputLine = { code: string; kind: "material" | "recipe" | "composite"; ref: string; quantity: string; ratio?: string; source_row?: number | null };
-type Adjustment = { adjustment_reason?: string; adjustment_note?: string };
-type Formula = Adjustment & { manual_costs?: Partial<Record<"latest" | "inventory", string | null>>; edited_by?: string; activated_by?: string; editor_name?: string; activator_name?: string; ratio_linked?: boolean; ratio_base?: string; id?: string; name?: string; owner?: string; kind?: string; yield: string; lines: InputLine[]; sheet?: string; source_row?: number | null };
-type Calculation = { auto_cost?: string | null; manual_cost?: string | null; cost_source?: "auto" | "manual"; difference?: string | null; cost: string | null; yield: string; total_input: string; output_quantity: string; missing_materials: string[]; lines: (InputLine & { unit_cost: string | null; amount: string | null; basis: string })[] };
-type Graph = { latest: Record<string, Calculation>; inventory: Record<string, Calculation> };
-type ComparisonBasis = { record_type?: string; purchase_version?: number; effective_date?: string; latest_cost?: string | null };
-type Product = { cost_details?: Partial<Record<"latest" | "inventory", Pick<Calculation, "auto_cost" | "cost_source" | "difference">>>; comparison_basis?: ComparisonBasis | null; lifecycle?: "active" | "draft" | "inactive"; id: string; name: string; owner: string; yield: string; lines: number | InputLine[]; revision: number; has_draft: boolean; status: string; latest_cost: string | null; inventory_cost: string | null; change: { percent: number | null; reason: string }; recorded_at: string; missing_materials: string[]; sheet?: string; source_row?: number | null };
-type RecordRow = Product & { period_change?: { direction: string; percent: number | null; reason: string }; latest: Calculation; inventory: Calculation; formula: Formula; graph?: Formula[]; calculations?: Graph; reason?: string; effective_date?: string; record_type?: "formal" | "backfill"; event_id?: string; id: string; product_id?: string };
-type Version = { cost_version?: number; record_type?: "formal" | "backfill"; purchase_version?: number; effective_date?: string; id: string; reason: string; recorded_at: string; products: RecordRow[] };
-type Detail = { capabilities?: {can_activate:boolean}; referenced_by?: {id:string;name:string}[]; product: Product; latest: Calculation | null; inventory: Calculation | null; recipes: Formula[]; calculations?: Graph; draft: { revision: number; formula: Formula; simulation_token?: string; simulation?: Simulation | null } | null; history: RecordRow[]; draft_revision: number; options: { owners: string[]; materials: { code: string }[]; recipes: { id: string; name: string }[]; composites: { id: string; name: string }[] } };
-type Simulation = { current_latest: Calculation; current_inventory: Calculation; latest: Calculation; inventory: Calculation; affected: { id: string; name: string }[]; simulation_token: string; blocking: string[]; warnings: string[] };
-const base = "/api/workbenches/research";
-const productPath = (id: string) => `${base}/products/${encodeURIComponent(id)}`;
-const request = <T,>(url: string, method: string, body: unknown) => fetchJson<T>(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const labels = { name: "产品内编", owner: "负责人", latest_cost: "产品成本（最新优先）", inventory_cost: "产品成本（库存优先）", change: "价格变化", yield: "收率", lines: "投料明细", status: "状态" };
 type Column = keyof typeof labels;
 const columns = Object.keys(labels) as Column[];
-const cost = (value: string | null | undefined) => priceCents(value) == null ? "—" : `¥${(priceCents(value)! / 100).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const yieldText = (value: string) => `${Number((Number(value) * 100).toFixed(6))}%`;
-const date = (value?: string) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "—";
-const formulaVersionLabel = (row: Product) => row.lifecycle === "draft" || !row.revision ? "新配方 · 尚未启用" : `${row.lifecycle === "inactive" ? "已停用 · " : ""}配方 v${row.revision}`;
-const lineCount = (row: Product) => Array.isArray(row.lines) ? row.lines.length : row.lines;
-const errorText = (error: unknown) => error instanceof Error ? error.message : "操作未完成，请重试。";
-const basis: Record<string, string> = { latest: "最新价格", historical_latest: "当期最新价格", current_latest_fallback: "当前最新价格补位", current_inventory_fallback: "当前库存价格补位", inventory: "库存价格", recipe: "引用产品成本", composite: "复配计算成本", missing: "缺少价格" };
-function ProductLink({ name, onClick }: { name: string; onClick: () => void }) { return <button className={p.materialLink} type="button" onClick={onClick}><span><strong title={name}>{name}</strong></span><ChevronRight size={16} aria-hidden="true"/></button>; }
-function Money({ value, unit = "元/kg" }: { value: string | null | undefined; unit?: string }) { return <strong title={value == null ? "缺少核算价格" : `${cost(value)} ${unit}`}>{cost(value)}</strong>; }
-const adjustmentReasons = ["配方优化", "实际投料修正", "收率修正", "成本核对修正", "临时成本测算", "其他"];
-function ReasonFields({ value, onChange, expanded = false }: { value: Adjustment; onChange: (value: Adjustment) => void; expanded?: boolean }) {
-  const options = <Options options={adjustmentReasons.map(label => ({value:label,label}))} value={value.adjustment_reason || ""} onChange={adjustment_reason => onChange({...value,adjustment_reason})} close/>;
-  return <div className={s.reasonFields}><div><span>调整原因</span>{expanded ? <div className={s.reasonOptions}>{options}</div> : <Menu title={value.adjustment_reason || "请选择调整原因"}>{options}</Menu>}</div><label>调整说明{value.adjustment_reason === "其他" ? "（必填）" : "（选填）"}<textarea aria-label="调整说明" maxLength={1000} rows={2} value={value.adjustment_note || ""} onChange={event => onChange({...value,adjustment_note:event.target.value})}/></label></div>;
-}
-function CostSource({ result }: { result?: Pick<Calculation, "auto_cost" | "cost_source" | "difference"> | null }) {
-  return result?.cost_source === "manual" ? <small className={s.costSource}><span>手动</span> {result.auto_cost == null ? "自动核算异常" : `自动 ${cost(result.auto_cost)}`} · 差额 {cost(result.difference)}</small> : null;
-}
-function Movement({ change, comparisonBasis }: { change: Product["change"]; comparisonBasis?: ComparisonBasis | null }) {
-  const value = change?.percent;
-  const comparisonLabel = comparisonBasis ? `；比较基准：${comparisonBasis.record_type === "backfill" ? `历史回算${comparisonBasis.purchase_version ? ` · 采购 v${comparisonBasis.purchase_version}` : ""}` : "正式成本记录"} ${comparisonBasis.effective_date || ""} · ${cost(comparisonBasis.latest_cost)} 元/kg` : "";
-  return <span className={`${s.movement} ${value == null ? s.muted : value > 0 ? s.up : value < 0 ? s.down : s.stable}`} title={`${change?.reason || "最新优先成本与最近一次不同价格比较，金额先四舍五入到两位；相同价格延续上次变化"}${comparisonLabel}${value == null ? "" : `；变化 ${value.toFixed(1)}%`}`}>{value == null ? "暂无对比" : value !== 0 && Math.abs(value) < 0.1 ? `${value > 0 ? "+" : "-"}<0.1%` : `${value > 0 ? "+" : ""}${value.toFixed(1)}%`}</span>;
-}
-function Status({ row }: { row: Product }) { return <span className={`${s.status} ${row.status !== "ready" ? s.attention : ""}`}>{({ ready: "可核算", missing: "待补价格", updating: "更新中", failed: "更新失败" } as Record<string, string>)[row.status] ?? row.status}{row.has_draft ? " · 有草稿" : ""}</span>; }
-
 export function ResearchWorkbench({ accessLevel, userId, view, page, onPageChange, onEnter }: { accessLevel: number; userId: string; view: "preview" | "full"; page: ResearchPage; onPageChange: (page: ResearchPage) => void; onEnter: () => void }) {
   const materialPage = view === "full" && page === "materials";
-  const [products, setProducts] = useState<Product[] | null>(null);
-  const [versions, setVersions] = useState<Version[]>([]);
-  const [formulas, setFormulas] = useState<Product[]>([]);
-  const [owners, setOwners] = useState<string[]>([]);
-  const [pending, setPending] = useState(false);
-  const [notice, setNotice] = useState("");
+  const {products,versions,formulas,owners,pending,loading,notice,load}=useResearchData(!materialPage);
   const [selected, setSelected] = useState<string | null>(null);
   const [versionId, setVersionId] = useState<string | null>(null);
   const [trialsOpen, setTrialsOpen] = useState(false);
   const [jumpFilter, setJumpFilter] = useState("");
-  const [loading, setLoading] = useState(true);
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
-    try {
-      const [data, history, catalog] = await Promise.all([fetchJson<{ products: Product[]; pending: boolean }>(`${base}/products`, { signal }), fetchJson<{ versions: Version[] }>(`${base}/history`, { signal }), fetchJson<{ formulas: Product[]; owners: string[] }>(`${base}/formulas`, { signal })]);
-      setProducts(data.products); setPending(data.pending); setVersions(compareCostPeriods(history.versions)); setFormulas(catalog.formulas); setOwners(catalog.owners); setNotice("");
-    } catch (error) { if (!signal?.aborted) setNotice(errorText(error)); }
-    finally { if (!signal?.aborted) setLoading(false); }
-  }, []);
-  useEffect(() => { if (materialPage) return; const controller = new AbortController(); void load(controller.signal); const timer = window.setInterval(() => void load(controller.signal), 10000); return () => { controller.abort(); clearInterval(timer); }; }, [load, materialPage]);
+  const previousView = useRef(view);
+  useEffect(() => { if (previousView.current === "full" && view === "preview") { setSelected(null); setVersionId(null); setTrialsOpen(false); } previousView.current = view; }, [view]);
   const openFilter = (filter: string) => { setJumpFilter(filter); onPageChange(filter === "draft" ? "formulas" : "products"); };
   if (materialPage) return <ResearchMaterialPrices userId={userId}/>;
   if (!products && loading) return <WorkbenchLoading title="正在读取产品成本" />;
@@ -92,14 +45,13 @@ export function ResearchWorkbench({ accessLevel, userId, view, page, onPageChang
     {notice && <div role="alert" className={s.notice}>{notice}<button className="secondary-button" onClick={() => void load()}>重试</button></div>}
     {pending && <div role="status" className={s.notice}>成本正在更新，相关产品暂不标记为最新。完成后自动刷新。</div>}
     {view === "preview" || page === "dashboard" ? <Dashboard products={products} formulas={formulas} versions={versions} onOpen={setSelected} onFilter={openFilter} compact={view === "preview"} detailOpen={!!selected}/> : page === "products" ? <Ledger products={products} userId={userId} onOpen={setSelected} initialFilter={jumpFilter}/> : page === "formulas" ? <FormulaCatalog initialFilter={jumpFilter} rows={formulas} owners={owners} accessLevel={accessLevel} onOpen={setSelected} onChanged={() => void load()}/> : <History versions={versions} onOpen={setVersionId} onTrials={() => setTrialsOpen(true)}/>}
-    {selected && <ProductDrawer id={selected} accessLevel={accessLevel} onClose={() => setSelected(null)} onChanged={() => void load()}/>}
-    {versionId && <VersionDrawer id={versionId} summary={versions.find(version => version.id === versionId)} onClose={() => setVersionId(null)}/>}
+    {selected && <ResearchProductDrawer key={selected} id={selected} accessLevel={accessLevel} onClose={() => setSelected(null)} onChanged={() => void load()}/>}
+    {versionId && <VersionDrawer key={versionId} id={versionId} summary={versions.find(version => version.id === versionId)} onClose={() => setVersionId(null)}/>}
     {trialsOpen && <TrialsDrawer onClose={() => setTrialsOpen(false)}/>}
   </article>;
 }
 
 type Period = "14d" | "1m" | "3m" | { start: string; end: string };
-const recordDate = (row: { effective_date?: string; recorded_at: string }) => (row.effective_date || row.recorded_at).slice(0, 10);
 function useResearchRange(versions: Version[], initial: "14d" | "3m") {
   const [period, setPeriod] = useState<Period>(initial);
   const end = versions.map(recordDate).sort().at(-1) ?? new Date().toISOString().slice(0,10);
@@ -110,8 +62,9 @@ function Dashboard({ products, formulas, versions, onOpen, onFilter, compact, de
   const [trendResult, setTrendResult] = useState<{ id: string; rows: RecordRow[] } | null>(null);
   const history = trendResult?.id === selected ? trendResult.rows : null;
   const [trendError, setTrendError] = useState("");
+  const versionKey=versions.map(version=>version.id).join("|");
   const trend = useResearchRange(versions, "3m"), ranking = useResearchRange(versions, "14d");
-  useEffect(() => { if (!selected) return; const controller = new AbortController(); setTrendError(""); fetchJson<Detail>(productPath(selected), { signal: controller.signal }).then(data => { if (!controller.signal.aborted) setTrendResult({ id: selected, rows: data.history }); }).catch(error => { if (!controller.signal.aborted) setTrendError(errorText(error)); }); return () => controller.abort(); }, [selected, versions.map(version => version.id).join("|")]);
+  useEffect(() => { if (!selected) return; const controller = new AbortController(); setTrendError(""); fetchJson<Detail>(productPath(selected), { signal: controller.signal }).then(data => { if (!controller.signal.aborted) setTrendResult({ id: selected, rows: data.history }); }).catch(error => { if (!controller.signal.aborted) setTrendError(errorText(error)); }); return () => controller.abort(); }, [selected, versionKey]);
   const movements = products.filter(row => row.change?.percent != null && row.change.percent !== 0);
   const missing = products.filter(row => row.status === "missing");
   const warnings = products.filter(row => Number(row.yield) > 1);
@@ -155,20 +108,6 @@ function Dashboard({ products, formulas, versions, onOpen, onFilter, compact, de
   </>;
 }
 
-function Menu({ title, icon, children, className = "", chevron = true, count = 0 }: { title: string; icon?: ReactNode; children: ReactNode; className?: string; chevron?: boolean; count?: number }) {
-  const menu = useRef<HTMLDetailsElement>(null);
-  const close = (focus = false) => { if (menu.current) menu.current.open = false; if (focus) menu.current?.querySelector("summary")?.focus(); };
-  useEffect(() => { const outside = (event: PointerEvent) => { if (!menu.current?.contains(event.target as Node)) close(); }; document.addEventListener("pointerdown",outside); return () => document.removeEventListener("pointerdown",outside); }, []);
-  return <details ref={menu} className={`${p.columnMenu} ${className}`} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(); }} onKeyDown={event => {
-    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); }
-    if (menu.current?.open && ["ArrowDown","ArrowUp"].includes(event.key) && !(event.target instanceof HTMLInputElement)) { event.preventDefault(); event.stopPropagation(); const options = Array.from(menu.current.querySelectorAll<HTMLButtonElement>("button[data-menu-option]")); const index = options.indexOf(document.activeElement as HTMLButtonElement); options[(index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length]?.focus(); }
-  }}><summary>{icon}{title}{count > 0 && <em>{count}</em>}{chevron && <ChevronRight size={13}/>}</summary><div>{children}</div></details>;
-}
-function Options({ options, value, onChange, close = false }: { options: { value: string; label: string }[]; value: string; onChange: (value: string) => void; close?: boolean }) {
-  return <div className={p.filterGroup}>{options.map(option => <button type="button" data-menu-option key={option.value} aria-pressed={value === option.value} onClick={event => { onChange(option.value); if (close) { const menu = event.currentTarget.closest("details"); if (menu) { menu.open = false; menu.querySelector("summary")?.focus(); } } }}>{option.label}{value === option.value && <Check size={14}/>}</button>)}</div>;
-}
-function OwnerMenu({ owners, value, onChange, emptyLabel = "全部负责人" }: { owners: string[]; value: string; onChange: (value: string) => void; emptyLabel?: string }) { return <Menu title={value || emptyLabel} className={p.personMenu}><Options options={[{value:"",label:emptyLabel},...owners.map(owner => ({value:owner,label:owner}))]} value={value} onChange={onChange} close/></Menu>; }
-
 function Ledger({ products, userId, onOpen, initialFilter }: { products: Product[]; userId: string; onOpen: (id: string) => void; initialFilter: string }) {
   const preferenceKey = `research-ledger:${userId}`;
   const [preferences, setPreferences] = useState<{ columns: Column[]; pageSize: number; sort: Column; asc: boolean; view: "scroll" | "paged" }>(() => {
@@ -177,20 +116,25 @@ function Ledger({ products, userId, onOpen, initialFilter }: { products: Product
   });
   const [search, setSearch] = useState(""); const [owner, setOwner] = useState(""); const [movement, setMovement] = useState(""); const [status, setStatus] = useState(""); const [draft, setDraft] = useState(""); const [yieldWarning, setYieldWarning] = useState(false); const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false); const [exportError, setExportError] = useState("");
+  const exportController=useRef<AbortController|null>(null);
+  useEffect(()=>()=>{exportController.current?.abort();},[]);
   const exportCosts = async () => {
+    if(exportController.current&&!exportController.current.signal.aborted)return;
+    const controller=new AbortController();exportController.current=controller;
     setExporting(true); setExportError("");
     try {
-      const response = await fetch(`${base}/products/export`);
+      const response = await fetch(`${base}/products/export`,{signal:controller.signal});
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { detail?: string } | null;
         throw new Error(payload?.detail || `导出失败（${response.status}）`);
       }
-      const url = URL.createObjectURL(await response.blob());
+      const blob=await response.blob();if(controller.signal.aborted)return;
+      const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url; link.download = `产品成本-${new Date().toISOString().slice(0, 10)}.xlsx`;
       document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url);
-    } catch (error) { setExportError(errorText(error)); }
-    finally { setExporting(false); }
+    } catch (error) {if(!controller.signal.aborted)setExportError(errorText(error)); }
+    finally {if(exportController.current===controller)exportController.current=null;if(!controller.signal.aborted)setExporting(false); }
   };
   useEffect(() => { setStatus(initialFilter === "missing" ? "missing" : ""); setDraft(initialFilter === "draft" ? "yes" : ""); setYieldWarning(initialFilter === "yield"); }, [initialFilter]);
   useEffect(() => { try { localStorage.setItem(preferenceKey, JSON.stringify(preferences)); } catch { /* table remains usable when browser storage is unavailable */ } }, [preferenceKey, preferences]);
@@ -226,174 +170,16 @@ function Ledger({ products, userId, onOpen, initialFilter }: { products: Product
 function FormulaCatalog({ rows, owners, accessLevel, onOpen, onChanged, initialFilter = "" }: { rows: Product[]; owners: string[]; accessLevel: number; onOpen: (id: string) => void; onChanged: () => void; initialFilter?: string }) {
   const [search,setSearch] = useState(""), [owner,setOwner] = useState(""), [status,setStatus] = useState(initialFilter === "draft" ? "draft" : "");
   const [creating,setCreating] = useState(false), [name,setName] = useState(""), [newOwner,setNewOwner] = useState(""), [busy,setBusy] = useState(false), [error,setError] = useState("");
+  const mounted=useRef(false),working=useRef(false);
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;};},[]);
+  const unsaved=useUnsavedChanges(creating&&Boolean(name||newOwner),busy,"本次尚未创建的配方填写将被放弃。","research-before-leave");
   useEffect(() => { setStatus(initialFilter === "draft" ? "draft" : ""); },[initialFilter]);
   const filtered = rows.filter(row => (!search || row.name.toLowerCase().includes(search.toLowerCase())) && (!owner || row.owner === owner) && (!status || (status === "draft" ? row.lifecycle === "draft" || row.has_draft : row.lifecycle === status))).sort((a,b) => a.name.localeCompare(b.name,"zh-CN",{numeric:true}));
   const lifecycle = (row: Product) => row.lifecycle === "inactive" ? "已停用" : row.lifecycle === "draft" ? "待启用" : row.has_draft ? "在用 · 有草稿" : "在用";
-  const create = async () => { setBusy(true); setError(""); try { const result = await request<{id:string}>(`${base}/formulas`,"POST",{name:name.trim(),owner:newOwner}); setCreating(false); setName(""); onChanged(); onOpen(result.id); } catch(error) { setError(errorText(error)); } finally { setBusy(false); } };
+  const create = async () => {if(working.current||!mounted.current||!name.trim())return;working.current=true; setBusy(true); setError(""); try { const result = await request<{id:string}>(`${base}/formulas`,"POST",{name:name.trim(),owner:newOwner});if(!mounted.current)return; setCreating(false); setName(""); onChanged(); onOpen(result.id); } catch(error) {if(mounted.current)setError(errorText(error)); } finally {working.current=false;if(mounted.current)setBusy(false); } };
   return <section className={s.ledgerSection}><div className={s.sectionHeading}><div><h2>配方管理</h2><p className={s.explanation}>维护产品内编与配方，试算后保存草稿，由有启用权的人员启用。</p></div>{accessLevel >= 3 && <button className="primary-button" onClick={() => {setCreating(true);setError("");}}><Plus size={15}/>新增配方</button>}</div><LedgerFrame className={s.frame}><LedgerToolbar className={s.toolbar}><label className={p.searchField}><Search size={15}/><input aria-label="搜索配方内编" placeholder="搜索产品内编" value={search} onChange={event => setSearch(event.target.value)}/></label><OwnerMenu owners={owners} value={owner} onChange={setOwner}/><Menu title={({active:"在用",draft:"待启用 / 有草稿",inactive:"已停用"} as Record<string,string>)[status] || "全部状态"} className={p.personMenu}><Options options={[{value:"",label:"全部状态"},{value:"active",label:"在用"},{value:"draft",label:"待启用 / 有草稿"},{value:"inactive",label:"已停用"}]} value={status} onChange={setStatus} close/></Menu></LedgerToolbar><div className={`${p.ledgerTableWrap} ${s.tableScroll}`}><table className={`${p.table} ${p.decisionTable} ${s.formulaTable}`}><thead><tr><th>产品内编</th><th>负责人</th><th>收率</th><th>投料明细</th><th>配方版本</th><th>状态</th></tr></thead><tbody>{filtered.map(row => <tr key={row.id}><td><ProductLink name={row.name} onClick={() => onOpen(row.id)}/></td><td>{row.owner}</td><td>{yieldText(row.yield)}</td><td>{lineCount(row)} 条</td><td>{row.revision ? `v${row.revision}` : "尚未启用"}</td><td><span className={`${s.status} ${row.lifecycle !== "active" ? s.attention : ""}`}>{lifecycle(row)}</span></td></tr>)}{!filtered.length && <tr><td colSpan={6}><div className={s.empty}>没有符合条件的配方。</div></td></tr>}</tbody></table></div><div className={p.paginationBar}><span>{filtered.length} / {rows.length} 项</span></div></LedgerFrame>
-    {creating && <Drawer title="新增配方" label="先创建内编，再补充投料和收率" onClose={() => setCreating(false)} beforeClose={() => !busy}><form className={s.createForm} onSubmit={event => {event.preventDefault();void create();}}><label>产品内编<input autoFocus required maxLength={200} value={name} onChange={event => setName(event.target.value)} placeholder="填写完整产品内编"/></label><div className={s.ownerField} role="group" aria-label="负责人"><span>负责人</span><OwnerMenu emptyLabel="请选择负责人" owners={owners} value={newOwner} onChange={setNewOwner}/></div><p className={s.explanation}>新配方只保存为草稿，试算并启用后才进入产品成本台账。</p>{error && <p role="alert" className={s.notice}>{error}</p>}<button className="primary-button" disabled={busy || !name.trim() || !newOwner}>创建草稿并编辑</button></form></Drawer>}
+    {creating && <Drawer busy={busy} title="新增配方" label="先创建内编，再补充投料和收率" onClose={() => setCreating(false)} beforeClose={unsaved.request}>{unsaved.confirmation}<form className={s.createForm} onSubmit={event => {event.preventDefault();void create();}}><fieldset disabled={busy} inert={busy}><label>产品内编<input autoFocus required maxLength={200} value={name} onChange={event => setName(event.target.value)} placeholder="填写完整产品内编"/></label><div className={s.ownerField} role="group" aria-label="负责人"><span>负责人</span><OwnerMenu emptyLabel="请选择负责人" owners={owners} value={newOwner} onChange={setNewOwner}/></div><p className={s.explanation}>新配方只保存为草稿，试算并启用后才进入产品成本台账。</p>{error && <p role="alert" className={s.notice}>{error}</p>}<button className="primary-button" disabled={busy || !name.trim() || !newOwner}>创建草稿并编辑</button></fieldset></form></Drawer>}
   </section>;
-}
-
-function Drawer({ titleAction, title, label, onClose, beforeClose, children, wide = false, busy = false }: { busy?: boolean; titleAction?: ReactNode; wide?: boolean; title: string; label: string; onClose: () => void; beforeClose?: () => boolean | Promise<boolean>; children: ReactNode }) {
-  return <SharedDrawer busy={busy} title={title} label={label} titleAction={titleAction} onClose={onClose} beforeClose={beforeClose} className={`${s.dialog} ${wide ? s.wideDialog : ""}`}>{children}</SharedDrawer>;
-}
-
-function formulaRatio(quantity: string, total: number) {
-  const amount = Number(quantity);
-  return quantity.trim() && Number.isFinite(amount) && amount >= 0 && Number.isFinite(total) && total > 0 ? `${(amount / total * 100).toFixed(2)}%` : "—";
-}
-
-function FormulaDetails({ formula, latest, inventory, onRef, policy, onPolicyChange }: { formula: Formula; latest: Calculation | null; inventory: Calculation | null; onRef: (id: string) => void; policy: "latest" | "inventory"; onPolicyChange: (policy: "latest" | "inventory") => void }) {
-  const missing = [...new Set([...(latest?.missing_materials ?? []), ...(inventory?.missing_materials ?? [])])];
-  if (!latest || !inventory) return <p className={s.notice}>此配方尚未启用，请补充投料并试算。</p>;
-  const result = policy === "latest" ? latest : inventory;
-  const totalInput = Number(result.total_input);
-  return <><div className={s.dualCosts}><div><span>产品成本 · 最新优先</span><div className={s.costValue}><Money value={latest.cost}/><small>元/kg</small></div><CostSource result={latest}/></div><div><span>产品成本 · 库存优先</span><div className={s.costValue}><Money value={inventory.cost}/><small>元/kg</small></div><CostSource result={inventory}/></div></div>{formula.adjustment_reason && <p className={s.explanation}>调整原因：{formula.adjustment_reason}{formula.adjustment_note && ` · ${formula.adjustment_note}`}{formula.editor_name && ` · 编辑：${formula.editor_name}`}{formula.activator_name && ` · 启用：${formula.activator_name}`}</p>}
-    {missing.length > 0 && <div role="alert" className={s.notice}>缺少核算价格：{missing.join("、")}。自动核算异常；已手动指定的口径采用手动成本。</div>}
-    {Number(formula.yield) > 1 && <div className={s.notice}>原表收率为 {yieldText(formula.yield)}，已保留原值，请核对。</div>}
-    <div className={s.formulaSummary}><span>本层收率 <strong>{yieldText(formula.yield)}</strong></span><span>总投料 <strong title={result.total_input}>{result.total_input} kg</strong></span><span>折合产出 <strong title={result.output_quantity}>{Number(result.output_quantity).toLocaleString("zh-CN", { maximumFractionDigits: 4 })} kg</strong></span></div>
-    <div className={s.sectionHeading}><h3>投料明细 · {result.lines.length} 条</h3><div className={p.ledgerMode}><button aria-pressed={policy === "latest"} onClick={() => onPolicyChange("latest")}>最新优先</button><button aria-pressed={policy === "inventory"} onClick={() => onPolicyChange("inventory")}>库存优先</button></div></div>
-    <div className={s.detailTable}><table className={`${p.table} ${s.formulaDetailsTable}`}><thead><tr><th>顺序</th><th>投料内编</th><th>配方比例</th><th>实际投料</th><th>核算单价</th><th>取价依据</th><th>金额</th></tr></thead><tbody>{result.lines.map((line,index) => <tr key={index}><td>{index+1}</td><td>{line.kind !== "material" ? <ProductLink name={line.code} onClick={() => onRef(line.ref)}/> : <strong>{line.code}</strong>}</td><td>{formula.lines[index]?.ratio != null ? `${Number(formula.lines[index].ratio).toFixed(2)}%` : formulaRatio(line.quantity, totalInput)}</td><td title={line.quantity}>{line.quantity}<small className={s.cellUnit}>kg</small></td><td><Money value={line.unit_cost}/><small className={s.cellUnit}>/kg</small></td><td>{basis[line.basis] ?? line.basis}</td><td><Money value={line.amount} unit="元"/></td></tr>)}</tbody></table></div>
-    <p className={s.explanation}>本层成本＝投料金额合计 ÷ 总投料量 ÷ 本层收率。引用产品与复配原料沿整条计算链使用相同取价口径。</p>
-
-  </>;
-}
-
-function ProductDrawer({ id, accessLevel, onClose, onChanged }: { id: string; accessLevel: number; onClose: () => void; onChanged: () => void }) {
-  const [path, setPath] = useState<string[]>([id]); const current = path[path.length-1];
-  const [policy, setPolicy] = useState<"latest" | "inventory">("latest");
-  const [detail, setDetail] = useState<Detail | null>(null); const [error, setError] = useState(""); const [editing, setEditing] = useState(false); const [dirty, setDirty] = useState(false); const [record, setRecord] = useState<RecordRow | null>(null);
-  const [reasonOpen, setReasonOpen] = useState(false);
-  const [adjustment, setAdjustment] = useState<Adjustment>({});
-  const beginEdit = (value: Detail) => {
-    const firstFormula = value.product.lifecycle === "draft" && value.product.revision === 0;
-    setAdjustment({adjustment_reason:value.draft?.formula.adjustment_reason || (firstFormula ? "新增配方" : ""), adjustment_note:value.draft?.formula.adjustment_note || ""});
-    if (firstFormula) { setReasonOpen(false); setEditing(true); } else setReasonOpen(true);
-  };
-  const [deleteOpen, setDeleteOpen] = useState(false), [deleting, setDeleting] = useState(false);
-  const deleteFormula = async () => { if (!detail) return; setDeleting(true); try { await request(productPath(current), "DELETE", {revision:detail.draft_revision}); onChanged(); onClose(); } catch (reason) { setError(errorText(reason)); setDeleteOpen(false); } finally { setDeleting(false); } };
-  const [deactivateOpen,setDeactivateOpen] = useState(false), [deactivating,setDeactivating] = useState(false);
-  const load = useCallback(async (signal?: AbortSignal, openDraft = false) => { try { setError(""); const result = await fetchJson<Detail>(productPath(current), { signal }); if (!signal?.aborted) { setDetail(result); if (openDraft && result.product.lifecycle === "draft" && accessLevel >= 3) beginEdit(result); } } catch (error) { if (!signal?.aborted) setError(errorText(error)); } }, [current, accessLevel]);
-  useEffect(() => { const controller = new AbortController(); setDetail(null); setEditing(false); setRecord(null); setDeactivateOpen(false); void load(controller.signal, true); return () => controller.abort(); }, [load]);
-  useEffect(() => { const refresh=()=>void load(); window.addEventListener("activation-grants-changed",refresh);window.addEventListener("focus",refresh);return()=>{window.removeEventListener("activation-grants-changed",refresh);window.removeEventListener("focus",refresh);}; },[load]);
-  const calculationStatus = detail?.product.status;
-  useEffect(() => {
-    if (calculationStatus !== "updating" && calculationStatus !== "failed") return;
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    const refresh = async () => { await load(controller.signal); if (!controller.signal.aborted) timer = setTimeout(refresh, 2000); };
-    timer = setTimeout(refresh, 2000);
-    return () => { controller.abort(); clearTimeout(timer); };
-  }, [calculationStatus, load]);
-  const [discardTarget, setDiscardTarget] = useState<"back" | "close" | null>(null);
-  const [editorBusy, setEditorBusy] = useState(false);
-  const unsaved = useUnsavedChanges(dirty, editorBusy || deleting || deactivating, "本次未保存的配方修改将被放弃，已保存草稿和正式配方保持不变。", "research-before-leave");
-  const formula = detail?.recipes.find(item => item.id === current) ?? (detail ? { ...detail.product, lines: Array.isArray(detail.product.lines) ? detail.product.lines : [] } : null);
-  const deactivate = async () => { if (!detail) return; setDeactivating(true); try { await request(`${productPath(current)}/deactivate`,"POST",{revision:detail.product.revision}); setDeactivateOpen(false); onChanged(); await load(); } catch (reason) { setError(errorText(reason)); } finally { setDeactivating(false); } };
-  return <Drawer busy={editorBusy || deleting || deactivating} wide titleAction={detail?.product.lifecycle === "draft" && detail.product.revision === 0 && accessLevel >= 3 ? <button type="button" className={`icon-button ${s.dangerButton}`} aria-label={`删除配方 ${detail.product.name}`} title="删除待启用配方" disabled={deleting} onClick={() => setDeleteOpen(true)}><Trash2 size={15}/></button> : undefined} title={editing ? `编辑配方 · ${detail?.product.name ?? ""}` : detail?.product.name ?? "产品成本"} label={editing ? "试算和草稿不改变正式成本" : "产品配方与成本"} onClose={onClose} beforeClose={unsaved.request}>
-    {unsaved.confirmation}
-    {reasonOpen && <DiscardChangesDialog title="记录调整原因" description="当前成本自动按采购价格更新。手动调整需记录原因，保存草稿并核对启用后生效。" intent="primary" cancelLabel="取消" confirmLabel="进入编辑" confirmDisabled={!adjustmentReasons.includes(adjustment.adjustment_reason || "") || (adjustment.adjustment_reason === "其他" && !adjustment.adjustment_note?.trim())} onCancel={() => setReasonOpen(false)} onDiscard={() => {setReasonOpen(false);setEditing(true);}}><ReasonFields expanded value={adjustment} onChange={setAdjustment}/></DiscardChangesDialog>}
-    {deleteOpen && detail && <DiscardChangesDialog title={`删除配方 ${detail.product.name}？`} description="将删除这条未启用配方及其草稿，无法恢复。" cancelLabel="保留配方" confirmLabel="删除配方" disabled={deleting} onCancel={() => setDeleteOpen(false)} onDiscard={() => void deleteFormula()}/>}
-    {discardTarget && <DiscardChangesDialog description="本次未保存的配方修改将被放弃，已保存草稿和正式配方保持不变。" onCancel={() => setDiscardTarget(null)} onDiscard={() => { const target = discardTarget; setDiscardTarget(null); setDirty(false); if (target === "close") onClose(); else { setEditing(false); void load(); } }}/>}
-    {error && <p role="alert" className={s.notice}>{error}<button className="secondary-button" onClick={() => void load()}>重试</button></p>}
-    {!detail || !formula ? error ? null : <WorkbenchLoading local title="正在读取研发配方详情"/> : editing ? <Editor onBusy={setEditorBusy} adjustment={adjustment} detail={detail} formula={formula} accessLevel={accessLevel} onDirty={setDirty} onBack={(force) => { if (force || !dirty) { setDirty(false); setEditing(false); void load(); } else setDiscardTarget("back"); }} onChanged={() => { onChanged(); void load(); }}/>: <>
-      <div className={s.sectionHeading}>{path.length > 1 ? <button className={s.back} onClick={() => setPath(path.slice(0,-1))}><ArrowLeft size={15}/>返回上层</button> : <span>{detail.product.owner} · {formulaVersionLabel(detail.product)}</span>}<div className={p.actions}>{accessLevel >= 3 && current.startsWith("recipe:") && <button className="secondary-button" onClick={() => beginEdit(detail)}><Pencil size={14}/>{detail.product.lifecycle === "inactive" ? "恢复并编辑" : detail.draft ? "继续编辑草稿" : "编辑配方"}</button>}{accessLevel >= 4 && current.startsWith("recipe:") && detail.product.lifecycle === "active" && <button className={`secondary-button ${s.dangerButton}`} disabled={deactivating} aria-expanded={deactivateOpen} onClick={() => setDeactivateOpen(!deactivateOpen)}>停用配方</button>}</div></div>
-      {accessLevel >= 4 && current.startsWith("recipe:") && detail.product.lifecycle === "active" && deactivateOpen && <div className={s.confirmation}><h3>核对停用影响</h3><p>停用后将从在用产品及投料选择中移除，历史记录继续保留。恢复须重新试算后启用。</p>{detail.referenced_by?.length ? <p role="alert">仍被在用产品引用，不能停用：{detail.referenced_by.map(row => row.name).join("、")}。</p> : <p>当前没有在用产品引用此配方。</p>}<div className={s.actions}><button className="secondary-button" onClick={() => setDeactivateOpen(false)} disabled={deactivating}>取消</button><button className={`secondary-button ${s.dangerButton}`} disabled={deactivating || Boolean(detail.referenced_by?.length)} onClick={() => void deactivate()}>确认停用</button></div></div>}
-      {(detail.product.status === "updating" || detail.product.status === "failed") && <div className={s.notice}>成本{detail.product.status === "updating" ? "更新中" : "更新失败，等待重试"}。以下为上次完成的有效成本记录。</div>}
-      {detail.product.lifecycle === "inactive" && <p className={s.notice}>此配方已停用，不参与当前产品核算。恢复前须重新试算、保存并启用。</p>}
-      <FormulaDetails formula={detail.history[0]?.formula ?? formula} latest={detail.latest} inventory={detail.inventory} policy={policy} onPolicyChange={setPolicy} onRef={ref => setPath([...path, ref])}/>
-      <section className={s.historySection}><div className={s.sectionHeading}><h3>成本历史</h3><span>{detail.history.length} 条</span></div>{detail.history.map((item,index) => { const expanded = record?.event_id === item.event_id && record?.recorded_at === item.recorded_at; return <div key={`${item.event_id}-${index}`} className={s.inlineRecord}><button className={s.historyRow} aria-expanded={expanded} onClick={() => setRecord(expanded ? null : item)}><span>{recordDate(item)}<small>{item.record_type === "backfill" ? "历史回算 · " : ""}{item.reason ?? "成本核算"}</small></span><Money value={item.latest_cost}/><Movement change={item.change} comparisonBasis={item.comparison_basis}/><ChevronRight size={15} style={{transform:expanded?"rotate(90deg)":undefined}}/></button>{expanded && <div className={s.expandedRecord}><HistoricalFormula record={record!} initialPolicy={policy}/><button className={s.back} onClick={() => setRecord(null)}>收起本期明细</button></div>}</div>; })}{!detail.history.length && <p>尚未建立成本记录。</p>}</section>
-
-
-    </>}
-  </Drawer>;
-}
-
-function Editor({ onBusy, adjustment, detail, formula: currentFormula, accessLevel, onBack, onChanged, onDirty }: { onBusy: (busy: boolean) => void; adjustment: Adjustment; detail: Detail; formula: Formula; accessLevel: number; onBack: (force?: boolean) => void; onChanged: () => void; onDirty: (value: boolean) => void }) {
-  const initial = useMemo(() => {
-    const source = structuredClone(detail.draft?.formula ?? currentFormula);
-    const total = source.lines.reduce((sum, line) => sum + Number(line.quantity), 0);
-    const base = Number(source.ratio_base) > 0 ? Number(source.ratio_base) : total > 0 ? Number(total.toFixed(10)) : 100;
-    return { ...source, adjustment_reason:source.adjustment_reason || "", adjustment_note:source.adjustment_note || "", ratio_linked: source.ratio_linked ?? true, ratio_base: String(base), lines: source.lines.map(line => ({ ...line, ratio: line.ratio ?? (Number(line.quantity) / base * 100).toFixed(2) })) };
-  }, [detail.draft, currentFormula]);
-  const [formula, setFormula] = useState<Formula>(() => ({...structuredClone(initial), ...adjustment}));
-  const [revision, setRevision] = useState(detail.draft_revision ?? 0);
-  const [simulation, setSimulation] = useState<Simulation | null>(detail.draft?.simulation ?? null); const [pendingAction, setPendingAction] = useState(""); const busy = Boolean(pendingAction); const [message, setMessage] = useState(""); const [saved, setSaved] = useState(Boolean(detail.draft) && (detail.draft?.formula.adjustment_reason || "") === (adjustment.adjustment_reason || "") && (detail.draft?.formula.adjustment_note || "") === (adjustment.adjustment_note || "")); const [confirming, setConfirming] = useState(false); const [conflict, setConflict] = useState<Detail | null>(null);
-  useEffect(() => { onBusy(busy); return () => onBusy(false); }, [busy, onBusy]);
-  const ratioBase = Number(formula.ratio_base);
-  const baseline = useRef(JSON.stringify(initial));
-  const dirty = JSON.stringify(formula) !== baseline.current;
-  useEffect(() => { onDirty(dirty); }, [dirty, onDirty]);
-  const liveTrial = useRef(Boolean(detail.draft));
-  const trialRequest = useRef(0);
-  const [trialChange, setTrialChange] = useState(detail.draft ? 1 : 0);
-  const [trialUpdating, setTrialUpdating] = useState(Boolean(detail.draft));
-  const update = (next: Formula) => { if (busy || (saved && !dirty)) return; ++trialRequest.current; setFormula(next); setSaved(false); setConfirming(false); setMessage(""); if (liveTrial.current) { setTrialUpdating(true); setTrialChange(value => value + 1); } else setSimulation(null); };
-  useEffect(() => {
-    if (!trialChange || !liveTrial.current || !trialUpdating) return;
-    const current = ++trialRequest.current;
-    const timer = window.setTimeout(async () => {
-      try {
-        const result = await request<Simulation>(`${productPath(detail.product.id)}/simulate`, "POST", { formula, draft_revision: revision });
-        if (current === trialRequest.current) setSimulation(result);
-      } catch (error) {
-        if (current === trialRequest.current) { setSimulation(null); setMessage(errorText(error)); }
-      } finally { if (current === trialRequest.current) setTrialUpdating(false); }
-    }, trialChange === 1 && saved ? 0 : 350);
-    return () => { window.clearTimeout(timer); if (current === trialRequest.current) ++trialRequest.current; };
-  }, [trialChange, formula, detail.product.id, revision]);
-  const targets = [...detail.options.materials.map(item => ({ value: `material:${item.code}`, ref: item.code, code: item.code, kind: "material" as const })), ...detail.options.recipes.map(item => ({ value: `recipe:${item.id}`, ref: item.id, code: item.name, kind: "recipe" as const })), ...detail.options.composites.map(item => ({ value: `composite:${item.id}`, ref: item.id, code: item.name, kind: "composite" as const }))].filter(item => item.code !== "CF020C");
-  const changeLine = (index: number, value: Partial<InputLine>) => update({ ...formula, lines: formula.lines.map((line,i) => i === index ? { ...line, ...value } : line) });
-  const changeAmount = (index: number, field: "ratio" | "quantity", value: string) => {
-    const valid = value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0;
-    const other = field === "ratio" ? "quantity" : "ratio";
-    const converted = field === "ratio" ? Number(value) * ratioBase / 100 : Number(value) / ratioBase * 100;
-    changeLine(index, { [field]: value, ...(formula.ratio_linked ? { [other]: valid ? String(Number(converted.toFixed(10))) : "" } : {}) });
-  };
-  const [dragRow, setDragRow] = useState<number | null>(null);
-  const [dropRow, setDropRow] = useState<number | null>(null);
-  const move = (from: number, to: number) => {
-    if (from === to || to < 0 || to >= formula.lines.length) return;
-    const lines = [...formula.lines];
-    lines.splice(to, 0, lines.splice(from, 1)[0]);
-    update({ ...formula, lines });
-  };
-
-  const simulate = async () => { setPendingAction("simulate"); setMessage(""); try { setSimulation(await request<Simulation>(`${productPath(detail.product.id)}/simulate`, "POST", { formula, draft_revision: revision })); liveTrial.current = true; setConfirming(false); } catch (error) { setSimulation(null); setMessage(errorText(error)); } finally { setPendingAction(""); } };
-  const save = async () => { if (!simulation) return; setPendingAction("save"); try { const result = await request<{ revision: number; simulation_token: string }>(`${productPath(detail.product.id)}/draft`, "PUT", { formula, draft_revision: revision, simulation_token: simulation.simulation_token }); setRevision(result.revision); setSimulation({ ...simulation, simulation_token: result.simulation_token }); baseline.current = JSON.stringify(formula); onDirty(false); setSaved(true); setMessage(""); onChanged(); } catch (error) { setMessage(errorText(error)); } finally { setPendingAction(""); } };
-  const [cancelSaveOpen, setCancelSaveOpen] = useState(false);
-  const cancelTrial = () => { liveTrial.current = false; ++trialRequest.current; setTrialUpdating(false); setSimulation(null); setConfirming(false); setMessage(""); };
-  const discard = async () => { setPendingAction("discard"); try { await request(`${productPath(detail.product.id)}/draft`, "DELETE", { revision }); cancelTrial(); setRevision(revision + 1); baseline.current = ""; setSaved(false); setCancelSaveOpen(false); onDirty(true); setMessage("已取消保存，当前填写仍保留。可重新试算并保存草稿。"); onChanged(); } catch (error) { setMessage(errorText(error)); } finally { setPendingAction(""); } };
-  const activate = async () => { if (!simulation) return; setPendingAction("activate"); try { await request(`${productPath(detail.product.id)}/activate`, "POST", { revision, simulation_token: simulation.simulation_token }); onDirty(false); onChanged(); onBack(true); } catch (error) { setConfirming(false); setSimulation(null); setMessage(errorText(error)); } finally { setPendingAction(""); } };
-  const recheck = async () => { setPendingAction("recheck"); try { setConflict(await fetchJson<Detail>(productPath(detail.product.id))); } catch (error) { setMessage(errorText(error)); } finally { setPendingAction(""); } };
-  const delta = (a: string | null, b: string | null) => { const left = priceCents(a), right = priceCents(b); return left == null || right == null ? "暂无对比" : `${left > right ? "+" : ""}${((left-right)/100).toFixed(2)} 元/kg`; };
-  return <div className={s.editor}>
-    <div className={s.sectionHeading}><button className={s.back} onClick={() => onBack()} disabled={busy}><ArrowLeft size={15}/>返回产品详情</button><span>{formulaVersionLabel(detail.product)}{detail.draft ? ` · 草稿 r${revision}` : ""}</span></div>
-    <p className={s.explanation}>调整投料并试算，保存草稿后由有启用权的人员核对启用。原料价格由采购台账提供。</p>
-    <fieldset disabled={busy || (saved && !dirty)} inert={busy || (saved && !dirty)} className={saved && !dirty ? s.lockedFields : undefined}>
-    {!(detail.product.lifecycle === "draft" && detail.product.revision === 0) && <ReasonFields value={formula} onChange={value => update({...formula,...value})}/>}
-    <div className={s.formulaSettings}>
-      <div className={s.ownerSetting}><span>负责人</span><OwnerMenu owners={detail.options.owners ?? []} value={formula.owner ?? ""} emptyLabel="请选择负责人" onChange={owner => update({...formula,owner})}/></div>
-      <div className={s.yieldSetting}><label className={s.yieldInput}>收率 <DecimalInput aria-label="收率百分比" type="number" min="0.000001" step="any" value={formula.yield === "" ? "" : Number((Number(formula.yield)*100).toFixed(10))} onChange={event => update({ ...formula, yield: event.target.value === "" ? "" : String(Number(event.target.value)/100) })}/><span>%</span></label></div>
-      <div className={s.linkSetting}><strong id="formula-link-label">自动换算</strong><button className={`access-policy-help ${s.linkHelp}`} type="button" aria-label="查看自动换算说明"><Info size={14}/><span role="tooltip" id="formula-link-help">{formula.ratio_linked ? `基准 ${formula.ratio_base} kg · 配方比例与实际投料双向同步` : "独立填写，成本按实际投料核算"}</span></button><Switch type="button" role="switch" className="settings-mode-switch" aria-labelledby="formula-link-label" aria-describedby="formula-link-help" aria-checked={formula.ratio_linked ?? true} onClick={() => update({ ...formula, ratio_linked: !formula.ratio_linked, lines: !formula.ratio_linked ? formula.lines.map(line => ({ ...line, ratio: line.quantity.trim() ? (Number(line.quantity) / ratioBase * 100).toFixed(2) : "" })) : formula.lines })}><span /></Switch></div>
-    </div>
-    <div className={s.costSettings}>{(["latest", "inventory"] as const).map(policy => <div key={policy}><label>{policy === "latest" ? "最新优先成本" : "库存优先成本"}</label><div className={p.ledgerMode}><button type="button" aria-pressed={formula.manual_costs?.[policy] == null} onClick={() => update({...formula,manual_costs:{...formula.manual_costs,[policy]:null}})}>自动核算</button><button type="button" aria-pressed={formula.manual_costs?.[policy] != null} onClick={() => update({...formula,manual_costs:{...formula.manual_costs,[policy]:formula.manual_costs?.[policy] ?? simulation?.[policy].cost ?? detail[policy]?.cost ?? ""}})}>手动指定</button></div>{formula.manual_costs?.[policy] != null && <label className={s.manualInput}><DecimalInput aria-label={`${policy === "latest" ? "最新" : "库存"}优先手动成本`} type="number" min="0" step="any" value={formula.manual_costs[policy] ?? ""} onChange={event => update({...formula,manual_costs:{...formula.manual_costs,[policy]:event.target.value}})}/><span>元/kg</span></label>}</div>)}</div>
-    <div className={s.inputHeading}><h3>投料明细 <span>{formula.lines.length} 项</span></h3><span>比例合计允许超过 100%</span></div>
-    {Number(formula.yield) > 1 && <p className={s.notice}>收率超过 100%，请核对后再启用；不会自动修改原值。</p>}
-    <div className={s.detailTable}><table className={`${p.table} ${s.editTable}`}><thead><tr><th>顺序</th><th>原料 / 引用产品</th><th>配方比例</th><th>实际投料 / kg</th><th>操作</th></tr></thead><tbody>{formula.lines.map((line,index) => <tr key={index} data-input-row={index} className={dropRow === index && dragRow !== index ? s.dropRow : undefined}><td><button type="button" className={s.dragHandle} aria-label={`拖动第${index+1}项排序`} title="拖动调整顺序，也可用上下方向键移动" onKeyDown={event => { if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); move(index, index + (event.key === "ArrowUp" ? -1 : 1)); } }} onPointerDown={event => { if (event.button !== 0) return; event.currentTarget.setPointerCapture(event.pointerId); setDragRow(index); setDropRow(index); }} onPointerMove={event => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const row = document.elementFromPoint(event.clientX, event.clientY)?.closest("tr[data-input-row]"); if (row && event.currentTarget.closest("tbody")?.contains(row)) setDropRow(Number(row.getAttribute("data-input-row"))); }} onPointerUp={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) { event.currentTarget.releasePointerCapture(event.pointerId); if (dropRow != null) move(index, dropRow); } setDragRow(null); setDropRow(null); }} onPointerCancel={() => { setDragRow(null); setDropRow(null); }}><GripVertical size={14}/><span>{index+1}</span></button></td><td><Menu title={line.code || "选择投料"} className={s.inputMenu}>{(["material", "recipe", "composite"] as const).map(kind => <div key={kind}><span className={s.inputGroupLabel}>{{material:"研发五部原料",recipe:"有效产品",composite:"已确认复配"}[kind]}</span><Options options={targets.filter(item => item.kind === kind).map(item => ({value:item.value,label:item.code}))} value={`${line.kind}:${line.ref}`} onChange={value => { const target = targets.find(item => item.value === value); if (target) changeLine(index, {kind:target.kind,ref:target.ref,code:target.code}); }} close/></div>)}</Menu></td><td><DecimalInput aria-label={`第${index+1}项配方比例`} type="number" min="0" step="any" value={line.ratio ?? ""} onChange={event => changeAmount(index, "ratio", event.target.value)}/><span> %</span></td><td><DecimalInput aria-label={`第${index+1}项数量`} type="number" min="0" step="any" value={line.quantity} onChange={event => changeAmount(index, "quantity", event.target.value)}/></td><td><div className={s.lineActions}><button className="icon-button" aria-label={`删除第${index+1}项`} onClick={() => update({ ...formula, lines: formula.lines.filter((_,i) => i !== index) })}><Trash2 size={14}/></button></div></td></tr>)}</tbody></table></div>
-    <button className="secondary-button" disabled={!targets.length} onClick={() => { const target = targets[0]; update({ ...formula, lines: [...formula.lines, { code: target.code, kind: target.kind, ref: target.ref, quantity: "", ratio: "", source_row: null }] }); }}><Plus size={14}/>添加投料</button></fieldset>
-    {message && <div role="status" className={s.notice}>{message}{/草稿已被|草稿已变化|价格或配方已变化|409/.test(message) && <button className="secondary-button" disabled={busy} onClick={() => void recheck()}>保留输入，查看最新版本</button>}</div>}
-    {conflict && <section className={s.confirmation}><h3>最新版本已读取，你的输入仍然保留</h3><p>当前{formulaVersionLabel(conflict.product)}，草稿 r{conflict.draft_revision}。</p>{conflict.draft && <details><summary>核对已保存草稿的投料</summary><p>收率 {yieldText(conflict.draft.formula.yield)}</p>{conflict.draft.formula.lines.map((line,index) => <p key={index}>{index+1}. {line.code} · {line.quantity} kg</p>)}</details>}<button className="secondary-button" disabled={busy} onClick={() => { setRevision(conflict.draft_revision); setSimulation(null); setSaved(false); setConflict(null); setMessage("已确认最新版本。请重新试算，再保存你的修改。"); }}>已核对，继续使用我的输入</button></section>}
-    {simulation && <section className={s.trialResult}><div className={s.sectionHeading}><h3>双成本试算</h3><span aria-live="polite">{trialUpdating ? "正在更新 · 下方为上次结果" : "相对现行配方"}</span></div><div className={s.dualCosts}><div><span>最新优先</span><Money value={simulation.latest.cost}/><CostSource result={simulation.latest}/><small>{delta(simulation.latest.cost, simulation.current_latest.cost)}</small></div><div><span>库存优先</span><Money value={simulation.inventory.cost}/><CostSource result={simulation.inventory}/><small>{delta(simulation.inventory.cost, simulation.current_inventory.cost)}</small></div></div>{simulation.blocking.map((item,index) => <p role="alert" className={s.notice} key={index}>{item}</p>)}{simulation.warnings.map((item,index) => <p className={s.notice} key={index}>{item}</p>)}<div className={s.impactScope}><span>启用后影响范围</span>{simulation.affected.every(item => item.id === detail.product.id) ? <span>仅当前产品 <strong>{detail.product.name}</strong></span> : <details><summary><span>涉及 <strong>{simulation.affected.length}</strong> 个产品</span><span>查看内编 <ChevronRight size={14}/></span></summary><ul>{simulation.affected.map(item => <li key={item.id}><strong>{item.name}</strong>{item.id === detail.product.id && <small>当前产品</small>}</li>)}</ul></details>}</div></section>}
-    {confirming && simulation && <section className={s.confirmation} role="region" aria-label="启用最终确认"><h3>确认启用这份配方</h3><p>{detail.product.revision === 0 ? "操作" : "调整原因"}：{formula.adjustment_reason}{formula.adjustment_note && ` · ${formula.adjustment_note}`}</p><p>将启用本页投料与收率，更新 {simulation.affected.length || 1} 个相关产品的成本，并保留旧配方及成本历史。</p><div className={s.confirmDiff}><span>收率：{yieldText(currentFormula.yield)} → {yieldText(formula.yield)}</span><span>投料：{currentFormula.lines.length} 条 → {formula.lines.length} 条</span></div><details><summary>查看最终投料差异</summary>{formula.lines.map((line,index) => { const before = currentFormula.lines[index]; return JSON.stringify(before) === JSON.stringify(line) ? null : <p key={index}>第 {index+1} 项：{before ? `${before.code} ${before.quantity} kg` : "新增"} → {line.code} {line.quantity} kg</p>; })}{currentFormula.lines.slice(formula.lines.length).map((line,index) => <p key={`removed-${index}`}>移除：{line.code} {line.quantity} kg</p>)}</details><div className={s.confirmDiff}>{(["latest", "inventory"] as const).map(policy => <span key={policy}>{policy === "latest" ? "最新优先" : "库存优先"} · {simulation[policy].cost_source === "manual" ? "手动指定" : "自动核算"}：{cost(simulation[policy === "latest" ? "current_latest" : "current_inventory"].cost)} → {cost(simulation[policy].cost)} 元/kg<CostSource result={simulation[policy]}/></span>)}</div><div className={s.actions}><button className="secondary-button" disabled={busy} onClick={() => setConfirming(false)}>继续核对</button><button className="primary-button" disabled={busy} onClick={() => void activate()}>确认启用</button></div></section>}
-    {cancelSaveOpen && <DiscardChangesDialog title="取消保存的草稿？" description="将撤销已保存草稿并关闭试算结果，当前填写保留在本页，可重新试算和保存。正式配方和成本保持不变。" cancelLabel="保留草稿" confirmLabel="取消保存" disabled={busy} onCancel={() => setCancelSaveOpen(false)} onDiscard={() => void discard()}/>}
-    <FormFooter className={s.editorFooter} status={<div role="status" className={saved && !dirty && !pendingAction && !trialUpdating ? s.savedState : s.footerStatus}>{saved && !dirty && !pendingAction && !trialUpdating && <Check size={14}/>}{trialUpdating ? "正在更新试算，完成后可保存" : pendingAction ? ({simulate:"正在试算…",save:"正在保存草稿…",discard:"正在放弃草稿…",activate:"正在启用…",recheck:"正在读取最新版本…"}[pendingAction]) : !simulation ? (saved ? "草稿已保存，试算后可继续核对" : "修改完成后，先试算成本") : !saved || dirty ? "试算完成，可保存草稿" : simulation.blocking.length || simulation.latest.cost == null || simulation.inventory.cost == null ? "草稿已保存，请处理试算提示后启用" : Boolean(detail.capabilities?.can_activate) ? "草稿已保存，可核对并启用" : "草稿已保存，待有启用权的人员核对启用"}</div>}>
-          {!(saved && !dirty && (simulation || trialUpdating || liveTrial.current)) && <button className={!simulation ? "primary-button" : "secondary-button"} disabled={busy} onClick={() => simulation || trialUpdating || liveTrial.current ? cancelTrial() : void simulate()}>{pendingAction === "simulate" ? "试算中…" : simulation || trialUpdating || liveTrial.current ? "取消试算" : "试算双成本"}</button>}
-          {saved && !dirty ? <button className={`secondary-button ${s.dangerButton}`} disabled={busy || trialUpdating} onClick={() => setCancelSaveOpen(true)}>取消保存</button> : <button className={simulation ? "primary-button" : "secondary-button"} disabled={busy || trialUpdating || !simulation} onClick={() => void save()}>{pendingAction === "save" ? "保存中…" : "保存草稿"}</button>}
-          {Boolean(detail.capabilities?.can_activate) && <button className={simulation && saved && !dirty && !simulation.blocking.length && simulation.latest.cost != null && simulation.inventory.cost != null ? "primary-button" : "secondary-button"} disabled={busy || trialUpdating || !simulation || !saved || dirty || simulation.blocking.length > 0 || simulation.latest.cost == null || simulation.inventory.cost == null || confirming} onClick={() => setConfirming(true)}>{pendingAction === "activate" ? "启用中…" : confirming ? "请核对上方确认内容" : "核对并启用"}</button>}
-    </FormFooter>
-  </div>;
 }
 
 const versionLabel = (version: Version) => version.record_type === "backfill" ? `采购 v${version.purchase_version ?? "—"} · 历史回算` : `成本 v${version.cost_version ?? "—"} · 正式记录`;
@@ -409,23 +195,14 @@ function History({ versions, onOpen, onTrials }: { versions: Version[]; onOpen: 
   })}</ol>{!visibleVersions.length && <div className={s.empty}>{versions.length ? "该分类暂无成本记录。" : "正在建立第一期成本基线。"}</div>}</section>;
 }
 
-function HistoricalFormula({ record, initialPolicy = "latest" }: { record: RecordRow; initialPolicy?: "latest" | "inventory" }) {
-  const [policy, setPolicy] = useState<"latest" | "inventory">(initialPolicy);
-  const rootId = record.product_id ?? record.formula.id ?? record.id;
-  const [path, setPath] = useState([rootId]); const current = path[path.length-1];
-  const formula = current === rootId ? record.formula : record.graph?.find(item => item.id === current);
-  const latest = current === rootId ? record.latest : record.calculations?.latest[current];
-  const inventory = current === rootId ? record.inventory : record.calculations?.inventory[current];
-  return <>{path.length > 1 && <button className={s.back} onClick={() => setPath(path.slice(0,-1))}><ArrowLeft size={15}/>返回上层</button>}{formula && latest && inventory ? <><h3>{formula.name}</h3><FormulaDetails formula={formula} latest={latest} inventory={inventory} policy={policy} onPolicyChange={setPolicy} onRef={ref => setPath([...path,ref])}/></> : <p className={s.notice}>该历史记录没有保存此引用的明细。</p>}</>;
-}
 function VersionDrawer({ id, summary, onClose }: { id: string; summary?: Version; onClose: () => void }) {
   const [version, setVersion] = useState<Version | null>(null); const [error, setError] = useState(""); const [record, setRecord] = useState<RecordRow | null>(null);
-  useEffect(() => { const controller = new AbortController(); fetchJson<Version>(`${base}/history/${encodeURIComponent(id)}`, { signal: controller.signal }).then(setVersion).catch(error => { if (!controller.signal.aborted) setError(errorText(error)); }); return () => controller.abort(); }, [id]);
-  return <Drawer wide title={record?.name ?? (summary ? versionLabel(summary) : "成本记录")} label={version ? recordDate(version) : "价格历史"} onClose={onClose}>{error ? <p role="alert">{error}</p> : !version ? <WorkbenchLoading local title="正在读取研发成本历史"/> : record ? <><button className={s.back} onClick={() => setRecord(null)}><ArrowLeft size={14}/>返回版本明细</button><HistoricalFormula record={record}/></> : <><div className={s.historySummary}><span>成本日期 <strong>{recordDate(version)}</strong></span><span>产品 <strong>{version.products.length} 项</strong></span><span>{version.record_type === "backfill" ? "历史回算" : "正式记录"}</span></div><p className={s.explanation}>{version.reason}</p><p className={s.explanation}>记录时间：{date(version.recorded_at)}{version.record_type === "backfill" ? "。按当期采购价格回算；当期缺价时使用的当前补位价在投料依据中标明。" : ""}</p><div className={s.detailTable}><table className={p.table}><thead><tr><th>产品内编</th><th>最新优先 / 元/kg</th><th>库存优先 / 元/kg</th><th>较上期变化</th></tr></thead><tbody>{version.products.map((row,index) => <tr key={`${row.id}-${index}`}><td><ProductLink name={row.name} onClick={() => setRecord(row)}/></td><td><Money value={row.latest_cost}/></td><td><Money value={row.inventory_cost}/></td><td><Movement change={summary?.products.find(item => item.id === row.id)?.period_change ?? {percent:null,reason:"上期比较记录暂不可用"}}/></td></tr>)}</tbody></table></div></>}</Drawer>;
+  useEffect(() => { const controller = new AbortController(); fetchJson<Version>(`${base}/history/${encodeURIComponent(id)}`, { signal: controller.signal }).then(data=>{if(!controller.signal.aborted)setVersion(data);}).catch(error => { if (!controller.signal.aborted) setError(errorText(error)); }); return () => controller.abort(); }, [id]);
+  return <Drawer wide title={record?.name ?? (summary ? versionLabel(summary) : "成本记录")} label={version ? recordDate(version) : "价格历史"} onClose={onClose}>{error ? <p role="alert">{error}</p> : !version ? <WorkbenchLoading local title="正在读取研发成本历史"/> : record ? <><button className={s.back} onClick={() => setRecord(null)}><ArrowLeft size={14}/>返回版本明细</button><HistoricalFormula key={`${record.event_id}-${record.recorded_at}`} record={record}/></> : <><div className={s.historySummary}><span>成本日期 <strong>{recordDate(version)}</strong></span><span>产品 <strong>{version.products.length} 项</strong></span><span>{version.record_type === "backfill" ? "历史回算" : "正式记录"}</span></div><p className={s.explanation}>{version.reason}</p><p className={s.explanation}>记录时间：{date(version.recorded_at)}{version.record_type === "backfill" ? "。按当期采购价格回算；当期缺价时使用的当前补位价在投料依据中标明。" : ""}</p><div className={s.detailTable}><table className={p.table}><thead><tr><th>产品内编</th><th>最新优先 / 元/kg</th><th>库存优先 / 元/kg</th><th>较上期变化</th></tr></thead><tbody>{version.products.map((row,index) => <tr key={`${row.id}-${index}`}><td><ProductLink name={row.name} onClick={() => setRecord(row)}/></td><td><Money value={row.latest_cost}/></td><td><Money value={row.inventory_cost}/></td><td><Movement change={summary?.products.find(item => item.id === row.id)?.period_change ?? {percent:null,reason:"上期比较记录暂不可用"}}/></td></tr>)}</tbody></table></div></>}</Drawer>;
 }
 function TrialsDrawer({ onClose }: { onClose: () => void }) {
   const [recipes, setRecipes] = useState<(Formula & { latest: Calculation })[] | null>(null); const [selected, setSelected] = useState<number | null>(null); const [error, setError] = useState("");
-  useEffect(() => { const controller = new AbortController(); fetchJson<{ recipes: (Formula & { latest: Calculation })[] }>(`${base}/trials`, { signal: controller.signal }).then(data => setRecipes(data.recipes)).catch(error => { if (!controller.signal.aborted) setError(errorText(error)); }); return () => controller.abort(); }, []);
+  useEffect(() => { const controller = new AbortController(); fetchJson<{ recipes: (Formula & { latest: Calculation })[] }>(`${base}/trials`, { signal: controller.signal }).then(data => {if(!controller.signal.aborted)setRecipes(data.recipes);}).catch(error => { if (!controller.signal.aborted) setError(errorText(error)); }); return () => controller.abort(); }, []);
   const recipe = selected == null ? null : recipes?.[selected];
   return <Drawer wide title="历史试算" label="原表留存 · 不参与当前核算" onClose={onClose}><p className={s.explanation}>以下三组旧试算按原表保留，仅供追溯；当前使用已确认的 CF401B 复配方案。</p>{error && <p role="alert">{error}</p>}{!recipes ? error ? null : <WorkbenchLoading local title="正在读取研发历史试算"/> : recipe ? <><button className={s.back} onClick={() => setSelected(null)}><ArrowLeft size={15}/>返回试算列表</button><h3>{recipe.name}</h3><p>原表试算成本：<Money value={recipe.latest.cost}/> 元/kg · 收率 {yieldText(recipe.yield)}</p><div className={s.detailTable}><table className={p.table}><thead><tr><th>顺序</th><th>投料</th><th>数量 / kg</th><th>原表单价</th></tr></thead><tbody>{recipe.latest.lines.map((line,index) => <tr key={index}><td>{index+1}</td><td>{line.code}</td><td>{line.quantity}</td><td><Money value={line.unit_cost}/></td></tr>)}</tbody></table></div><p className={s.explanation}>{recipe.sheet} · 原表第 {recipe.source_row} 行</p></> : recipes.map((item,index) => <button key={item.id} className={s.historyRow} onClick={() => setSelected(index)}><span>{item.name}<small>{item.sheet} · 第 {item.source_row} 行</small></span><ChevronRight size={15}/></button>)}</Drawer>;
 }

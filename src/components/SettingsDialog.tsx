@@ -1,24 +1,8 @@
+import { sectionNavigation, workbenchSettings } from "../workbenchRegistry";
 import { PageState } from "./WorkbenchLayout";
 import { Switch } from "./Switch";
 import { DiscardChangesDialog, SettingsGroup, useFadingScrollbars, useExitTransition, useMeasuredContent } from "./Interaction";
-import {
-  Check,
-  ChevronRight,
-  ChevronLeft,
-  Columns3,
-  CircleUserRound,
-  ClipboardList,
-  FolderKanban,
-  LibraryBig,
-  Info,
-  PanelsTopLeft,
-  PenLine,
-  Plus,
-  ShieldCheck,
-  Server,
-  WandSparkles,
-  X,
-} from "lucide-react";
+import { Check, ChevronRight, ChevronLeft, Columns3, CircleUserRound, ClipboardList, Info, PanelsTopLeft, PenLine, Plus, ShieldCheck, Server, X,  } from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   createUser,
@@ -67,20 +51,8 @@ const UI_FONT_SIZES: { id: UiFontSize; label: string }[] = [
   { id: 5, label: "大" },
 ];
 
-const MODULE_OPTIONS = [
-  { id: "chat", label: "新聊天", description: "对话、工作模式及会话侧栏", icon: PenLine },
-  { id: "knowledge", label: "知识库", description: "个人与公共知识内容", icon: LibraryBig },
-  { id: "automation", label: "自动化", description: "技能与工作流管理", icon: WandSparkles },
-  { id: "workbench", label: "工作台", description: "企业职能业务工具", icon: PanelsTopLeft },
-  { id: "tasks", label: "任务看板", description: "任务管理与运行记录", icon: FolderKanban },
-] as const;
-
-const WORKBENCH_OPTIONS: { id: WorkbenchId; label: string; description: string }[] = [
-  { id: "management", label: "总经办工作台", description: "成本经营分析" },
-  { id: "procurement", label: "采购工作台", description: "原料价格管理" },
-  { id: "research", label: "研发工作台", description: "产品成本计算" },
-  { id: "sales", label: "销售工作台", description: "产品报价管理" },
-];
+const MODULE_OPTIONS = sectionNavigation;
+const WORKBENCH_OPTIONS = workbenchSettings;
 
 const ACCESS_LEVELS: { id: AccessLevel; label: string; summary: string }[] = [
   { id: 2, label: "查看", summary: "查看授权范围内的数据，不可修改。" },
@@ -208,11 +180,12 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
   }, [isAdmin, loadState, tab]);
 
   const selectedUser = users.find((user) => user.id === selectedUserId) ?? null;
+  const selectedScopeLevels = JSON.stringify(Object.fromEntries(Object.entries(selectedUser?.scope_levels ?? {}).sort(([a], [b]) => a.localeCompare(b))));
 
   useEffect(() => {
     setUserAdminDraft(selectedUser?.is_system_admin ?? false);
-    setUserScopeDraft(selectedUser?.scope_levels ?? {});
-  }, [selectedUserId]);
+    setUserScopeDraft(JSON.parse(selectedScopeLevels) as Partial<Record<AccessScope, AccessLevel>>);
+  }, [selectedUserId, selectedUser?.is_system_admin, selectedScopeLevels]);
 
   const accessRuntime = { moduleStatuses, moduleRegistryState, workbenchStatuses, workbenchRegistryState };
 
