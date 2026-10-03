@@ -1,6 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { adoptionExceptions, decimalText, defaultParameters, patchItems, pendingProductIds, productSourceText, quoteListStatus, quoteTrendPoints, type Batch, type Item, type Quote } from "../src/workbenches/salesModel.ts";
+import { adoptionExceptions, decimalText, defaultParameters, draftItem, patchItems, pendingProductIds, productSourceText, quoteDraftItems, quoteListStatus, quoteTrendPoints, type Batch, type Item, type Quote } from "../src/workbenches/salesModel.ts";
+
+test("报价草稿沿用保存成本，保留隐藏已采用输入、手填零价和单项例外", () => {
+ const product={id:"A",code:"A",name:"A",source:"research",department:"研发五部",status:"ready",latest_cost:"4",inventory_cost:"12",special_allocation:false,source_version:"1"};
+ const frozen:Item={product_id:"A",external_name:"原内编",cost_basis:"latest",parameters:{freight:"0.3",profit:"1.2"},final_price:"6.92",pricing_reasons:["客户议价"],pricing_note:"原依据",reference_prices:{customer:"8"},product,adopted:true};
+ const loaded=draftItem({...product,latest_cost:"12"},"domestic_direct",frozen);
+ assert.equal(loaded.product.latest_cost,"4");
+ const pending=draftItem({...product,id:"B"},"domestic_direct");
+ pending.manual=true; pending.final_price="0";
+ const rows=quoteDraftItems([frozen,{...frozen,product_id:"removed",adopted:false}],[pending]);
+ assert.deepEqual(rows.map(row=>row.product_id),["A","B"]);
+ assert.equal(rows[0].final_price,"6.92"); assert.deepEqual(rows[0].parameters,frozen.parameters);
+ assert.equal(rows[0].external_name,"原内编"); assert.deepEqual(rows[0].reference_prices,{customer:"8"});
+ assert.equal(rows[1].final_price,"0");
+ const invalidEdit={...loaded,manual:true,final_price:"999",parameters:{freight:"99"}};
+ assert.deepEqual(quoteDraftItems([frozen],[invalidEdit])[0],rows[0]);
+});
 
 test("报价趋势保留真实零价，不把缺价画成零，并跳过完全无价记录", () => {
  const item=(normal_price:string|null,final_price:string|null):Item=>({product_id:"A",external_name:"",cost_basis:"latest",parameters:{},final_price,pricing_reasons:[],pricing_note:"",result:normal_price===null?null:{normal_price,break_even_price:null}});

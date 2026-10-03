@@ -1,0 +1,79 @@
+{
+  "tool": "oxlint@1.86.0",
+  "source": "W2 verified candidate on W1 commit 17b22796adaa532d9a97416f3f23e9cf5fa168f9; W3 initial scan",
+  "maintainer": "前端维护者及对应模块维护者",
+  "reason": "接入前已有Hook依赖和清理问题；不在W3批量改业务请求生命周期",
+  "removeWhen": "该Hook修改时解决或重新审查具体诊断，并完成实际消费者回归；不得扩大同类违规数量",
+  "entries": [
+    {
+      "file": "src/components/ActivationGrants.tsx",
+      "rule": "react-hooks(exhaustive-deps)",
+      "message": "React Hook useEffect has a missing dependency: 'load'",
+      "anchor": "6fb80166919a7852980a46899085a950f1e1eabe6a8ffdd2246a5714bd3bdaa9",
+      "line": 39
+    },
+    {
+      "file": "src/components/Interaction.tsx",
+      "rule": "react-hooks(exhaustive-deps)",
+      "message": "React Hook useEffect has a missing dependency: 'request'",
+      "anchor": "f6acec2a70cb209ee2870cd0f03c1f12171f78ca22d275c702b4a73a4e744dec",
+      "line": 107
+    },
+    {
+      "file": "src/components/SettingsDialog.tsx",
+      "rule": "react-hooks(exhaustive-deps)",
+      "message": "The ref's value `.current` is accessed directly in the effect cleanup function.",
+      "anchor": "fc5f801f7a4ca2f1ec747b5bfa445e7d8cdcb560ad38861db28719eea6969cc4",
+      "line": 146
+    },
+    {
+      "file": "src/components/SettingsDialog.tsx",
+      "rule": "react-hooks(exhaustive-deps)",
+      "message": "The ref's value `.current` is accessed directly in the effect cleanup function.",
+      "anchor": "fc5f801f7a4ca2f1ec747b5bfa445e7d8cdcb560ad38861db28719eea6969cc4",
+      "line": 146
+    },
+    {
+      "file": "src/workbenches/ProcurementNews.tsx",
+      "rule": "react-hooks(exhaustive-deps)",
+      "message": "React Hook useEffect has a missing dependency: 'key'",
+      "anchor": "060644339593779e66bfc7a2048c80e206a1500ac1c6e9d86f3f875141c74038",
+      "line": 51
+    },
+    {
+      "file": "src/workbenches/ProcurementWorkbench.tsx",
+      "rule": "react-hooks(exhaustive-deps)",
+      "message": "React Hook useEffect has a missing dependency: 'data.materials'",
+      "anchor": "0ab9e03fb7758ec24387b100b0e404d19af68d451232c91ccf982da4c12a0dab",
+      "line": 164
+    },
+    {
+      "file": "src/workbenches/ProcurementWorkbench.tsx",
+      "rule": "react-hooks(exhaustive-deps)",
+      "message": "React Hook useEffect has a complex expression in the dependency array.",
+      "anchor": "0ab9e03fb7758ec24387b100b0e404d19af68d451232c91ccf982da4c12a0dab",
+      "line": 169
+    },
+    {
+      "file": "src/workbenches/ProcurementWorkbench.tsx",
+      "rule": "react-hooks(exhaustive-deps)",
+      "message": "React Hook useEffect has a missing dependency: 'ids'",
+      "anchor": "0b10f993272535d951ea6870b27d49e39dc3d64e87109245bda862a18bcb057c",
+      "line": 212
+    },
+    {
+      "file": "src/workbenches/ProcurementWorkbench.tsx",
+      "rule": "react-hooks(exhaustive-deps)",
+      "message": "React Hook useEffect has a complex expression in the dependency array.",
+      "anchor": "0b10f993272535d951ea6870b27d49e39dc3d64e87109245bda862a18bcb057c",
+      "line": 214
+    },
+    {
+      "file": "src/workbenches/ProcurementWorkbench.tsx",
+      "rule": "react-hooks(exhaustive-deps)",
+      "message": "React Hook useEffect has missing dependencies: 'cache', 'batches', 'cache.current.key', 'setPreviousPage', 'setInstant', and 'setPage'",
+      "anchor": "a05ac9d747d360ad33870e316718660b25e6391ea7b832788e175dd9802cab12",
+      "line": 249
+    }
+  ]
+}

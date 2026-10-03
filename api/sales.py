@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
@@ -69,10 +69,14 @@ class Body(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
 
+RequestId = Annotated[str, Field(pattern=r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')]
+
+
 class NewBatch(Body):
     name: str = Field(default='新报价批次', min_length=1, max_length=120)
     mode: Literal['domestic_direct', 'domestic_intermediary', 'export_direct', 'export_intermediary'] = 'domestic_direct'
     copy_from: str | None = None
+    request_id: RequestId | None = None
 
 
 class ItemBody(BaseModel):
@@ -89,6 +93,7 @@ class ItemBody(BaseModel):
 
 
 class DraftBody(Body):
+    request_id: RequestId | None = None
     revision: int = Field(ge=1)
     name: str = Field(min_length=1, max_length=120)
     mode: Literal['domestic_direct', 'domestic_intermediary', 'export_direct', 'export_intermediary']
@@ -105,6 +110,7 @@ class Selection(Body):
 
 
 class CalculateBody(Selection):
+    request_id: RequestId | None = None
     refresh_costs: bool = False
     confirm_manual_prices: bool = False
 
@@ -186,13 +192,33 @@ class SalesStore:
         db.execute('INSERT INTO sales_events(id,batch_id,actor_id,created_at,kind,payload) VALUES(%s,%s,%s,%s,%s,%s)',
                    (str(uuid4()), batch['id'], actor['id'], now(), kind, packed(payload)))
 
-    def _write(self, db, batch, actor, kind, details=None):
+    def _write(self, db, batch, actor, kind, details=None, receipt=None):
         batch['revision'] += 1
         batch['updated_at'] = now()
+        if receipt:
+            batch['last_request'] = {**receipt, 'revision': batch['revision']}
         db.execute('UPDATE sales_batches SET revision=%s,payload=%s,updated_at=%s WHERE id=%s',
                    (batch['revision'], packed(batch), batch['updated_at'], batch['id']))
         self._event(db, batch, actor, kind, details or {})
         return {'batch': batch}
+
+    @staticmethod
+    def _receipt(body, actor, kind):
+        if not body.get('request_id'):
+            return None
+        return {'id': body['request_id'], 'signature': digest([kind, actor['id'], body])}
+
+    def _request(self, db, key, body, actor, receipt):
+        batch = self._get(db, key, actor)
+        # ponytail: only the latest unchanged revision can replay; historical replay needs durable receipts.
+        previous = batch.get('last_request', {})
+        if receipt and receipt['id'] == previous.get('id'):
+            if receipt['signature'] != previous.get('signature') or batch['revision'] != previous.get('revision'):
+                raise RuntimeError('重试请求内容或报价版本已变化，请核对后重试')
+            return batch, True
+        if batch['revision'] != body['revision']:
+            raise RuntimeError('报价批次已被其他操作更新，请刷新后重试')
+        return batch, False
 
     def batches(self, actor):
         self._authorize(actor)
@@ -232,10 +258,18 @@ class SalesStore:
 
     def create(self, body, actor):
         self._authorize(actor, 3)
+        receipt = self._receipt(body, actor, 'create')
         with transaction(self.url, write=True) as db:
+            if receipt and db.execute('SELECT 1 FROM sales_batches WHERE id=%s', (receipt['id'],)).fetchone():
+                previous = self._get(db, receipt['id'], actor)
+                if previous['owner_id'] != actor['id'] or previous.get('creation_request') != receipt['signature'] or previous['revision'] != 1:
+                    raise RuntimeError('创建请求已用于其他内容或报价版本已变化，请核对后重试')
+                return {'batch': previous}
             stamp = now()
-            batch = dict(id=str(uuid4()), owner_id=actor['id'], revision=1, name=body['name'].strip(), mode=body['mode'],
+            batch = dict(id=receipt['id'] if receipt else str(uuid4()), owner_id=actor['id'], revision=1, name=body['name'].strip(), mode=body['mode'],
                          customer_name='', customer_code='', uncoded=False, salesperson='', items=[], created_at=stamp, updated_at=stamp, adjusted=False)
+            if receipt:
+                batch['creation_request'] = receipt['signature']
             if not batch['name']:
                 raise ValueError('批次名称不能为空')
             if body.get('copy_from'):
@@ -262,8 +296,11 @@ class SalesStore:
 
     def save(self, key, body, actor):
         self._authorize(actor, 3)
+        receipt = self._receipt(body, actor, 'save_draft')
         with transaction(self.url, write=True) as db:
-            batch = self._get(db, key, actor, body['revision'])
+            batch, replayed = self._request(db, key, body, actor, receipt)
+            if replayed:
+                return {'batch': batch}
             old = {item['product_id']: item for item in batch['items']}
             identifiers = [item['product_id'] for item in body['items']]
             if len(set(identifiers)) != len(identifiers):
@@ -325,7 +362,7 @@ class SalesStore:
             batch.update(mode=body['mode'], uncoded=body['uncoded'], items=items)
             if batch['uncoded'] and batch['customer_code']:
                 raise ValueError('暂未编码与客户编码不能同时填写')
-            return self._write(db, batch, actor, 'save_draft')
+            return self._write(db, batch, actor, 'save_draft', receipt=receipt)
 
     @staticmethod
     def _selected(batch, identifiers):
@@ -338,8 +375,11 @@ class SalesStore:
 
     def trial(self, key, body, actor):
         self._authorize(actor, 3)
+        receipt = self._receipt(body, actor, 'calculate')
         with transaction(self.url, write=True) as db:
-            batch = self._get(db, key, actor, body['revision'])
+            batch, replayed = self._request(db, key, body, actor, receipt)
+            if replayed:
+                return {'batch': batch}
             selected = self._selected(batch, body['product_ids'])
             catalog, _ = self._catalog(db)
             trial_id, stamp = str(uuid4()), now()
@@ -368,7 +408,7 @@ class SalesStore:
                            customer_name=batch['customer_name'], customer_code=batch['customer_code'], uncoded=batch['uncoded'], salesperson=batch['salesperson'],
                            actor_id=actor['id'], created_at=stamp, items=deepcopy(selected))
             db.execute('INSERT INTO sales_trials(id,batch_id,actor_id,created_at,payload) VALUES(%s,%s,%s,%s,%s)', (trial_id, key, actor['id'], stamp, packed(payload)))
-            return self._write(db, batch, actor, 'calculate', {'trial_id': trial_id})
+            return self._write(db, batch, actor, 'calculate', {'trial_id': trial_id}, receipt=receipt)
 
     @staticmethod
     def _reason_required(batch, item):

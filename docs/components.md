@@ -15,9 +15,13 @@
 | 数字输入 | `src/components/DecimalInput.tsx` | 保留输入字符串、单位由外层展示；采购编辑、研发比例／投料、销售费用／系数。精度与校验不在组件内处理 |
 | 台账与工具栏 | `src/components/WorkbenchLayout.tsx`；`WorkbenchSurface.module.css` | 结构与样式复用，列、宽度、筛选及权限由业务提供；采购／研发／销售 |
 | 分页、记录筛选 | `LedgerPagination.tsx`、`RecordFilters.tsx` | 总数、页数、筛选状态；采购／研发／销售／反馈 |
-| 原料只读详情与价格单元格 | `src/workbenches/ProcurementWorkbench.tsx` → `MaterialDrawer`、`ledgerCell` | 采购原料页、研发 `ResearchMaterialPrices`；请求、字段范围及权限由各业务接口负责 |
+| 原料只读详情与价格单元格 | `src/workbenches/ProcurementMaterialView.tsx` → `ReadOnlyMaterialDrawer`、`ledgerCell` | 采购排行、研发 `ResearchMaterialPrices`；调用方注入各自只读 GET。采购台账与分流的可写详情在 `ProcurementMaterialDrawer.tsx`，共用 `MaterialPriceBody` |
 | 表单操作栏 | `WorkbenchLayout.tsx` → `FormFooter` | 左侧状态，右侧操作，主操作最后；研发编辑。台账顶部保存不迁入底部 |
-| 看板容器 | 同文件 → `DashboardPanel` | 标题、内容及尺寸由业务组合；共用 `dashboardPanel` 样式，不统一业务布局 |
+| 客户报价编辑 | `src/workbenches/SalesQuoteEditor.tsx` → `salesQuoteSession.ts` | 销售内部展示／业务会话；状态、保存恢复、采用及退出由会话提供领域动作，复用 Drawer、DecimalInput、FormFooter 和 SalesProductPicker；公开工作台入口不变 |
+| 独立测算工作区 | `src/workbenches/SalesCalculator.tsx` → `salesCalculatorWorkspace.ts`／`SalesCalculatorPanel.tsx` | 工作区／请求属业务 Hook；分档、命名、展开和拖拽属面板，修改提议参与退出保护；复用金额输入、菜单、选品和确认；纯逻辑在 `salesCalculatorModel.ts` |
+| 研发详情与编辑 | `ResearchProductDrawer.tsx`／`ResearchFormulaEditor.tsx` → `researchEditSession.ts` | 业务内部维护产品身份、原因、可编辑基线、试算 token、draft revision、保存锁与冲突；复用共享退出契约、Drawer、金额输入和底部操作栏 |
+| 研发展示与读取 | `ResearchProductView.tsx`／`researchModel.ts`／`researchData.ts` | 原详情、投料、冻结历史及显示口径；根列表合并读取、聚焦与定时取消，权限和写回由业务承担 |
+| 看板容器 | `WorkbenchLayout.tsx` → `DashboardPanel` | 标题、内容及尺寸由业务组合；共用 `dashboardPanel` 样式，不统一业务布局 |
 | 排行翻页 | `src/components/useMoverPaging.tsx` | 悬停、键盘、详情打开、后台和减少动态效果时暂停；采购／研发排行 |
 | 数值／页面状态 | `PriceMovement.tsx`、`WorkbenchLayout.tsx` → `PageState`、`WorkbenchLoading` | 涨跌与无对比展示；错误与重试分开，不把失败当空数据 |
 | 授权组合 | `src/components/ActivationGrants.tsx` | 采购／研发同界面，独立业务 scope；保留确认、权限查询和审计逻辑 |
@@ -25,7 +29,9 @@
 
 公共样式原位迁移为 `WorkbenchSurface.module.css`，保留已验收选择器及级联顺序；业务专用研究样式留在 `ResearchWorkbench.module.css`。原料只读展示复用上表的现有业务入口，不把整页组件作为通用控件导出。
 
-采购 `MaterialDrawer`／`ledgerCell` 的兼容导出用于复用已验收的原料展示，当前由采购展示实现维护。移除条件是新的公开展示入口保留参数、字段、权限边界并通过采购与研发实际消费者回归，再同时迁移两个调用方；具体测试见 [关键回归地图](agents/workbench-regression.md)。
+W6 将采购、分流、排行及研发消费者迁到上述入口，删除宿主的 `MaterialDrawer`／`ledgerCell` 兼容导出。公共展示没有写 API；可写详情、查询及价格会话由采购业务层维护。实际消费者检查见 [关键回归地图](agents/workbench-regression.md)。
+
+W7 研发编辑会话按产品 ID 挂载，后台刷新不重新初始化填写；冲突保留输入，采用最新服务端可编辑基线并废弃旧凭证。取消本地填写不删除已存草稿，明确取消保存才删除当前 revision 草稿；原因弹窗、标题删除及停用也参加退出／忙碌保护。原料只读入口沿用 W6，维护与实际回归见 [W7 记录](history/records/W7-研发编辑试算与读取生命周期-2026-10-03.md)。
 
 ## 操作与展示
 
@@ -49,6 +55,12 @@
 
 验收路径：`/previews/components/index.html`。覆盖正常、禁用、加载、失败、长文本、未保存确认、嵌套抽屉、日期及分页；减少动态效果跟随系统设置。
 
-加载状态回归：`node scripts/check-workbench-loading.mjs`，拦截全部业务请求，验证实际采购、研发、资讯、分流的加载与失败，以及研发走势加载与空结果的区别。
+加载状态回归：`node scripts/check-workbench-loading.mjs`，拦截全部业务请求，验证实际采购、研发、资讯、分流的加载与失败，研发走势加载与空结果，销售重试与空结果，独立测算历史读取／失败／重试及计算请求失败、乱序。测算历史复用 `PageState`；读取成功前不能显示“暂无历史”。
+
+自动依赖约定与精确兼容清单见 [frontend-boundaries.json](../scripts/frontend-boundaries.json)。采购台账纯辅助 `buildLedgerRows`／`filterLedgerRows`／`formalLedgerChange` 和图表刻度 `focusedTrendAxis`／`moverDateRange` 保留现有研发复用；原因、维护角色和移除条件统一在清单维护。`SettingsDialog`、`ProfileDialog`、`FeedbackDialog`、`ActivationGrants`、`OrganizationControls` 是现有业务组合界面，目录位置不代表纯控件；其他公共控件不能直接或经本地模块引用业务内部实现（含类型），请求由业务层提供。公开新闻类型位于 `src/types.ts`，资讯组件保留兼容类型再导出。
 
 组件示例之外，局部修改检查受影响的实际消费者；共享组件或全局样式修改覆盖所有受影响页面，按引用定位采购、研发、设置、资料、帮助及反馈的使用点。业务回归按影响覆盖采购跨页编辑及启用、研发原因／联动／试算／草稿锁定与恢复、权限、金额和冻结历史。持续修复验收发现的问题；正式前端替换在隔离验收后按当前有效授权执行。
+
+客户报价维护：`SalesWorkbench` 保留关联目录／批次／历史读取与详情入口；内部编辑组件按打开的原批次 ID 或 `new` 挂载，保存所得 ID／revision 不作 key。`salesModel` 维护纯快照、草稿合并、可编辑规则及原公式；业务 Hook 不向父级暴露 setter。原抽屉实现已移除，无兼容副本。实际挂载、旧成本、部分采用和调整版本回归见 [W4 记录](history/records/W4-客户报价编辑会话模块化-2026-10-02.md)。
+
+W8 的静态元数据、lazy 适配、App 身份、反馈与隔离示例维护见 [静态工作台接入](agents/workbench-integration.md)；新增模块使用该页任务模板，正式启用仍须现有授权和门禁。

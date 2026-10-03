@@ -1,20 +1,22 @@
-import { confirmWorkbenchLeave as allowProcurementLeave } from "./components/interactionNavigation";
+import { confirmWorkbenchLeave } from "./components/interactionNavigation";
 import { FolderClosed, FolderKanban, LibraryBig, MessageCircle, PanelsTopLeft, Search, WandSparkles, Workflow, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createConversationSubmission, createProject, fetchConversations, fetchMessages, fetchModules, fetchProjects, fetchServiceHealth, fetchTasks, fetchWorkbenches, setConversationProject, submitConversation, type ServiceConnection } from "./api";
 import { ContextSidebar } from "./components/ContextSidebar";
 import { SettingsDialog, type UiFontSize } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
-import { FeedbackDialog, emptyFeedbackDraft } from "./components/FeedbackDialog";
+import { FeedbackDialog } from "./components/FeedbackDialog";
 import { ProfileDialog } from "./components/ProfileDialog";
 import { knowledgeItems, skills, workflows } from "./data";
 import { AutomationScreen } from "./screens/AutomationScreen";
 import { ConversationScreen } from "./screens/ConversationScreen";
 import { KnowledgeScreen } from "./screens/KnowledgeScreen";
 import { TaskBoardScreen } from "./screens/TaskBoardScreen";
-import { workbenches, WorkbenchScreen } from "./screens/WorkbenchScreen";
+import { WorkbenchScreen } from "./screens/WorkbenchScreen";
 import type { Conversation, ConversationMessage, ConversationView, CurrentUser, ModuleStatus, ModuleVisibility, ResearchPage, SalesPage, ProcurementPage, Project, Section, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
-import { PROCUREMENT_PAGE_LABELS } from "./types";
+import {sectionNavigation,workbenches,workbenchContext} from "./workbenchRegistry";
+import {useAppFeedback} from "./appFeedback";
+import { PageState } from "./components/WorkbenchLayout";
 
 type AppProps = {
   currentUser: CurrentUser;
@@ -35,7 +37,7 @@ type GlobalSearchResult = {
   keywords: string;
 };
 
-const MODULE_IDS: Section[] = ["chat", "knowledge", "automation", "workbench", "tasks"];
+const MODULE_IDS=sectionNavigation.map(item=>item.id);
 const UI_FONT_SIZE_KEY = "honghao-ui-font-size";
 
 function loadUiFontSize(): UiFontSize {
@@ -48,13 +50,15 @@ function loadUiFontSize(): UiFontSize {
   } catch { return 3; }
 }
 
-function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppProps) {
+function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppProps) {
   const [moduleStatuses, setModuleStatuses] = useState<ModuleStatus[]>([]);
   const [moduleRegistryState, setModuleRegistryState] = useState<"loading" | "ready" | "error">("loading");
+  const [registryRetry, setRegistryRetry] = useState(0);
   const enabledModules = useMemo(() => MODULE_IDS.reduce<ModuleVisibility>((visibility, id) => {
-    visibility[id] = moduleStatuses.some((module) => module.id === id && module.mode !== "off");
+    const allowed = currentUser.is_system_admin || (id === "knowledge" ? (currentUser.scope_levels.knowledge ?? 0) >= 2 : id === "workbench" && workbenches.some(item => (currentUser.scope_levels[item.id] ?? 0) >= 2));
+    visibility[id] = allowed && moduleStatuses.some((module) => module.id === id && module.mode !== "off");
     return visibility;
-  }, { chat: false, knowledge: false, automation: false, workbench: false, tasks: false }), [moduleStatuses]);
+  }, { chat: false, knowledge: false, automation: false, workbench: false, tasks: false }), [moduleStatuses, currentUser]);
   const [section, setSection] = useState<Section>("workbench");
   const [profileOpen, setProfileOpen] = useState(false);
   const [personalProfileOpen, setPersonalProfileOpen] = useState(false);
@@ -93,30 +97,12 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
   const [selectedWorkflow, setSelectedWorkflow] = useState(workflows[0]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [serviceConnection, setServiceConnection] = useState<ServiceConnection>({ state: "checking" });
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const [feedbackDraft, setFeedbackDraft] = useState(emptyFeedbackDraft);
-  const [feedbackUnread, setFeedbackUnread] = useState<number | null>(null);
-  const [feedbackRevision, setFeedbackRevision] = useState(0);
-  useEffect(() => {
-    const controller = new AbortController();
-    let inFlight = false;
-    const refresh = async () => {
-      if (document.hidden || inFlight) return;
-      inFlight = true;
-      try {
-        const response = await fetch("/api/feedback/unread", { signal: controller.signal });
-        if (!response.ok) throw new Error("Unread unavailable");
-        const data = await response.json() as { count: number };
-        if (!controller.signal.aborted) setFeedbackUnread(data.count);
-      } catch { if (!controller.signal.aborted) setFeedbackUnread(null); }
-      finally { inFlight = false; }
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 30000);
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
-    return () => { controller.abort(); clearInterval(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
-  }, [currentUser.id, feedbackRevision]);
+  const permissions = JSON.stringify([currentUser.is_system_admin, currentUser.scope_levels]);
+  const visibleWorkbenchStatuses = workbenchStatuses.filter(item => currentUser.is_system_admin || (currentUser.scope_levels[item.id] ?? 0) >= 2);
+  const workbenchViewState = workbenchRegistryState === "error" && visibleWorkbenchStatuses.length ? "ready" : workbenchRegistryState;
+  const {feedbackOpen,feedbackDraft,feedbackUnread,openFeedback,closeFeedback,setFeedbackDraft,refreshUnread}=useAppFeedback(currentUser.id);
+
+  const activeWorkbenchId = section === "workbench" && openedWorkbenchId === selectedWorkbenchId && workbenchViewState === "ready" && visibleWorkbenchStatuses.some(item => item.id === openedWorkbenchId && item.mode === "active") ? openedWorkbenchId : null;
 
   const selectedConversation = conversations.find((conversation) => conversation.id === selectedConversationId) ?? null;
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
@@ -150,9 +136,9 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
 
     const checkService = (attempt: number) => {
       fetchServiceHealth(controller.signal)
-        .then((health) => setServiceConnection({ state: "online", health }))
+        .then((health) => { if (!controller.signal.aborted) setServiceConnection({ state: "online", health }); })
         .catch((error: unknown) => {
-          if (error instanceof DOMException && error.name === "AbortError") return;
+          if (controller.signal.aborted || error instanceof DOMException && error.name === "AbortError") return;
           const nextAttempt = attempt + 1;
           if (nextAttempt < retryDelays.length) {
             retryTimer = window.setTimeout(() => checkService(nextAttempt), retryDelays[nextAttempt]);
@@ -176,17 +162,15 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
     }
 
     const controller = new AbortController();
-    setModuleRegistryState("loading");
     fetchModules(controller.signal)
-      .then((statuses) => { setModuleStatuses(statuses); setModuleRegistryState("ready"); })
+      .then((statuses) => { if (!controller.signal.aborted) { setModuleStatuses(statuses); setModuleRegistryState("ready"); } })
       .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) {
-          setModuleStatuses([]);
+        if (!controller.signal.aborted && !(error instanceof DOMException && error.name === "AbortError")) {
           setModuleRegistryState("error");
         }
       });
     return () => controller.abort();
-  }, [serviceConnection.state]);
+  }, [serviceConnection.state, permissions, registryRetry]);
 
   useEffect(() => {
     if (!enabledModules.workbench) {
@@ -200,14 +184,13 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
     }
 
     const controller = new AbortController();
-    setWorkbenchRegistryState("loading");
     fetchWorkbenches(controller.signal)
-      .then((statuses) => { setWorkbenchStatuses(statuses); setWorkbenchRegistryState("ready"); })
+      .then((statuses) => { if (!controller.signal.aborted) { setWorkbenchStatuses(statuses); setWorkbenchRegistryState("ready"); } })
       .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) setWorkbenchRegistryState("error");
+        if (!controller.signal.aborted && !(error instanceof DOMException && error.name === "AbortError")) setWorkbenchRegistryState("error");
       });
     return () => controller.abort();
-  }, [enabledModules.workbench, serviceConnection.state]);
+  }, [enabledModules.workbench, serviceConnection.state, permissions, registryRetry]);
 
   useEffect(() => {
     if (serviceConnection.state !== "online") {
@@ -271,7 +254,6 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
       if (event.key === "Escape") {
         setProfileOpen(false);
         setGlobalSearchOpen(false);
-        setSettingsOpen(false);
         setMobileOpen(false);
         closeContext();
       }
@@ -362,6 +344,15 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
     }
   };
 
+  const showSection = (next: Section) => {
+    setSection(next);
+    setOpenedWorkbenchId(null);
+    setProcurementPage("dashboard");
+    setProfileOpen(false);
+    setMobileOpen(false);
+    closeContext();
+  };
+
   return (
     <div className={contextLayoutOpen ? "app-shell has-context" : "app-shell"}>
       <Sidebar
@@ -374,32 +365,35 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
         dataState={workbenchDataState}
         enabledModules={enabledModules}
         environment={runtimeEnvironment}
-        openedWorkbenchId={openedWorkbenchId}
+        openedWorkbenchId={activeWorkbenchId}
         salesPage={salesPage}
-        onSalesPageChange={async (next) => { if (await allowProcurementLeave()) setSalesPage(next); }}
+        onSalesPageChange={async (next) => { if (await confirmWorkbenchLeave()) setSalesPage(next); }}
         researchPage={researchPage}
-        onResearchPageChange={async (next) => { if (await allowProcurementLeave()) setResearchPage(next); }}
+        onResearchPageChange={async (next) => { if (await confirmWorkbenchLeave()) setResearchPage(next); }}
         procurementPage={procurementPage}
-        onProcurementPageChange={async (next) => { if (await allowProcurementLeave()) setProcurementPage(next); }}
-        onSectionChange={async (nextSection) => { if (!await allowProcurementLeave()) return; setSection(nextSection); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
-        onNewConversation={async () => { if (!await allowProcurementLeave()) return; setSection("chat"); setConversationView("new"); setSelectedConversationId(null); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
-        onConversationOpen={async (conversationId) => { if (!await allowProcurementLeave()) return; setSection("chat"); setConversationView("existing"); setSelectedConversationId(conversationId); setProfileOpen(false); setMobileOpen(false); closeContext(); }}
+        onProcurementPageChange={async (next) => { if (await confirmWorkbenchLeave()) setProcurementPage(next); }}
+        onSectionChange={async (nextSection) => { if (!await confirmWorkbenchLeave()) return; showSection(nextSection); }}
+        onNewConversation={async () => { if (!await confirmWorkbenchLeave()) return; showSection("chat"); setConversationView("new"); setSelectedConversationId(null); }}
+        onConversationOpen={async (conversationId) => { if (!await confirmWorkbenchLeave()) return; showSection("chat"); setConversationView("existing"); setSelectedConversationId(conversationId); }}
         onProjectCreate={(title) => { void createProject(title).then((created) => { setProjects((current) => [...current, created]); setCurrentProjectId(created.id); }).catch(() => setWorkbenchDataState("error")); }}
         onSearchOpen={() => { setProfileOpen(false); setMobileOpen(false); setGlobalSearchOpen(true); }}
         feedbackUnread={feedbackUnread}
-        onFeedbackOpen={() => { setProfileOpen(false); setMobileOpen(false); setFeedbackOpen(true); }}
+        onFeedbackOpen={() => { setProfileOpen(false); setMobileOpen(false); openFeedback(); }}
         profileOpen={profileOpen}
         onProfileToggle={() => setProfileOpen((open) => !open)}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
         onOpenSettings={() => { setProfileOpen(false); setSettingsOpen(true); }}
         onOpenProfile={() => { setProfileOpen(false); setPersonalProfileOpen(true); }}
-        onLogout={async () => { if (await allowProcurementLeave()) await onLogout(); }}
+        onLogout={async () => { if (await confirmWorkbenchLeave()) await onLogout(); }}
       />
+      {(moduleRegistryState === "loading" || moduleRegistryState === "error" && !moduleStatuses.length) && <main className="app-main"><PageState error={moduleRegistryState === "error"} className="workspace-detail-empty"><strong>{moduleRegistryState === "error" ? "模块状态不可用" : "正在读取模块状态"}</strong><p>{moduleRegistryState === "error" ? "请重新加载页面后重试。" : "正在确认可用入口。"}</p>{moduleRegistryState === "error" && <button className="secondary-button" onClick={() => window.location.reload()}>重新加载页面</button>}</PageState></main>}
+      {(moduleRegistryState === "error" && moduleStatuses.length > 0 || workbenchRegistryState === "error" && visibleWorkbenchStatuses.length > 0) && <PageState error className="app-registry-status" onRetry={() => setRegistryRetry(value => value + 1)}>状态刷新失败，当前保留上次确认的入口和未保存输入。</PageState>}
+      {(moduleRegistryState === "ready" || moduleRegistryState === "error" && moduleStatuses.length > 0) && !MODULE_IDS.some(id => enabledModules[id]) && <main className="app-main"><PageState className="workspace-detail-empty"><strong>暂无可用模块</strong><p>当前账号没有已启用且可访问的模块，请联系管理员。</p></PageState></main>}
       {section === "chat" && enabledModules.chat && <ConversationScreen {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversationId) { const update = projectUpdatePromise.current.catch(() => undefined).then(async () => { const updated = await setConversationProject(selectedConversationId, projectId); setConversations((current) => current.map((conversation) => conversation.id === updated.id ? updated : conversation)); }); projectUpdatePromise.current = update; void update.catch(() => setWorkbenchDataState("error")); } else { setCurrentProjectId(projectId); } }} messages={messages} messagesState={messagesState} onSubmit={submitMessage} />}
       {section === "knowledge" && enabledModules.knowledge && <KnowledgeScreen {...screenChrome} scopeTab={knowledgeScope} onScopeTabChange={setKnowledgeScope} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
       {section === "automation" && enabledModules.automation && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
-      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} currentUser={currentUser} statuses={workbenchStatuses} dataState={workbenchRegistryState} selectedId={selectedWorkbenchId} onSelectedIdChange={async (id) => { if (!await allowProcurementLeave()) return; setSelectedWorkbenchId(id); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); }} openedWorkbenchId={openedWorkbenchId} onOpenedWorkbenchIdChange={async (next) => { if (await allowProcurementLeave()) setOpenedWorkbenchId(next); }} salesPage={salesPage} onSalesPageChange={async (next) => { if (await allowProcurementLeave()) setSalesPage(next); }} researchPage={researchPage} onResearchPageChange={async (next) => { if (await allowProcurementLeave()) setResearchPage(next); }} procurementPage={procurementPage} onProcurementPageChange={setProcurementPage} />}
+      {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} currentUser={currentUser} statuses={visibleWorkbenchStatuses} dataState={workbenchViewState} selectedId={selectedWorkbenchId} onSelectedIdChange={async (id) => { if (!await confirmWorkbenchLeave()) return; setSelectedWorkbenchId(id); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); }} openedWorkbenchId={openedWorkbenchId} onOpenedWorkbenchIdChange={async (next) => { if (await confirmWorkbenchLeave()) setOpenedWorkbenchId(next); }} salesPage={salesPage} onSalesPageChange={async (next) => { if (await confirmWorkbenchLeave()) setSalesPage(next); }} researchPage={researchPage} onResearchPageChange={async (next) => { if (await confirmWorkbenchLeave()) setResearchPage(next); }} procurementPage={procurementPage} onProcurementPageChange={setProcurementPage} />}
       {section === "tasks" && enabledModules.tasks && <TaskBoardScreen {...screenChrome} tasks={tasks} projects={projects} conversations={conversations} dataState={workbenchDataState} selectedTask={selectedTask} onSelectedTaskChange={(task) => setSelectedTaskId(task.id)} />}
       <ContextSidebar
         section={section}
@@ -411,7 +405,7 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
         open={contextOpen}
         closing={contextClosing}
         onClose={closeContext}
-        onReturnChat={() => { if (selectedTask) setSelectedConversationId(selectedTask.conversation_id); setSection("chat"); setConversationView("existing"); setMobileOpen(false); closeContext(); }}
+        onReturnChat={async () => { if (!await confirmWorkbenchLeave()) return; if (selectedTask) setSelectedConversationId(selectedTask.conversation_id); showSection("chat"); setConversationView("existing"); }}
         knowledgeItem={knowledgeItems.find((item) => item.title === selectedKnowledgeTitle) ?? knowledgeItems[0]}
         skill={selectedSkill}
         workflow={selectedWorkflow}
@@ -424,49 +418,46 @@ function App({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppPro
         projects={projects}
         conversations={conversations}
         tasks={tasks}
-        workbenchStatuses={workbenchStatuses}
+        workbenchStatuses={visibleWorkbenchStatuses}
         onClose={() => setGlobalSearchOpen(false)}
         onSelect={async (result) => {
-          if (!await allowProcurementLeave()) return;
-          setProfileOpen(false);
-          setMobileOpen(false);
-          closeContext();
+          if (!await confirmWorkbenchLeave()) return;
           if (result.kind === "conversation") {
-            setSection("chat");
+            showSection("chat");
             setConversationView("existing");
             setSelectedConversationId(result.sourceId);
           } else if (result.kind === "project") {
-            setSection("chat");
+            showSection("chat");
             setConversationView("new");
             setSelectedConversationId(null);
             setCurrentProjectId(result.sourceId);
           } else if (result.kind === "knowledge") {
             const item = knowledgeItems.find((knowledgeItem) => knowledgeItem.title === result.sourceId);
             setKnowledgeScope(item?.scope === "公共知识" ? "公共" : "个人");
-            setSection("knowledge");
+            showSection("knowledge");
             setSelectedKnowledgeTitle(result.sourceId);
           } else if (result.kind === "skill") {
             const skill = skills.find((item) => item.title === result.sourceId);
             if (skill) setSelectedSkill(skill);
             setAutomationTab("技能");
-            setSection("automation");
+            showSection("automation");
           } else if (result.kind === "workflow") {
             const workflow = workflows.find((item) => item.title === result.sourceId);
             if (workflow) setSelectedWorkflow(workflow);
             setAutomationTab("工作流");
-            setSection("automation");
+            showSection("automation");
           } else if (result.kind === "workbench") {
             setSelectedWorkbenchId(result.sourceId as WorkbenchId);
-            setSection("workbench");
+            showSection("workbench");
           } else {
             setSelectedTaskId(result.sourceId);
-            setSection("tasks");
+            showSection("tasks");
           }
         }}
       />
       {settingsOpen && <SettingsDialog currentUser={currentUser} onUserChanged={onUserChanged} serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} workbenchStatuses={workbenchStatuses} workbenchRegistryState={workbenchRegistryState} uiFontSize={uiFontSize} onUiFontSizeChange={setUiFontSize} onClose={() => setSettingsOpen(false)} onOpenProfile={() => { setSettingsOpen(false); setPersonalProfileOpen(true); }} />}
-      {feedbackOpen && <FeedbackDialog draft={feedbackDraft} onDraftChange={setFeedbackDraft} currentUser={currentUser} context={openedWorkbenchId ? `${workbenches.find(item => item.id === openedWorkbenchId)?.title ?? "工作台"}${openedWorkbenchId === "procurement" ? ` / ${PROCUREMENT_PAGE_LABELS[procurementPage]}` : ""}` : ({chat:"新聊天",knowledge:"知识库",automation:"自动化",workbench:"工作台",tasks:"任务看板"})[section]} version={serviceConnection.state === "online" ? serviceConnection.health.api_version : "未知"} onClose={() => setFeedbackOpen(false)} onUnreadChanged={() => setFeedbackRevision(value => value + 1)} />}
-      {personalProfileOpen && <ProfileDialog onClose={() => setPersonalProfileOpen(false)} onUserChanged={onUserChanged} onPasswordChanged={onPasswordChanged} beforePasswordChange={allowProcurementLeave} />}
+      {feedbackOpen && <FeedbackDialog draft={feedbackDraft} onDraftChange={setFeedbackDraft} currentUser={currentUser} context={activeWorkbenchId ? workbenchContext(activeWorkbenchId,{procurement:procurementPage,research:researchPage,sales:salesPage}) : sectionNavigation.find(item=>item.id===section)?.label??"工作台"} version={serviceConnection.state === "online" ? serviceConnection.health.api_version : "未知"} onClose={closeFeedback} onUnreadChanged={refreshUnread} />}
+      {personalProfileOpen && <ProfileDialog onClose={() => setPersonalProfileOpen(false)} onUserChanged={onUserChanged} onPasswordChanged={onPasswordChanged} beforePasswordChange={confirmWorkbenchLeave} />}
     </div>
   );
 }
@@ -599,5 +590,7 @@ function SearchResultIcon({ kind }: { kind: SearchResultKind }) {
   if (kind === "task") return <FolderKanban size={16} />;
   return null;
 }
+
+function App(props:AppProps) { return <AppShell key={props.currentUser.id} {...props}/>; }
 
 export default App;

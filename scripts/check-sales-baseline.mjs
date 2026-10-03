@@ -69,7 +69,10 @@ try {
         results: body.panels.map(panel => ({ id: panel.id, result: { price: '6.92', target_cost: null, cost_gap: null, trail: [] }, error: null })), default_allocation_tiers: [] });
       if (path === '/batches' && method === 'POST') {
         if (fault === 'busy') await gate;
-        const batch = { id: 'w1-batch-' + (batches.length + 1), owner_id: user.id, revision: 1, name: body.name, mode: body.mode, customer_name: '', customer_code: '', uncoded: true, salesperson: '', items: [], created_at: '2026-10-02T00:00:00Z', updated_at: '2026-10-02T00:00:00Z', adjusted: false };
+        const previous = body.request_id && batches.find(row => row.id === body.request_id);
+        if (previous) return previous.creation_request === JSON.stringify(body) && previous.revision === 1
+          ? reply({ batch: previous }) : route.fulfill({ status: 409, json: { detail: 'W1 创建冲突' } });
+        const batch = { id: body.request_id ?? 'w1-batch-' + (batches.length + 1), creation_request: JSON.stringify(body), owner_id: user.id, revision: 1, name: body.name, mode: body.mode, customer_name: '', customer_code: '', uncoded: true, salesperson: '', items: [], created_at: '2026-10-02T00:00:00Z', updated_at: '2026-10-02T00:00:00Z', adjusted: false };
         batches.push(batch);
         if (fault === 'create-response-lost' && !injected) { injected = true; return route.abort('failed'); }
         return reply({ batch });
@@ -78,6 +81,9 @@ try {
       if (match && (method === 'PUT' || method === 'POST')) {
         const batch = batches.find(row => row.id === match[1]);
         assert.ok(batch);
+        const signature = JSON.stringify([match[2], body]);
+        if (body.request_id && batch.last_request?.id === body.request_id) return batch.last_request.signature === signature && batch.last_request.revision === batch.revision
+          ? reply({ batch }) : route.fulfill({ status: 409, json: { detail: 'W1 重试冲突' } });
         if ((fault === 'draft-failed' && match[2] === 'draft' || fault === 'calculate-failed' && match[2] === 'calculate') && !injected) {
           injected = true;
           return route.fulfill({ status: 500, json: { detail: 'W1 合成中断' } });
@@ -86,6 +92,7 @@ try {
         if (match[2] === 'draft') Object.assign(batch, body);
         else batch.items = batch.items.map(item => ({ ...item, product, cost: '4', result: { normal_price: '6.92', break_even_price: '6.29' }, trial_id: 'w1-trial' }));
         batch.revision++;
+        if (body.request_id) batch.last_request = { id: body.request_id, signature, revision: batch.revision };
         if (fault === 'calculate-response-lost' && match[2] === 'calculate' && !injected) { injected = true; return route.abort('failed'); }
         return reply({ batch });
       }

@@ -1,31 +1,5 @@
-import {
-  ArrowLeft,
-  Calculator,
-  FileText,
-  ChevronDown,
-  ChevronUp,
-  CircleHelp,
-  Coins,
-  ChevronRight,
-  Columns2,
-  Database,
-  FolderClosed,
-  FolderKanban,
-  LibraryBig,
-  LayoutDashboard,
-  LogOut,
-  MessageCircle,
-  PanelsTopLeft,
-  PenLine,
-  Plus,
-  PackageCheck,
-  Search,
-  Settings,
-  Sigma,
-  UserRound,
-  WandSparkles,
-  X,
-} from "lucide-react";
+import {sectionNavigation,workbenchPages,procurementNavigationPage} from "../workbenchRegistry";
+import { ArrowLeft, ChevronDown, ChevronUp, CircleHelp, ChevronRight, FolderClosed, LogOut, MessageCircle, Plus, Search, Settings, UserRound, X,  } from "lucide-react";
 import { useEffect, useState } from "react";
 import { HelpDialog } from "./HelpDialog";
 import { PROCUREMENT_PAGE_LABELS, RESEARCH_PAGE_LABELS, SALES_PAGE_LABELS, type ResearchPage, type SalesPage, type Conversation, type CurrentUser, type ModuleVisibility, type ProcurementPage, type Project, type RuntimeEnvironment, type Section, type WorkbenchId } from "../types";
@@ -63,20 +37,8 @@ type SidebarProps = {
   onLogout: () => Promise<void>;
 };
 
-const navItems = [
-  { id: "chat", label: "新聊天", icon: PenLine },
-  { id: "knowledge", label: "知识库", icon: LibraryBig },
-  { id: "automation", label: "自动化", icon: WandSparkles },
-  { id: "workbench", label: "工作台", icon: PanelsTopLeft },
-  { id: "tasks", label: "任务看板", icon: FolderKanban },
-] as const;
-
-const procurementPages = [
-  { id: "dashboard", icon: LayoutDashboard },
-  { id: "materials", icon: Database },
-  { id: "distribution", icon: Columns2 },
-  { id: "batches", icon: PackageCheck },
-] as const;
+const navItems=sectionNavigation;
+const procurementPages=workbenchPages.procurement;
 
 export function Sidebar({
   currentUser,
@@ -180,18 +142,17 @@ export function Sidebar({
           {activeSection === "workbench" && openedWorkbenchId === "procurement" && (
             <SidebarGroup title="采购工作台">
               {procurementPages.map(({ id, icon: Icon }) => (
-                <button className={(procurementPage === "updates" ? "materials" : procurementPage === "history" ? "batches" : procurementPage) === id ? "workbench-page-row is-active" : "workbench-page-row"} type="button" key={id} aria-current={(procurementPage === "updates" ? "materials" : procurementPage === "history" ? "batches" : procurementPage) === id ? "page" : undefined} onClick={() => openProcurementPage(id)}>
+                <button className={procurementNavigationPage(procurementPage) === id ? "workbench-page-row is-active" : "workbench-page-row"} type="button" key={id} aria-current={procurementNavigationPage(procurementPage) === id ? "page" : undefined} onClick={() => openProcurementPage(id)}>
                   <Icon size={15} strokeWidth={1.7} />
                   <span>{PROCUREMENT_PAGE_LABELS[id]}</span>
                 </button>
               ))}
             </SidebarGroup>
           )}
-          {activeSection === "workbench" && openedWorkbenchId === "research" && <SidebarGroup title="研发工作台">{(["dashboard", "materials", "products", "formulas", "history"] as const).map(id => {
-            const Icon = id === "dashboard" ? LayoutDashboard : id === "materials" ? Coins : id === "products" ? Database : id === "formulas" ? Columns2 : PackageCheck;
+          {activeSection === "workbench" && openedWorkbenchId === "research" && <SidebarGroup title="研发工作台">{workbenchPages.research.map(({id,icon:Icon}) => {
             return <button className={`workbench-page-row${researchPage === id ? " is-active" : ""}`} type="button" key={id} aria-current={researchPage === id ? "page" : undefined} onClick={() => { onResearchPageChange(id); onMobileClose(); }}><Icon size={15} strokeWidth={1.7} /><span>{RESEARCH_PAGE_LABELS[id]}</span></button>;
           })}</SidebarGroup>}
-          {activeSection === "workbench" && openedWorkbenchId === "sales" && <SidebarGroup title="销售工作台">{(["dashboard", "calculate", "estimator", "quotes"] as const).map(id => { const Icon = { dashboard: LayoutDashboard, calculate: Calculator, estimator: Sigma, quotes: FileText }[id]; return <button className={`workbench-page-row${salesPage === id ? " is-active" : ""}`} type="button" key={id} aria-current={salesPage === id ? "page" : undefined} onClick={() => { onSalesPageChange(id); onMobileClose(); }}><Icon size={15} aria-hidden="true"/><span>{SALES_PAGE_LABELS[id]}</span></button>; })}</SidebarGroup>}
+          {activeSection === "workbench" && openedWorkbenchId === "sales" && <SidebarGroup title="销售工作台">{workbenchPages.sales.map(({id,icon:Icon}) => { return <button className={`workbench-page-row${salesPage === id ? " is-active" : ""}`} type="button" key={id} aria-current={salesPage === id ? "page" : undefined} onClick={() => { onSalesPageChange(id); onMobileClose(); }}><Icon size={15} aria-hidden="true"/><span>{SALES_PAGE_LABELS[id]}</span></button>; })}</SidebarGroup>}
           {enabledModules.chat && <>
             <SidebarGroup title="置顶"><p className="sidebar-empty">暂无置顶会话</p></SidebarGroup>
             <SidebarGroup title="项目" action={<button className="sidebar-group__action" type="button" aria-label="新建项目" onClick={() => setProjectCreateOpen((open) => !open)}><Plus size={14} /></button>}>

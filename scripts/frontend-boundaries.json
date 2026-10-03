@@ -1,0 +1,70 @@
+{
+  "entries": [
+    "src/workbenches/ProcurementWorkbench.tsx",
+    "src/workbenches/ResearchWorkbench.tsx",
+    "src/workbenches/SalesWorkbench.tsx"
+  ],
+  "businessComponents": {
+    "src/components/SettingsDialog.tsx": {
+      "reason": "现有设置业务界面，维护配置、人员和权限",
+      "maintainer": "设置维护者",
+      "removeWhen": "对应业务容器接手状态与请求且设置消费者回归通过"
+    },
+    "src/components/ProfileDialog.tsx": {
+      "reason": "现有账号资料及口令业务界面",
+      "maintainer": "账号维护者",
+      "removeWhen": "账号业务容器接手等效流程并完成资料页回归"
+    },
+    "src/components/FeedbackDialog.tsx": {
+      "reason": "现有反馈业务表单及附件请求",
+      "maintainer": "反馈维护者",
+      "removeWhen": "反馈业务层接手请求和状态并完成原消费者回归"
+    },
+    "src/components/ActivationGrants.tsx": {
+      "reason": "组件索引认可的采购/研发授权组合，保留确认与审计",
+      "maintainer": "授权维护者",
+      "removeWhen": "授权业务容器接手等效流程并完成两个scope回归"
+    },
+    "src/components/OrganizationControls.tsx": {
+      "reason": "现有DepartmentEditor含部门保存，不是纯选择控件",
+      "maintainer": "组织管理维护者",
+      "removeWhen": "父业务层传入部门保存操作且设置页回归通过"
+    }
+  },
+  "compatibility": [
+    {
+      "from": "src/workbenches/ResearchMaterialPrices.tsx",
+      "to": "src/workbenches/ProcurementMaterialView.tsx",
+      "symbols": [
+        "ReadOnlyMaterialDrawer",
+        "ledgerCell"
+      ],
+      "reason": "W6公开原料只读展示，研发注入自己的只读接口；不开放采购写操作",
+      "maintainer": "采购展示与研发只读页维护者",
+      "removeWhen": "公开展示契约变更时同步审查并回归采购与研发消费者"
+    },
+    {
+      "from": "src/workbenches/ResearchMaterialPrices.tsx",
+      "to": "src/workbenches/procurementLedger.ts",
+      "symbols": [
+        "buildLedgerRows",
+        "filterLedgerRows",
+        "formalLedgerChange"
+      ],
+      "reason": "现有正式价格只读台账计算；不开放草稿和写入辅助函数",
+      "maintainer": "采购台账与研发只读页维护者",
+      "removeWhen": "已验收共享台账展示入口提供等效契约后同时迁移"
+    },
+    {
+      "from": "src/workbenches/ResearchWorkbench.tsx",
+      "to": "src/workbenches/procurementAnalytics.ts",
+      "symbols": [
+        "focusedTrendAxis",
+        "moverDateRange"
+      ],
+      "reason": "现有纯图表展示助手，无请求、权限或业务写入",
+      "maintainer": "采购分析与研发图表维护者",
+      "removeWhen": "共享图表工具提供等效契约且两工作台回归通过"
+    }
+  ]
+}

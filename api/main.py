@@ -453,8 +453,10 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             return JSONResponse(status_code=404, content={"detail": "Module not available"})
         if module_id is not None:
             user = getattr(request.state, "current_user", None)
+            # Evaluation accepts a JSON body but only reads costs; the sales router still checks its scope.
+            access_method = "GET" if request.method == "POST" and request.url.path == "/api/workbenches/sales/calculator/evaluate" else request.method
             if user is None or not authorization.has_module_access(
-                user["is_system_admin"], user["scope_levels"], module_id, request.method
+                user["is_system_admin"], user["scope_levels"], module_id, access_method
             ):
                 return JSONResponse(status_code=403, content={"detail": "Permission denied"})
         return await call_next(request)
