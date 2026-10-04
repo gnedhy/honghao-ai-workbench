@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "fixture": {"browserSamples": 5, "apiSamples": 9, "cpuSlowdown": 4, "procurementRows": 2000, "researchRows": 500, "salesProducts": 2000, "apiProducts": 200, "apiMaterials": 2000, "apiHistoryPerProduct": 20, "apiFormulaLines": 12, "apiCalculatorPanels": 12},
+  "paginationModules": ["procurement", "research"],
+  "apiProfiles": {
+    "procurementOverview": {"module":"procurement", "test":"tests/test_performance_budget.py::test_critical_store_performance"},
+    "researchListing": {"module":"research", "test":"tests/test_performance_budget.py::test_critical_store_performance"},
+    "salesCatalog": {"module":"sales", "test":"tests/test_performance_budget.py::test_critical_store_performance"},
+    "calculator": {"module":"sales", "test":"tests/test_performance_budget.py::test_critical_store_performance"},
+    "researchExport": {"module":"research", "test":"tests/test_performance_budget.py::test_critical_store_performance"},
+    "researchRecalculation": {"module":"research", "test":"tests/test_performance_budget.py::test_critical_store_performance"}
+  },
+  "limits": {
+    "bundle.initialJsKiB": 160,
+    "bundle.initialCssKiB": 50,
+    "bundle.totalJsKiB": 380,
+    "bundle.totalCssKiB": 60,
+    "bundle.procurement.incrementalJsKiB": 180,
+    "bundle.research.incrementalJsKiB": 170,
+    "bundle.sales.incrementalJsKiB": 160,
+    "browser.procurement.readyMedianMs": 1500, "browser.procurement.readyMaxMs": 3000,
+    "browser.procurement.filterMedianMs": 150, "browser.procurement.filterMaxMs": 400, "browser.procurement.requests": 1,
+    "browser.procurement.pageMedianMs": 150, "browser.procurement.pageMaxMs": 400,
+    "browser.research.readyMedianMs": 1500, "browser.research.readyMaxMs": 3000,
+    "browser.research.filterMedianMs": 150, "browser.research.filterMaxMs": 400, "browser.research.requests": 3,
+    "browser.research.pageMedianMs": 150, "browser.research.pageMaxMs": 400,
+    "browser.sales.readyMedianMs": 2000, "browser.sales.readyMaxMs": 4000,
+    "browser.sales.filterMedianMs": 250, "browser.sales.filterMaxMs": 600, "browser.sales.requests": 0,
+    "api.procurementOverview.medianMs": 500, "api.procurementOverview.maxMs": 1200, "api.procurementOverview.sqlCalls": 35,
+    "api.researchListing.medianMs": 500, "api.researchListing.maxMs": 1200, "api.researchListing.sqlCalls": 606,
+    "api.salesCatalog.medianMs": 500, "api.salesCatalog.maxMs": 1200, "api.salesCatalog.sqlCalls": 208,
+    "api.calculator.medianMs": 500, "api.calculator.maxMs": 1200, "api.calculator.sqlCalls": 208,
+    "api.researchExport.medianMs": 5000, "api.researchExport.maxMs": 10000, "api.researchExport.sqlCalls": 806,
+    "api.researchRecalculation.medianMs": 1000, "api.researchRecalculation.maxMs": 2500, "api.researchRecalculation.sqlCalls": 411
+  }
+}

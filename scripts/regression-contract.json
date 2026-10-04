@@ -500,7 +500,8 @@
     "tests/test_workbenches.py::test_test_environment_workbench_activation_applies_after_restart",
     "tests/test_workbenches.py::test_production_workbench_activation_requires_and_records_reviews",
     "tests/test_workbenches.py::test_production_rejects_unreviewed_active_workbench_history",
-    "tests/test_workbenches.py::test_core_schema_ignores_additive_workbench_tables"
+    "tests/test_workbenches.py::test_core_schema_ignores_additive_workbench_tables",
+    "tests/test_performance_budget.py::test_critical_store_performance"
   ],
   "frontend": [
     {
@@ -785,6 +786,27 @@
         "procurement-import-busy-blocks-app-exit",
         "procurement-publish-draft-busy-and-refresh-protection",
         "procurement-confirm-import-busy-blocks-app-exit"
+      ]
+    },
+    {
+      "file": "tests_ui/performanceBudget.test.ts",
+      "kind": "node",
+      "ids": [
+        "performance bundle counts static transitive assets once and preserves lazy module increments",
+        "performance bundle rejects absent production assets, broken graphs and eager module entries",
+        "performance budgets reject oversized, missing, negative and nonfinite measurements",
+        "performance workloads and new modules cannot evade measurement or silently relax limits",
+        "performance samples retain all cold runs and reject missing or invalid timing results",
+        "performance receipts reject small workloads, omitted profiles and fabricated timing summaries"
+      ]
+    },
+    {
+      "file": "scripts/check-performance-browser.mjs",
+      "kind": "browser",
+      "ids": [
+        "procurement-large-ledger",
+        "research-large-ledger",
+        "sales-large-catalog"
       ]
     }
   ],

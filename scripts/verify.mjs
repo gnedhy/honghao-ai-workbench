@@ -34,13 +34,18 @@ npm('check:extensions', ['--base-ref', base]);
 npm('check:frontend');
 npm('test:frontend');
 npm('test:browser'); // Shared controls: retain all small mounted-consumer checks.
-npm('build', ['--outDir', `.scratch/verify/${scope}/dist`]);
+for (const kind of ['bundle', 'browser', 'api']) rmSync(`.scratch/performance-budget/${kind}.json`, { force: true });
+npm('build', ['--outDir', `.scratch/verify/${scope}/dist`, '--manifest']);
+npm('check:performance:bundle', ['--dist', `.scratch/verify/${scope}/dist`, '--base-ref', base]);
+npm('check:performance:browser');
+npm('check:performance:results', ['--scope', 'frontend']);
 npm('security:check');
 if (scope !== 'frontend') {
   const junit = `.scratch/verify/${scope}/api-results.xml`;
   rmSync(junit, { force: true }); // An old successful report cannot satisfy this execution.
   npm('test:api', ['-o', 'addopts=', '-q', ...apiFiles, '--junitxml', junit]);
   run('uv', ['--cache-dir', '.uv-cache', 'run', '--locked', 'python', 'scripts/check-api-execution.py', '--collection', '.scratch/verify/collection.json', '--junit', junit, '--files', ...apiFiles]);
+  npm('check:performance:results');
 }
 console.log(`PASS verify scope=${scope}; ${(performance.now() - started).toFixed(0)} ms`);
 if (scope !== 'all') console.log('This scoped result does not replace the complete submission gate: npm run verify');

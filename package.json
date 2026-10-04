@@ -18,6 +18,9 @@
     "check:frontend": "node scripts/check-frontend-quality.mjs",
     "check:regression": "node scripts/check-regression-assets.mjs",
     "check:extensions": "node scripts/check-workbench-contracts.mjs",
+    "check:performance:bundle": "node scripts/check-performance-bundle.mjs",
+    "check:performance:browser": "node scripts/check-performance-browser.mjs",
+    "check:performance:results": "node scripts/check-performance-results.mjs",
     "test:browser": "node scripts/check-workbench-loading.mjs && node scripts/check-client-ids.mjs && node scripts/check-sales-baseline.mjs --scenario all"
   },
   "dependencies": {

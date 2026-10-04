@@ -56,7 +56,7 @@ uv sync --group dev
 npm run verify
 ```
 
-`verify` 包含完整用例数量门禁、增量 React／依赖检查、Node 逻辑、实际组件浏览器、类型与隔离构建、安全扫描及完整接口测试。构建输出为 `.scratch/verify/all/dist`；接口测试要求独立 PostgreSQL 测试库，缺少环境会失败。按影响检查可用 `npm run verify -- --scope sales|procurement|research`（选择一个值），不能替代提交前完整门禁。命令、环境与 CI 边界见 [关键回归地图](docs/agents/workbench-regression.md)。单入口启动见 [运行与维护](docs/运行与维护.md#构建后的单入口运行)。
+`verify` 包含完整用例数量门禁、增量 React／依赖检查、Node 逻辑、实际组件浏览器、类型与隔离构建、固定负载性能预算、安全扫描及完整接口测试。构建输出为 `.scratch/verify/all/dist`；接口测试要求独立 PostgreSQL 测试库，缺少环境会失败。按影响检查可用 `npm run verify -- --scope sales|procurement|research`（选择一个值），不能替代提交前完整门禁。命令、环境与 CI 边界见 [关键回归地图](docs/agents/workbench-regression.md)。新增模块、数据规模或读取计算变化参见 [性能预算](docs/agents/performance-budget.md)。单入口启动见 [运行与维护](docs/运行与维护.md#构建后的单入口运行)。
 
 2026-10-02 本地 W4 报价编辑会话候选承接 W2／W3，拆分业务协调和展示，并修复部分采用保存及旧成本显示；实现与验收见 [W4 记录](docs/history/records/W4-客户报价编辑会话模块化-2026-10-02.md)。源码、CI 与正式发布分别按当前授权推进。
 
