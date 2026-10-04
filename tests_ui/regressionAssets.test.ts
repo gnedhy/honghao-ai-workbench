@@ -36,7 +36,11 @@ test('regression inventory rejects removal hidden by new tests and comment decoy
     writeFileSync(junit, receipt('<testcase classname="tests.test_sample" name="test_critical[client::1]"/>', 0, 1));
     assert.equal(spawnSync(python, ['scripts/check-api-execution.py', '--collection', collection, '--junit', junit, '--files', 'tests/test_sample.py'], { encoding: 'utf8' }).status, 0);
     assert.match(spawnSync(python, ['scripts/check-api-execution.py', '--collection', collection, '--junit', junit], { encoding: 'utf8' }).stderr, /omitted collected tests/);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    assert.equal(path.dirname(path.resolve(directory)), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(directory).startsWith('api-execution-receipt-'));
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('regression inventory rejects duplicate invalid stale and disabled declarations', () => {
