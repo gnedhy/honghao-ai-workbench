@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "workbenches": [
+    {
+      "id": "management", "status": "unimplemented", "entry": null, "pageType": null, "pageLabels": null, "pages": [],
+      "owner": "业务范围与接入维护者",
+      "permissions": "api/authorization.py 的 management 查看授权；前端可见性不替代服务端",
+      "data": "当前没有真实经营模块数据源；不展示示例为正式数据",
+      "lifecycle": "仅受保护占位，没有业务编辑会话",
+      "exits": "宿主共用退出；未注册模块不创建业务会话",
+      "compatibility": "off 状态保留，接入与正式启用须分别验收",
+      "recovery": "docs/security/模块启用审查清单.md 的启用与恢复边界",
+      "consumers": ["src/screens/WorkbenchScreen.tsx", "src/workbenches/WorkbenchModuleSlot.tsx"],
+      "apiPatterns": ["test_app_ui.py", "test_access_levels.py", "test_workbench_modes.py"],
+      "apiTests": ["tests/test_app_ui.py::test_browser_app_static_entry_and_feedback"],
+      "browserTests": [{"file": "scripts/check-app.mjs", "id": "active-unregistered-stays-protected", "apiTest": "tests/test_app_ui.py::test_browser_app_static_entry_and_feedback"}]
+    },
+    {
+      "id": "procurement", "status": "implemented", "entry": "src/workbenches/ProcurementWorkbench.tsx", "pageType": "ProcurementPage", "pageLabels": "PROCUREMENT_PAGE_LABELS",
+      "pages": ["dashboard", "updates", "materials", "distribution", "history", "batches"],
+      "owner": "采购业务与公共原料展示维护者",
+      "permissions": "采购服务端查看/编辑/核对启用授权及字段策略；研发仅复用正式只读原料展示",
+      "data": "正式价格、待启用批次、库存和冻结历史分别保留；变更影响研发与销售成本",
+      "lifecycle": "procurementEditSession 管理跨页输入、版本冲突、失败核对与 busy",
+      "exits": "所有编辑器经共享 leave 事件处理，取消保留输入；卸载清理监听与请求",
+      "compatibility": "共享 ProcurementMaterialView 仅开放声明的只读符号；历史价格不改写",
+      "recovery": "代码回退保留合法批次/正式价格，按 docs/运行与维护.md 恢复",
+      "consumers": ["src/workbenches/ProcurementWorkbench.tsx", "src/workbenches/ResearchMaterialPrices.tsx", "src/workbenches/SalesWorkbench.tsx"],
+      "apiPatterns": ["test_procurement*.py", "test_research*.py", "test_sales*.py", "test_app_ui.py"],
+      "apiTests": ["tests/test_procurement_ui.py::test_browser_procurement_and_research"],
+      "browserTests": [{"file": "scripts/check-app.mjs", "id": "procurement-app-section-search-cancel-preserve-input", "apiTest": "tests/test_app_ui.py::test_browser_app_static_entry_and_feedback"}]
+    },
+    {
+      "id": "research", "status": "implemented", "entry": "src/workbenches/ResearchWorkbench.tsx", "pageType": "ResearchPage", "pageLabels": "RESEARCH_PAGE_LABELS",
+      "pages": ["dashboard", "materials", "products", "formulas", "history"],
+      "owner": "研发配方、成本与读取维护者",
+      "permissions": "查看/编辑/核对启用独立授权，写事务复核；只读原料来源限定采购正式价格",
+      "data": "本地填写、保存草稿、试算凭证与正式配方分离；双成本/引用链供销售读取",
+      "lifecycle": "researchEditSession 管理试算过期/冲突/忙碌；researchData 管理读取和旧回包",
+      "exits": "取消保留本地输入和已存草稿，局部/全局退出同一契约，卸载清理请求",
+      "compatibility": "历史配方和成本冻结；不把自动更新当作历史改写",
+      "recovery": "代码恢复保留合法草稿/正式配方/成本，数据恢复单独评估",
+      "consumers": ["src/workbenches/ResearchWorkbench.tsx", "src/workbenches/ResearchMaterialPrices.tsx", "src/workbenches/SalesWorkbench.tsx"],
+      "apiPatterns": ["test_research*.py", "test_procurement_rd5.py", "test_sales*.py", "test_app_ui.py"],
+      "apiTests": ["tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle"],
+      "browserTests": [{"file": "scripts/check-app.mjs", "id": "research-actual-app-busy-blocks-section-and-keeps-input", "apiTest": "tests/test_app_ui.py::test_browser_app_static_entry_and_feedback"}]
+    },
+    {
+      "id": "sales", "status": "implemented", "entry": "src/workbenches/SalesWorkbench.tsx", "pageType": "SalesPage", "pageLabels": "SALES_PAGE_LABELS",
+      "pages": ["dashboard", "calculate", "estimator", "quotes"],
+      "owner": "销售报价、测算与保存恢复维护者",
+      "permissions": "服务端本人范围/查看/只读 evaluate/保存/采用权限及 revision 校验",
+      "data": "报价冻结成本及采用版本，独立测算不写回正式报价或产品成本",
+      "lifecycle": "salesQuoteSession 保留成功阶段ID/version与失败输入；salesCalculatorWorkspace 隔离工作区和晚回包",
+      "exits": "报价与测算局部/全局出口经 shared leave，dirty取消保留、busy拒绝离开",
+      "compatibility": "request_id兼容旧请求，历史报价不静默更新成本；未知提交恢复限当前挂载",
+      "recovery": "代码回退保留合法报价/测算/模板，旧代码不承诺新请求安全重放",
+      "consumers": ["src/workbenches/SalesWorkbench.tsx", "src/App.tsx"],
+      "apiPatterns": ["test_sales*.py"],
+      "apiTests": ["tests/test_sales_calculator_ui.py::test_browser_sales_calculator", "tests/test_sales_recovery.py::test_sales_request_replay_binding_permissions_and_versions"],
+      "browserTests": [{"file": "scripts/check-sales-calculator.mjs", "id": "save-slow-keeps-newer-input-and-busy-exit", "apiTest": "tests/test_sales_calculator_ui.py::test_browser_sales_calculator"}]
+    }
+  ]
+}

@@ -12,6 +12,7 @@
 | 业务范围与术语 | [产品范围](../PRODUCT.md)、[领域模型](../CONTEXT.md) |
 | 开发规范与可选工作方法 | [协作指引](agents/skill-workflow.md)、[任务跟踪](agents/issue-tracker.md) |
 | 工作台变更、实际消费者与隔离回归 | [关键回归地图](agents/workbench-regression.md) |
+| 完整 CI、回归资产与扩展接入检查 | [持续质量保障](agents/continuous-quality.md) |
 | 架构与业务决策 | [ADR 目录](adr/) |
 | 数据安全与模块启用 | [安全审查目录](security/) |
 

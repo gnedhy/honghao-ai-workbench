@@ -70,7 +70,7 @@ npm run verify -- --scope frontend
 
 Node 24、Python 3.12、uv、PostgreSQL 18 及 Chromium 按 README 锁文件准备。`npm run check:frontend` 使用 Oxlint 4 条基础 React 规则及本地模块 AST 图；10 条保留的既有 Hook 诊断按具体 Hook 哈希（W4 修复 1 条、W6 台账修复 6 条、W7 研发修复 4 条、W8 修复 2 条）而非总数容忍，新增／编辑／过期项均失败。PriceMovers 与采购分页 Hook 同哈希、同缺失依赖集合仅校正诊断排列。临时例外、维护角色及退出条件在 [历史基线](../../scripts/react-lint-baseline.json)及 [依赖清单](../../scripts/frontend-boundaries.json)，不能自动扩表或用内联禁用规避；处理旧项需复验实际消费者。公共控件的请求／权限／金额逻辑仍由业务层承担，自动图不代替动态反射、别名调用及业务语义审查。文件长度、Hook 数只作审查提示，不作硬门槛。
 
-[CI 候选](../../.github/workflows/frontend-checks.yml)仅以同一 `--scope frontend` 命令运行前端 job，无生产凭据，不声明已运行 Linux 或已成为强制门禁。完整实库／恢复检查在本机现有隔离环境执行；远端工作流生效需另行推送，分支保护及必须检查须管理员授权。当前执行证据与 G3 状态见 [W3 记录](../history/records/W3-统一自动检查与影响范围验证-2026-10-02.md)。人工复核仍承担业务口径、原生模态不可达出口及自动检查未覆盖部分。
+[CI 工作流](../../.github/workflows/frontend-checks.yml)已完成前端范围远端运行，当前新增 `full` 临时 PostgreSQL 18 完整验收配置；准确运行与主线必需检查状态见当前交接，不沿用 W3 的候选状态。回归资产、基线比较及扩展契约执行见 [持续质量保障](continuous-quality.md)。人工复核仍承担业务口径、原生模态不可达出口及自动检查未覆盖部分。
 
 ## 故障注入与剩余联通检查
 
