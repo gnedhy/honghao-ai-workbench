@@ -366,6 +366,17 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
     </div>
     <h3 className="settings-section-label">更新日志</h3>
     <ol className="settings-timeline" tabIndex={0} aria-label="更新日志"><li>
+      <div className="changelog-date"><time dateTime="2026-10-03">2026年10月3日</time></div>
+      <div className="settings-timeline-content">
+        <div><strong>销售保存与历史报价</strong><p>在当前报价明细内，保存中断后保留已完成的进度和填写内容，重试继续处理原报价。部分采用后可继续保存未采用项目；重开历史报价仍保留原成本依据，更新成本前需明确确认。</p></div>
+        <div><strong>测算方案与输入保护</strong><p>保存期间继续修改的内容不再被旧结果覆盖，慢请求不会覆盖新输入。完善多面板、公式模板和个人历史操作，尚未应用的公摊分档等修改也会提示保留或放弃。</p></div>
+        <div><strong>采购台账与原料查看</strong><p>搜索、筛选、排序和翻页时保留跨页填写，保存失败或版本冲突后可保留输入并核对。研发继续只读查看采购正式价格；修正中文名称和人员排序。</p></div>
+        <div><strong>研发试算与草稿</strong><p>本地填写、已保存草稿和正式配方分别保留，取消本地编辑不删除已存草稿。后台刷新保留当前填写，过期试算不覆盖新输入；冲突后可核对并继续处理。</p></div>
+        <div><strong>离开页面与保存保护</strong><p>完善关闭弹窗、返回和切换页面时的未保存提醒。取消离开后继续保留填写；保存过程中限制离开，避免操作尚未完成就切走。</p></div>
+        <div><strong>加载、失败与重试</strong><p>首次加载、暂无记录和读取失败分别提示，失败后可重新加载，后台刷新保留已有内容。工作台切换时，各自的加载错误互不影响。</p></div>
+        <div><strong>意见反馈与账号切换</strong><p>反馈列表和未读数量随当前账号更新，避免延迟返回的旧内容覆盖新列表。切换账号、关闭或重新打开反馈时，按原规则保留和清理草稿。</p></div>
+      </div>
+    </li><li>
       <div className="changelog-date"><time dateTime="2026-09-30">2026年9月30日</time></div>
       <div className="settings-timeline-content">
         <div><strong>原料行情与库存</strong><p>补入并启用9月14日、21日、28日三期正式原料价格，更新对应原料的当前库存。采购台账、价格历史及研发成本已同步到最新正式数据。</p></div>
@@ -387,13 +398,13 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
         <div><strong>独立测算工具</strong><p>新增可保存的报价测算，可选产品或填写手工成本，对比多组客户类型与公式；支持常规测算、反推成本上限及公摊分档调整。</p></div>
       </div>
     </li><li>
-      <div className="changelog-date"><time dateTime="2026-09-22">2026年9月22日</time></div>
+      <div className="changelog-date"><time dateTime="2026-09-22">2026年9月22日（销售候选）</time></div>
       <div className="settings-timeline-content"><div><strong>销售工作台重构</strong><p>销售入口调整为销售看板、产品报价和客户报价。产品报价选择产品后统一在报价明细中填写客户、调整参数、保存并采用；测算历史与报价记录并入客户报价时间线和产品价格历史。</p></div><div><strong>销售报价看板</strong><p>新增报价状态指标、产品报价趋势、热门产品、待处理报价和近期采用报价。客户报价支持状态、客户类型、日期及客户或产品搜索。</p></div></div>
     </li><li>
-      <div className="changelog-date"><time dateTime="2026-09-18">2026年9月18日</time></div>
+      <div className="changelog-date"><time dateTime="2026-09-18">2026年9月18日（销售候选）</time></div>
       <div className="settings-timeline-content"><div><strong>报价操作与界面精简</strong><p>点产品即可测算并自动建立清单，采用时再填写客户信息；参数应用与测算合并，按状态显示操作。筛选栏与台账合并。报价清单集中展示报价成本和对外报价，测算价及盈亏平衡说明按需展开；参数抽屉保留常用项，参考价格前移，仅选择“其他”时填写原因。</p></div><div><strong>产品成本与报价参考</strong><p>报价台账统一展示产品内编、数据来源、双成本和直接厂／中间商／外贸报价参考。点击产品内编进入宽抽屉，抽屉收敛为成本依据、报价参考、价格历史三个区块，成本来源、版本与日期并入成本依据，报价参考使用成本口径切换按钮，历史展开显示测算成本、完整系数和定价依据；修改系数即时刷新参考价，应用后才写入当前报价草稿，已采用产品仍需先填写调整原因。</p></div></div>
     </li><li>
-      <div className="changelog-date"><time dateTime="2026-09-17">2026年9月17日</time></div>
+      <div className="changelog-date"><time dateTime="2026-09-17">2026年9月17日（销售候选）</time></div>
       <div className="settings-timeline-content">
         <div><strong>销售报价测算</strong><p>在同一页面查阅产品正式成本并建立客户报价清单，支持国内直接厂、国内中间商、外贸直接厂和外贸中间商，批量调整参数后可继续处理个别产品。</p></div>
         <div><strong>报价草稿与采用</strong><p>保存本次询价草稿，按产品采用最终对外价，并保留测算历史、客户与业务员。客户尚无编码时可明确标记，之后补录。</p></div>
