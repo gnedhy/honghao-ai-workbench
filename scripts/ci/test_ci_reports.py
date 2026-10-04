@@ -12,6 +12,18 @@ spec.loader.exec_module(reports)
 
 
 class ReportBoundaries(unittest.TestCase):
+    def test_audit_summary_preserves_failure_without_exporting_payloads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); (root/'.scratch').mkdir()
+            source=root/'.scratch/dependency-audit.json'
+            source.write_text(json.dumps({'schema':1,'complete':False,'count':8,'auditedPackages':184,'error':'PRIVATE_ERROR','vulnerabilities':[{'package':'PRIVATE_PACKAGE'}]}))
+            receipt=reports.collect(root)
+            self.assertFalse(receipt['dependency_audit']['complete'])
+            self.assertEqual(receipt['dependency_audit']['count'],8)
+            self.assertNotIn('PRIVATE',(root/'ci-reports/dependency-audit.json').read_text())
+            source.write_text(json.dumps({'schema':1,'complete':True,'count':0,'auditedPackages':'PRIVATE'}))
+            with self.assertRaises(ValueError): reports.collect(root)
+
     def test_no_junit_does_not_claim_api_passed(self):
         with tempfile.TemporaryDirectory() as directory:
             receipt = reports.collect(Path(directory))

@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "moduleChecks": {
+    "procurement": ["runtime.procurement_scheduler", "procurement_backlog", "news_task", "news_source_1", "news_source_2", "news_source_3"],
+    "research": ["runtime.research_startup", "runtime.research_scheduler", "research_backlog"],
+    "sales": ["health", "readiness", "api_errors"]
+  },
+  "intervalSeconds": 300,
+  "staleAfterSeconds": 900,
+  "confirmSamples": 3,
+  "criticalConfirmSamples": 1,
+  "dependencyStaleHours": 192,
+  "retentionDays": 30,
+  "requestTimeoutSeconds": 5,
+  "slowRequestMilliseconds": 1000,
+  "newsStaleSeconds": 7200,
+  "taskBacklogSeconds": 300,
+  "futureSkewSeconds": 300,
+  "backupWarningHours": 24,
+  "backupCriticalHours": 168,
+  "backupVerifyHours": 24,
+  "diskWarningGiB": 5,
+  "diskCriticalGiB": 2,
+  "minimumErrorRateRequests": 20,
+  "errorRateCritical": 0.05,
+  "maximumLogBytes": 1048576
+}

@@ -3,6 +3,7 @@ import { parseArgs } from 'node:util';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, rmSync } from 'node:fs';
 import { scopeFiles } from './check-workbench-contracts.mjs';
+import { acquireVerificationLock } from './verification-lock.mjs';
 
 const { values } = parseArgs({ options: { scope: { type: 'string', default: 'all' }, 'base-ref': { type: 'string', default: 'origin/main' } } });
 const scope = values.scope;
@@ -10,6 +11,10 @@ assert.ok(process.env.npm_execpath, 'Run via npm run verify');
 const base = values['base-ref'];
 const baseline = spawnSync('git', ['rev-parse', '--verify', '--end-of-options', base + '^{commit}'], { encoding: 'utf8' });
 assert.equal(baseline.status, 0, 'Verification requires an existing comparison commit; fetch origin/main or pass --base-ref');
+const release = acquireVerificationLock('.scratch/verify', scope);
+process.once('exit', release);
+process.once('SIGINT', () => process.exit(130));
+process.once('SIGTERM', () => process.exit(143));
 const started = performance.now();
 const environment = { ...process.env, PYTHONUTF8: '1', UV_LOCKED: '1' };
 delete environment.PYTEST_ADDOPTS; // Collection and execution must share the same unfiltered scope.
@@ -31,10 +36,11 @@ const apiFiles = scopeFiles(contract, scope, files);
 npm('test:count', ['--base-ref', base, '--output', '.scratch/verify/collection.json']);
 npm('check:regression', ['--base-ref', base]);
 npm('check:extensions', ['--base-ref', base]);
+run('uv', ['--cache-dir', '.uv-cache', 'run', '--locked', 'python', 'scripts/check-operations-contracts.py']);
 npm('check:frontend');
 npm('test:frontend');
 npm('test:browser'); // Shared controls: retain all small mounted-consumer checks.
-for (const kind of ['bundle', 'browser', 'api']) rmSync(`.scratch/performance-budget/${kind}.json`, { force: true });
+for (const kind of scope === 'frontend' ? ['bundle', 'browser'] : ['bundle', 'browser', 'api']) rmSync(`.scratch/performance-budget/${kind}.json`, { force: true });
 npm('build', ['--outDir', `.scratch/verify/${scope}/dist`, '--manifest']);
 npm('check:performance:bundle', ['--dist', `.scratch/verify/${scope}/dist`, '--base-ref', base]);
 npm('check:performance:browser');

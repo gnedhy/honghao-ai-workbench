@@ -41,3 +41,5 @@ ModuleBoundary 按用户 ID／工作台 ID 隔离错误。chunk 加载失败使�
 按 README 配置专用测试库后执行 `uv run --locked pytest tests/test_app_ui.py -q -s`；完整验收执行 `npm run verify`。不把维护者 `.scratch` 路径或本机凭据复制为新协作者的启动配置。
 
 反馈独立维护于 [useAppFeedback](../../src/appFeedback.ts)与[FeedbackDialog](../../src/components/FeedbackDialog.tsx)：草稿保留在本次登录，30 秒／聚焦／可见性单飞读未读，窗口卸载取消请求；普通关闭保留新建草稿，身份变化清空会话。反馈不成为工作台业务状态仓库。
+
+新增模块或关键任务还须同步 [生产监测约定](operations-monitoring.md)的实际检查、责任和恢复入口；统一 verifier 保护 moduleChecks 的完整性。
