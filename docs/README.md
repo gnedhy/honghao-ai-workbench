@@ -13,6 +13,7 @@
 | 开发规范与可选工作方法 | [协作指引](agents/skill-workflow.md)、[任务跟踪](agents/issue-tracker.md) |
 | 工作台变更、实际消费者与隔离回归 | [关键回归地图](agents/workbench-regression.md) |
 | 完整 CI、回归资产与扩展接入检查 | [持续质量保障](agents/continuous-quality.md) |
+| 新模块、数据规模与读取计算性能 | [性能预算](agents/performance-budget.md) |
 | 架构与业务决策 | [ADR 目录](adr/) |
 | 数据安全与模块启用 | [安全审查目录](security/) |
 
@@ -68,6 +69,7 @@
 
 ## 历史验证与收尾
 
+- [性能预算隔离验收-2026-10-04](history/records/性能预算隔离验收-2026-10-04.md)
 - [W5 独立测算工作区模块化-2026-10-03](history/records/W5-独立测算工作区模块化-2026-10-03.md)
 - [W6 采购台账与原料公开展示模块化-2026-10-03](history/records/W6-采购台账与原料公开展示模块化-2026-10-03.md)
 - [W7 研发编辑试算与读取生命周期-2026-10-03](history/records/W7-研发编辑试算与读取生命周期-2026-10-03.md)

@@ -26,7 +26,7 @@
       "compatibility": "共享 ProcurementMaterialView 仅开放声明的只读符号；历史价格不改写",
       "recovery": "代码回退保留合法批次/正式价格，按 docs/运行与维护.md 恢复",
       "consumers": ["src/workbenches/ProcurementWorkbench.tsx", "src/workbenches/ResearchMaterialPrices.tsx", "src/workbenches/SalesWorkbench.tsx"],
-      "apiPatterns": ["test_procurement*.py", "test_research*.py", "test_sales*.py", "test_app_ui.py"],
+      "apiPatterns": ["test_procurement*.py", "test_research*.py", "test_sales*.py", "test_app_ui.py", "test_performance_budget.py"],
       "apiTests": ["tests/test_procurement_ui.py::test_browser_procurement_and_research"],
       "browserTests": [{"file": "scripts/check-app.mjs", "id": "procurement-app-section-search-cancel-preserve-input", "apiTest": "tests/test_app_ui.py::test_browser_app_static_entry_and_feedback"}]
     },
@@ -41,7 +41,7 @@
       "compatibility": "历史配方和成本冻结；不把自动更新当作历史改写",
       "recovery": "代码恢复保留合法草稿/正式配方/成本，数据恢复单独评估",
       "consumers": ["src/workbenches/ResearchWorkbench.tsx", "src/workbenches/ResearchMaterialPrices.tsx", "src/workbenches/SalesWorkbench.tsx"],
-      "apiPatterns": ["test_research*.py", "test_procurement_rd5.py", "test_sales*.py", "test_app_ui.py"],
+      "apiPatterns": ["test_research*.py", "test_procurement_rd5.py", "test_sales*.py", "test_app_ui.py", "test_performance_budget.py"],
       "apiTests": ["tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle"],
       "browserTests": [{"file": "scripts/check-app.mjs", "id": "research-actual-app-busy-blocks-section-and-keeps-input", "apiTest": "tests/test_app_ui.py::test_browser_app_static_entry_and_feedback"}]
     },
@@ -56,7 +56,7 @@
       "compatibility": "request_id兼容旧请求，历史报价不静默更新成本；未知提交恢复限当前挂载",
       "recovery": "代码回退保留合法报价/测算/模板，旧代码不承诺新请求安全重放",
       "consumers": ["src/workbenches/SalesWorkbench.tsx", "src/App.tsx"],
-      "apiPatterns": ["test_sales*.py"],
+      "apiPatterns": ["test_sales*.py", "test_performance_budget.py"],
       "apiTests": ["tests/test_sales_calculator_ui.py::test_browser_sales_calculator", "tests/test_sales_recovery.py::test_sales_request_replay_binding_permissions_and_versions"],
       "browserTests": [{"file": "scripts/check-sales-calculator.mjs", "id": "save-slow-keeps-newer-input-and-busy-exit", "apiTest": "tests/test_sales_calculator_ui.py::test_browser_sales_calculator"}]
     }

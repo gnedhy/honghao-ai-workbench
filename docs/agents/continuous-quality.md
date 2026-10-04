@@ -1,6 +1,6 @@
 # 持续质量保障
 
-本页维护新增模块与功能扩展的自动验收入口。本次范围为完整 CI 与主线必需检查、回归资产保护、扩展接入一致性；性能预算及上线后监测留待后续工作，不宣称已完成。业务约定沿用 [开发流程](skill-workflow.md)、[静态接入](workbench-integration.md)和[回归地图](workbench-regression.md)。
+本页维护新增模块与功能扩展的自动验收入口。覆盖完整 CI 与主线必需检查、回归资产保护、扩展接入一致性及隔离性能预算；上线后监测为后续工作。业务约定沿用 [开发流程](skill-workflow.md)、[静态接入](workbench-integration.md)和[回归地图](workbench-regression.md)。
 
 ## 开发、集成与合并
 
@@ -8,7 +8,7 @@
 
 比较基线默认 `origin/main`，先 `git fetch origin`；显式基线使用 `npm run verify -- --base-ref <commit>`。CI 使用 PR 的 base SHA 或 push 的 before SHA，checkout 保留历史。不存在的基线直接失败，不省略比较。已合并本地工作树与当前主线一致时，仍检查清单和接入一致性；开发分支及未提交产品变更另检查当前变更声明。
 
-[工作流](../../.github/workflows/frontend-checks.yml)在 PR、main push 和手动触发时执行 `frontend` 快速范围和 `full` 完整范围。full 使用 GitHub-hosted 临时 PostgreSQL 18、匹配版本原生工具、受限应用账号、迁移账号和仅测试建库的恢复账号；不引用本机或生产凭据。失败不能跳过、重试后吞掉或记为通过。报告只保留去掉参数值和错误正文的合成用例 JUnit；数据库、附件、凭据和原始业务内容不上传。
+[工作流](../../.github/workflows/frontend-checks.yml)在 PR、main push 和手动触发时执行 `frontend` 快速范围和 `full` 完整范围。full 使用 GitHub-hosted 临时 PostgreSQL 18、匹配版本原生工具、受限应用账号、迁移账号和仅测试建库的恢复账号；不引用本机或生产凭据。失败不能跳过、重试后吞掉或记为通过。报告只保留去掉参数值和错误正文的合成用例 JUnit，以及白名单中的数值性能收据；数据库、附件、凭据和原始业务内容不上传。
 
 主线目标规则为必须通过 `frontend`、`full`，合并前保持主线最新；管理员同样受约束，禁止强制推送和删除主线，变更通过 PR。单维护者仓库不要求不可自行完成的第二人批准；业务语义和安全审查仍需对应责任人完成，自动检查不代替业务批准。仓库规则以 GitHub 实际配置为准，生效与运行证据记入交接。
 
@@ -39,3 +39,7 @@
 例如销售测算业务声明可引用 `tests/test_sales_calculator_ui.py::test_browser_sales_calculator`，并用 `{ "file": "scripts/check-sales-calculator.mjs", "id": "save-slow-keeps-newer-input-and-busy-exit", "apiTest": "tests/test_sales_calculator_ui.py::test_browser_sales_calculator" }` 指向实跑场景。填写本次真实涉及的文件和场景，不照抄不相关的示例。
 
 自动检查能证明条目齐全、注册一致、引用有效及选定用例已执行；是否正确分类、测试是否对应新需求、权限和金额是否符合业务，仍由需求与规范审查判断。不能用一份写满字段的声明代替新增业务断言，也不能修改工作流或清单掩盖检查失败。
+
+## 性能预算
+
+新增模块、扩充台账、改变读取或计算流程时，按 [性能约定](performance-budget.md)维护正式构建体积、大样本浏览器和 PostgreSQL 业务性能。统一 verifier 与现有必需 CI 检查执行这些预算；原负载、完整样本和本次预算修订证据一并检查。实验室结果与生产观察分别解释。

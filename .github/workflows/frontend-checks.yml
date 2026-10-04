@@ -100,5 +100,8 @@ jobs:
           path: |
             ci-reports/api-results.xml
             ci-reports/collection.json
+            ci-reports/performance-bundle.json
+            ci-reports/performance-browser.json
+            ci-reports/performance-api.json
           retention-days: 14
           if-no-files-found: error

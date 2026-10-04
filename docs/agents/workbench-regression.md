@@ -61,12 +61,12 @@ npm run verify -- --scope frontend
 | 范围 | API 文件范围 | 适用边界 |
 | --- | --- | --- |
 | all（默认） | 全部 `tests/` | 提交前完整门禁，不按改动缩减 |
-| sales | `test_sales*.py`（含真实浏览器恢复） | 销售／测算局部变更 |
-| procurement | `test_procurement*.py`、`test_research*.py`、`test_sales*.py` | 采购成本改变会影响研发和销售 |
-| research | `test_research*.py`、`test_procurement_rd5.py`、`test_sales*.py` | 研发成本、只读原料及下游销售 |
+| sales | `test_sales*.py`、`test_performance_budget.py` | 销售／测算局部变更，含真实浏览器恢复 |
+| procurement | `test_procurement*.py`、`test_research*.py`、`test_sales*.py`、`test_app_ui.py`、`test_performance_budget.py` | 采购成本改变会影响研发和销售 |
+| research | `test_research*.py`、`test_procurement_rd5.py`、`test_sales*.py`、`test_app_ui.py`、`test_performance_budget.py` | 研发成本、只读原料及下游销售 |
 | frontend | 无实库执行 | 无测试库时可做的前端检查、CI 前端 job；不构成完整通过 |
 
-每个范围都执行完整用例收集及现有数量底线、`check:frontend`、全部 Node 逻辑和 17 个模拟浏览器场景、类型／隔离构建及安全扫描。构建位于 `.scratch/verify/<scope>/dist`，实库结果位于同目录 `api-results.xml`。业务写入、权限、公共类型及跨模块变更仍以完整门禁收尾；范围检查只加快开发反馈。未知范围、依赖／浏览器缺失、检查错误、测试库身份错误均非零退出，无跳过后算通过。
+每个范围都执行完整用例收集及现有数量底线、`check:frontend`、全部 Node 逻辑和 17 个模拟浏览器场景、类型／隔离构建、构建及大样本浏览器性能预算、安全扫描。实库范围另测 PostgreSQL 业务性能。方法及限制见 [性能约定](performance-budget.md)。构建位于 `.scratch/verify/<scope>/dist`，实库结果位于同目录 `api-results.xml`。业务写入、权限、公共类型及跨模块变更仍以完整门禁收尾；范围检查只加快开发反馈。未知范围、依赖／浏览器缺失、检查错误、测试库身份错误均非零退出，无跳过后算通过。
 
 Node 24、Python 3.12、uv、PostgreSQL 18 及 Chromium 按 README 锁文件准备。`npm run check:frontend` 使用 Oxlint 4 条基础 React 规则及本地模块 AST 图；10 条保留的既有 Hook 诊断按具体 Hook 哈希（W4 修复 1 条、W6 台账修复 6 条、W7 研发修复 4 条、W8 修复 2 条）而非总数容忍，新增／编辑／过期项均失败。PriceMovers 与采购分页 Hook 同哈希、同缺失依赖集合仅校正诊断排列。临时例外、维护角色及退出条件在 [历史基线](../../scripts/react-lint-baseline.json)及 [依赖清单](../../scripts/frontend-boundaries.json)，不能自动扩表或用内联禁用规避；处理旧项需复验实际消费者。公共控件的请求／权限／金额逻辑仍由业务层承担，自动图不代替动态反射、别名调用及业务语义审查。文件长度、Hook 数只作审查提示，不作硬门槛。
 
