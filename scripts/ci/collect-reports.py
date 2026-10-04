@@ -11,6 +11,15 @@ def collect(root: Path) -> dict:
     destination.mkdir(exist_ok=True)
     original = root / ".scratch/verify/all/api-results.xml"
     receipt = {"scope": "all", "api_report_present": original.is_file(), "synthetic_data_only": True}
+    audit_file = root / '.scratch/dependency-audit.json'
+    receipt['dependency_audit_present'] = audit_file.is_file()
+    if audit_file.is_file():
+        audit = json.loads(audit_file.read_text(encoding='utf-8'))
+        if audit.get('schema') != 1 or type(audit.get('complete')) is not bool or any(type(audit.get(key)) is not int or audit[key] < 0 for key in ('count', 'auditedPackages')):
+            raise ValueError('Invalid dependency audit summary')
+        safe = {key:audit[key] for key in ('schema', 'complete', 'count', 'auditedPackages')}
+        (destination / 'dependency-audit.json').write_text(json.dumps(safe, indent=2) + '\n', encoding='utf-8')
+        receipt['dependency_audit'] = safe
     if original.is_file():
         suites = ET.Element("testsuites")
         suite = ET.SubElement(suites, "testsuite", name="api", tests="0", failures="0", errors="0", skipped="0")

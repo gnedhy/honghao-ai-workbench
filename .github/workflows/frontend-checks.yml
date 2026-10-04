@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: '17 20 * * 6' # Sunday 04:17 Asia/Shanghai; complete synthetic recovery/regression and audits.
 permissions:
   contents: read
 env:
@@ -83,6 +85,8 @@ jobs:
         run: bash scripts/ci/install-postgres-client.sh
       - name: Verify CI report boundaries
         run: uv run --locked python -m unittest discover -s scripts/ci -p 'test_*.py'
+      - name: Audit locked dependencies
+        run: uv run --locked python scripts/check-dependencies.py --output .scratch/dependency-audit.json
       - name: Prepare isolated PostgreSQL test roles
         run: uv run --locked python scripts/ci/prepare-postgres.py
         env:
@@ -100,6 +104,7 @@ jobs:
           path: |
             ci-reports/api-results.xml
             ci-reports/collection.json
+            ci-reports/dependency-audit.json
             ci-reports/performance-bundle.json
             ci-reports/performance-browser.json
             ci-reports/performance-api.json

@@ -808,6 +808,20 @@
         "research-large-ledger",
         "sales-large-catalog"
       ]
+    },
+    {
+      "file": "tests_ui/performanceDOM.test.ts",
+      "kind": "node",
+      "ids": [
+        "browser performance timer excludes driver waits and retains actual delayed rendering"
+      ]
+    },
+    {
+      "file": "tests_ui/verificationLock.test.ts",
+      "kind": "node",
+      "ids": [
+        "concurrent verifier cannot overwrite receipts and lock releases for the next process"
+      ]
     }
   ],
   "retirements": []

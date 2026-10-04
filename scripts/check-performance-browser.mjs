@@ -4,6 +4,7 @@ import path from 'node:path';
 import { build, preview } from 'vite';
 import react from '@vitejs/plugin-react';
 import { chromium } from 'playwright';
+import { observeDOMMeasurement } from './performance-dom.mjs';
 import { loadPolicy, validatePolicy, summarize, enforceMetrics } from './performance-budget.mjs';
 
 const policy = loadPolicy(), { workbenches } = JSON.parse(readFileSync('scripts/workbench-contracts.json', 'utf8'));
@@ -59,6 +60,7 @@ try {
           if (request.method() !== 'GET' || !reply) { unexpected.push(url.pathname); return route.abort(); }
           return route.fulfill({ json: reply });
         });
+        await page.addInitScript(observeDOMMeasurement, { selector: kind === 'sales' ? '[data-cost-option]' : 'tbody tr', count: kind === 'sales' ? 4000 : 50, property: 'perfReadyMs' });
         await page.goto(origin + '?kind=' + kind);
         assert.equal(await page.title(), 'Workbench performance fixture');
         assert.equal(new URL(page.url()).searchParams.get('kind'), kind);
@@ -81,32 +83,37 @@ try {
   }
   async function ledger(page, ready, filtered, paged, searchLabel, rows) {
     await page.waitForFunction(() => document.querySelectorAll('tbody tr').length === 50);
-    ready.push(await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now()))))));
+    await page.waitForFunction(() => Number.isFinite(window.perfReadyMs));
+    ready.push(await page.evaluate(() => window.perfReadyMs));
     assert.ok((await page.locator('tbody tr').first().innerText()).includes('P00000'));
     const next = page.getByRole('button', { name: '下一页', exact: true });
-    await next.evaluate(element => { element.addEventListener('click', () => { window.perfPageStart = performance.now(); }, { capture: true, once: true }); });
+    await next.evaluate(element => element.setAttribute('data-perf-trigger', 'page'));
+    await page.evaluate(observeDOMMeasurement, { trigger: '[data-perf-trigger=page]', event: 'click', selector: 'tbody tr', count: 50, text: 'P00050', property: 'perfPageMs' });
     await next.click();
     await page.waitForFunction(() => document.querySelector('tbody tr')?.textContent.includes('P00050'));
     assert.equal(await page.locator('tbody tr').count(), 50);
-    paged.push(await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now() - window.perfPageStart))))));
+    await page.waitForFunction(() => Number.isFinite(window.perfPageMs));
+    paged.push(await page.evaluate(() => window.perfPageMs));
     const code = 'P' + String(rows - 1).padStart(5, '0'), input = page.getByRole('textbox', { name: searchLabel, exact: true });
-    await measureFilter(page, input, code, () => document.querySelectorAll('tbody tr').length === 1);
+    await measureFilter(page, input, code, 'tbody tr', 1);
     assert.equal(await page.locator('tbody tr').count(), 1); assert.ok((await page.locator('tbody').innerText()).includes(code));
     filtered.push(await page.evaluate(() => window.perfFilterMs));
   }
-  async function measureFilter(page, input, value, predicate) {
-    await input.evaluate(element => { element.addEventListener('input', () => { window.perfInputStart = performance.now(); }, { capture: true, once: true }); });
-    await input.fill(value); await page.waitForFunction(predicate);
-    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => { window.perfFilterMs = performance.now() - window.perfInputStart; resolve(); }))));
+  async function measureFilter(page, input, value, selector, count) {
+    await input.evaluate(element => element.setAttribute('data-perf-trigger', 'filter'));
+    await page.evaluate(observeDOMMeasurement, { trigger: '[data-perf-trigger=filter]', event: 'input', selector, count, text: value, property: 'perfFilterMs' });
+    await input.fill(value);
+    await page.waitForFunction(() => Number.isFinite(window.perfFilterMs));
   }
   await scenario('procurement-large-ledger', 'procurement', async (page, ready, filtered, paged) => ledger(page, ready, filtered, paged, '搜索原料', policy.fixture.procurementRows));
   await scenario('research-large-ledger', 'research', async (page, ready, filtered, paged) => ledger(page, ready, filtered, paged, '搜索产品内编', policy.fixture.researchRows));
   await scenario('sales-large-catalog', 'sales', async (page, ready, filtered) => {
     await page.waitForFunction(() => document.querySelectorAll('[data-cost-option]').length === 4000);
-    ready.push(await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now()))))));
+    await page.waitForFunction(() => Number.isFinite(window.perfReadyMs));
+    ready.push(await page.evaluate(() => window.perfReadyMs));
     await page.locator('summary').first().click();
     const code = 'P' + String(policy.fixture.salesProducts - 1).padStart(5, '0');
-    await measureFilter(page, page.getByRole('searchbox'), code, () => document.querySelectorAll('[data-cost-option]').length === 2);
+    await measureFilter(page, page.getByRole('searchbox'), code, '[data-cost-option]', 2);
     filtered.push(await page.evaluate(() => window.perfFilterMs));
     await page.getByRole('button', { name: code + ' 最新优先 4.00 元每千克', exact: true }).click();
     assert.equal(await page.evaluate(() => window.perfSelected), code);

@@ -1,6 +1,6 @@
 # 持续质量保障
 
-本页维护新增模块与功能扩展的自动验收入口。覆盖完整 CI 与主线必需检查、回归资产保护、扩展接入一致性及隔离性能预算；上线后监测为后续工作。业务约定沿用 [开发流程](skill-workflow.md)、[静态接入](workbench-integration.md)和[回归地图](workbench-regression.md)。
+本页维护新增模块与功能扩展的自动验收入口。覆盖完整 CI 与主线必需检查、回归资产保护、扩展接入一致性及隔离性能预算；上线后检查、告警、处理责任和恢复入口见 [生产监测与持续巡检](operations-monitoring.md)。业务约定沿用 [开发流程](skill-workflow.md)、[静态接入](workbench-integration.md)和[回归地图](workbench-regression.md)。
 
 ## 开发、集成与合并
 
@@ -8,7 +8,9 @@
 
 比较基线默认 `origin/main`，先 `git fetch origin`；显式基线使用 `npm run verify -- --base-ref <commit>`。CI 使用 PR 的 base SHA 或 push 的 before SHA，checkout 保留历史。不存在的基线直接失败，不省略比较。已合并本地工作树与当前主线一致时，仍检查清单和接入一致性；开发分支及未提交产品变更另检查当前变更声明。
 
-[工作流](../../.github/workflows/frontend-checks.yml)在 PR、main push 和手动触发时执行 `frontend` 快速范围和 `full` 完整范围。full 使用 GitHub-hosted 临时 PostgreSQL 18、匹配版本原生工具、受限应用账号、迁移账号和仅测试建库的恢复账号；不引用本机或生产凭据。失败不能跳过、重试后吞掉或记为通过。报告只保留去掉参数值和错误正文的合成用例 JUnit，以及白名单中的数值性能收据；数据库、附件、凭据和原始业务内容不上传。
+同一工作区的 verifier 共享收集和性能输出，必须串行执行。统一入口用 `.scratch/verify/run.lock` 在检查开始前拒绝并发，正常退出释放；异常中断后先核对记录 PID 已停止，再移除残留锁。前端范围只清理自己的构建／浏览器报告，不删除 API 报告。直接 pytest 的数据库隔离责任仍按运行配置执行。
+
+[工作流](../../.github/workflows/frontend-checks.yml)在 PR、main push、手动触发及每周日北京时间 04:17 执行 `frontend` 快速范围和 `full` 完整范围。full 使用 GitHub-hosted 临时 PostgreSQL 18、匹配版本原生工具、受限应用账号、迁移账号和仅测试建库的恢复账号，并执行全锁文件依赖审计；不引用本机或生产凭据。失败不能跳过、重试后吞掉或记为通过。报告只保留去掉参数值和错误正文的合成用例 JUnit，以及白名单中的数值性能和依赖审计收据；数据库、附件、凭据和原始业务内容不上传。
 
 主线目标规则为必须通过 `frontend`、`full`，合并前保持主线最新；管理员同样受约束，禁止强制推送和删除主线，变更通过 PR。单维护者仓库不要求不可自行完成的第二人批准；业务语义和安全审查仍需对应责任人完成，自动检查不代替业务批准。仓库规则以 GitHub 实际配置为准，生效与运行证据记入交接。
 

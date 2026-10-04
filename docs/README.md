@@ -14,6 +14,7 @@
 | 工作台变更、实际消费者与隔离回归 | [关键回归地图](agents/workbench-regression.md) |
 | 完整 CI、回归资产与扩展接入检查 | [持续质量保障](agents/continuous-quality.md) |
 | 新模块、数据规模与读取计算性能 | [性能预算](agents/performance-budget.md) |
+| 现役巡检、告警、备份与依赖持续复核 | [生产监测与持续巡检](agents/operations-monitoring.md) |
 | 架构与业务决策 | [ADR 目录](adr/) |
 | 数据安全与模块启用 | [安全审查目录](security/) |
 
