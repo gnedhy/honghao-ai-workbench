@@ -6,12 +6,26 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  # Event payloads are data, never interpolated into shell source.
+  QUALITY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
 jobs:
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - name: Resolve comparison baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$QUALITY_BASE_REF" =~ ^0+$ ]]; then
+            QUALITY_BASE_REF=origin/main
+          fi
+          git rev-parse --verify --end-of-options "$QUALITY_BASE_REF^{commit}"
+          echo "QUALITY_BASE_REF=$QUALITY_BASE_REF" >> "$GITHUB_ENV"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
@@ -22,5 +36,69 @@ jobs:
       - run: npm ci
       - run: uv sync --locked --group dev --python 3.12
       - run: npm exec -- playwright install --with-deps chromium
-      # Same local command. PostgreSQL remains an explicit local submission gate.
-      - run: npm run verify -- --scope frontend
+      - run: npm run verify -- --scope frontend --base-ref "$QUALITY_BASE_REF"
+  full:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+          # Disposable runner bootstrap only; no repository or production secret.
+          POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+          POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C
+        ports:
+          - 127.0.0.1:55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - name: Resolve comparison baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$QUALITY_BASE_REF" =~ ^0+$ ]]; then
+            QUALITY_BASE_REF=origin/main
+          fi
+          git rev-parse --verify --end-of-options "$QUALITY_BASE_REF^{commit}"
+          echo "QUALITY_BASE_REF=$QUALITY_BASE_REF" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: '0.11.11'
+      - run: npm ci
+      - run: uv sync --locked --group dev --python 3.12
+      - run: npm exec -- playwright install --with-deps chromium
+      - name: Install PostgreSQL 18 client tools
+        run: bash scripts/ci/install-postgres-client.sh
+      - name: Verify CI report boundaries
+        run: uv run --locked python -m unittest discover -s scripts/ci -p 'test_*.py'
+      - name: Prepare isolated PostgreSQL test roles
+        run: uv run --locked python scripts/ci/prepare-postgres.py
+        env:
+          CI_POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Complete quality gate
+        run: npm run verify -- --base-ref "$QUALITY_BASE_REF"
+      - name: Collect safe synthetic test reports
+        if: ${{ always() }}
+        run: uv run --locked python scripts/ci/collect-reports.py
+      - name: Retain synthetic test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: full-quality-results
+          path: |
+            ci-reports/api-results.xml
+            ci-reports/collection.json
+          retention-days: 14
+          if-no-files-found: error

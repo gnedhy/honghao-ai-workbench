@@ -34,6 +34,19 @@ test('dependency boundaries reject reverse imports, hidden type cycles and unapp
   assert.match(dependencyFindings(typeReverse, { ...policy, businessComponents: { 'src/components/SettingsDialog.tsx': {} } }).join('\n'), /shared control depends/);
   const cycle = { ...source, 'src/api.ts': "export * from './components/Input';", 'src/components/Input.tsx': "export * from '../api';" };
   assert.match(dependencyFindings(cycle, policy).join('\n'), /dependency cycle/);
+  const extended = {
+    'src/workbenches/FinanceWorkbench.tsx': "import { model } from './financeModel'; export const FinanceWorkbench = model;",
+    'src/workbenches/financeModel.ts': 'export const model = 1;',
+    'src/workbenches/SalesWorkbench.tsx': 'export const sales = 1;',
+  };
+  const extendedPolicy = { entries: ['src/workbenches/FinanceWorkbench.tsx', 'src/workbenches/SalesWorkbench.tsx'], businessComponents: {}, compatibility: [] };
+  assert.deepEqual(dependencyFindings(extended, extendedPolicy), [], 'registered new module keeps its internal boundary');
+  assert.match(dependencyFindings({ ...extended, 'src/workbenches/financeModel.ts': "import { sales } from './SalesWorkbench';" }, extendedPolicy).join('\n'), /unapproved internal import/, 'new module cannot silently consume another module internals');
+  const overlapping = {...extended, 'src/workbenches/SalesopsWorkbench.tsx': "import { model } from './salesopsModel'; export const SalesopsWorkbench = model;", 'src/workbenches/salesopsModel.ts': 'export const model = 1;'};
+  const overlappingPolicy = {...extendedPolicy, entries:[...extendedPolicy.entries,'src/workbenches/SalesopsWorkbench.tsx']};
+  assert.deepEqual(dependencyFindings(overlapping, overlappingPolicy), []);
+  assert.match(dependencyFindings({...overlapping,'src/workbenches/salesopsModel.ts': "import { sales } from './SalesWorkbench';"},overlappingPolicy).join('\n'), /unapproved internal import/);
+  assert.match(dependencyFindings({...overlapping,'src/workbenches/SalesWorkbench.tsx': "import { model } from './salesopsModel';"},overlappingPolicy).join('\n'), /unapproved internal import/);
 });
 
 test('the installed React checker rejects four controlled faults and accepts their correction', () => {

@@ -16,6 +16,8 @@
     "test:frontend": "node --test tests_ui/*.test.ts",
     "verify": "node scripts/verify.mjs",
     "check:frontend": "node scripts/check-frontend-quality.mjs",
+    "check:regression": "node scripts/check-regression-assets.mjs",
+    "check:extensions": "node scripts/check-workbench-contracts.mjs",
     "test:browser": "node scripts/check-workbench-loading.mjs && node scripts/check-client-ids.mjs && node scripts/check-sales-baseline.mjs --scenario all"
   },
   "dependencies": {

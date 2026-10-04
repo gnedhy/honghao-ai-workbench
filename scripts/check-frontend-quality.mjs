@@ -16,7 +16,10 @@ export function walk(node, visit) {
 }
 
 const ast = (file, text) => parseAst(text, { lang: file.endsWith('.tsx') ? 'tsx' : 'ts' }, file);
-const group = file => path.posix.basename(file).match(/^(procurement|research|sales)/i)?.[1].toLowerCase();
+const group = (file, policy) => {
+  const name = path.posix.basename(file).toLowerCase();
+  return policy.entries.map(entry => path.posix.basename(entry).replace(/Workbench\.tsx$/, '').toLowerCase()).sort((a, b) => b.length - a.length).find(prefix => name.startsWith(prefix));
+};
 
 export function dependencyFindings(sources, policy) {
   const findings = [], graph = new Map();
@@ -44,7 +47,7 @@ export function dependencyFindings(sources, policy) {
         findings.push(`${file}: shared control depends on business implementation ${target}`);
       }
       if (target.startsWith('src/workbenches/')) {
-        const sameModule = group(file) && group(file) === group(target) && file.startsWith('src/workbenches/');
+        const sameModule = group(file, policy) && group(file, policy) === group(target, policy) && file.startsWith('src/workbenches/');
         const entry = file === 'src/workbenches/WorkbenchModuleSlot.tsx' && policy.entries.includes(target);
         const shell = file === 'src/screens/WorkbenchScreen.tsx' && target === 'src/workbenches/WorkbenchModuleSlot.tsx' && names.every(name => name === 'WorkbenchModuleSlot');
         const exception = policy.compatibility.find(row => row.from === file && row.to === target && names.every(name => row.symbols.includes(name)));
