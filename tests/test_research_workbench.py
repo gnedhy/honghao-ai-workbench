@@ -795,3 +795,37 @@ def test_concurrent_saves_keep_single_revision_and_reviewable_draft(ready):
     assert detail['draft']['simulation_token'] == receipt['simulation_token']
     assert detail['draft']['simulation']['latest'] == trial['latest']
     assert records(store.url) == before
+
+
+def test_purchase_history_projects_period_dates_without_rewriting_frozen_records(ready, tmp_path):
+    settings, client, _, store = ready
+    for date, price in [('2026-09-14', 33), ('2026-09-21', 36), ('2026-09-28', 35)]:
+        update = import_prices(client, date, [('A', price)])
+        confirm_risks(client, update)
+        assert publish(client, update).status_code == 200
+        store.process_events()
+    original = records(store.url)
+    expected = ['2026-09-28', '2026-09-21', '2026-09-14']
+    assert [row['effective_date'] for row in store.detail(K)['history'][:3]] == expected
+    assert [row['effective_date'] for row in store.history()['versions'] if row['reason'] == '采购正式价格更新'] == expected
+    # Older events did not freeze the purchase period; recover only from verified snapshots.
+    with transaction(store.url, write=True) as db:
+        db.execute("UPDATE research_events SET inputs=(inputs::jsonb-'purchase_period')::text WHERE reason='采购正式价格更新'")
+    assert [row['effective_date'] for row in store.detail(K)['history'][:3]] == expected
+    assert records(store.url) == original
+    # A timestamp alone is not proof of a period: unmatched frozen input must not be relabeled.
+    with transaction(store.url, write=True) as db:
+        latest_event = db.execute("SELECT id,inputs FROM research_events WHERE reason='采购正式价格更新' ORDER BY _order DESC LIMIT 1").fetchone()
+        inputs = json.loads(latest_event[1])
+        inputs['prices']['A']['latest_price'] = '999'
+        db.execute('UPDATE research_events SET inputs=%s WHERE id=%s', (json.dumps(inputs), latest_event[0]))
+    unmatched = store.detail(K)['history'][0]
+    assert unmatched['effective_date'] == unmatched['recorded_at'][:10]
+    with transaction(store.url, write=True) as db:
+        db.execute('UPDATE research_events SET inputs=%s WHERE id=%s', (latest_event[1], latest_event[0]))
+    # Inventory updates keep their actual event date, even when the purchase period is older.
+    update_stock(ready, tmp_path, 'A', 11)
+    store.process_events()
+    latest = store.detail(K)['history'][0]
+    assert latest['effective_date'] == latest['recorded_at'][:10]
+    assert records(store.url)[:len(original)] == original

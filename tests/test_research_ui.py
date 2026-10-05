@@ -17,6 +17,16 @@ from tests.test_procurement_rd5 import data, trial_data
 from tests.test_research_workbench import ready, records, K, RH
 
 
+def test_browser_dashboard_history_and_price_movements():
+    result = subprocess.run(['node', 'scripts/check-workbench-loading.mjs'], capture_output=True, text=True,
+                            encoding='utf-8', timeout=90)
+    assert result.returncode == 0, result.stderr
+    assert 'PASS sales-hot-product-existing-drawer' in result.stdout
+    assert 'PASS research-history-periods-and-material-price-arrows' in result.stdout
+    assert 'PASS research-material-drilldown-return-history-and-focus' in result.stdout
+    assert 'PASS research-reference-back-in-drawer-header' in result.stdout
+
+
 def test_browser_research_edit_and_read_lifecycle(ready):
     settings, client, _, store = ready
     settings.workbench_modes['sales'] = 'active'

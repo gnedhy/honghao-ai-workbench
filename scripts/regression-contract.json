@@ -501,7 +501,9 @@
     "tests/test_workbenches.py::test_production_workbench_activation_requires_and_records_reviews",
     "tests/test_workbenches.py::test_production_rejects_unreviewed_active_workbench_history",
     "tests/test_workbenches.py::test_core_schema_ignores_additive_workbench_tables",
-    "tests/test_performance_budget.py::test_critical_store_performance"
+    "tests/test_performance_budget.py::test_critical_store_performance",
+    "tests/test_research_workbench.py::test_purchase_history_projects_period_dates_without_rewriting_frozen_records",
+    "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
   ],
   "frontend": [
     {
@@ -545,7 +547,8 @@
         "正式记录仅含变化产品时，比较上一期仍有效的成本",
         "双成本差异按金额绝对值排列，保留正负方向及稳定内编顺序",
         "缺价和未完成的成本不参与，明确零成本有效，先四舍五入两位再比较",
-        "金额按十进制四舍五入到分，区间百分比及差额使用相同金额"
+        "金额按十进制四舍五入到分，区间百分比及差额使用相同金额",
+        "投料单价比较沿对应成本口径追到最后变化基准，不把同价库存更新当新基准"
       ]
     },
     {
@@ -646,7 +649,11 @@
         "loading -> failure: distribution",
         "research trend: pending distinct from empty",
         "sales: pending -> failure -> retry -> empty",
-        "calculator: history pending/failure/retry/empty; evaluation failure and out-of-order responses"
+        "calculator: history pending/failure/retry/empty; evaluation failure and out-of-order responses",
+        "sales-hot-product-existing-drawer",
+        "research-history-periods-and-material-price-arrows",
+        "research-material-drilldown-return-history-and-focus",
+        "research-reference-back-in-drawer-header"
       ]
     },
     {

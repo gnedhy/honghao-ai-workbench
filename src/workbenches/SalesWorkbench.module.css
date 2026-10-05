@@ -188,12 +188,12 @@
 .root[data-preview="true"] .dashboardGrid { grid-template-columns:minmax(0,1fr); margin-top:24px; }
 .root[data-preview="true"] .trendPanel > div:first-child { flex-wrap:wrap; }
 .root[data-preview="true"] .rankList > div { min-height:68px; }
-.root[data-preview="true"] .rankList > div > span { display:flex; flex:1; align-items:baseline; justify-content:space-between; gap:12px; min-width:0; }
+.root[data-preview="true"] .rankList > div > span, .root[data-preview="true"] .rankList button > span { display:flex; flex:1; align-items:baseline; justify-content:space-between; gap:12px; min-width:0; }
 .root[data-preview="true"] .rankList small { text-align:right; }
 .rankList,.dashboardList { margin-top:10px; border-top:1px solid var(--border); }
 .rankList > div { display:flex; min-height:58px; align-items:center; gap:12px; border-bottom:1px solid var(--border); }
 .rankList > div > b { display:grid; width:24px; height:24px; place-items:center; border-radius:50%; background:#f1f3f4; color:#68747b; font-size:calc(10px + var(--ui-font-offset)); }
-.rankList > div > span { display:grid; gap:4px; }
+.rankList > div > span, .rankList button > span { display:grid; gap:4px; }
 .rankList strong,.dashboardList strong { color:var(--text); font-size:calc(12px + var(--ui-font-offset)); font-weight:610; }
 .rankList small,.dashboardList small { color:#7c878f; font-size:calc(10px + var(--ui-font-offset)); }
 .dashboardList > button { display:flex; width:100%; min-height:58px; align-items:center; gap:10px; border:0; border-bottom:1px solid var(--border); background:transparent; color:var(--text); text-align:left; cursor:pointer; }
@@ -355,7 +355,7 @@
  .quoteOverview > .statusTag { justify-self:start; }
 }
 @media (max-width:600px) {
- .root[data-preview="true"] .rankList > div > span { display:grid; gap:4px; }
+ .root[data-preview="true"] .rankList > div > span, .root[data-preview="true"] .rankList button > span { display:grid; gap:4px; }
  .root[data-preview="true"] .rankList small { text-align:left; }
  .historyDateMenu > div { left:auto; right:0; }
  .productDrawer > header,.quoteDrawer > header { flex-wrap:nowrap; }

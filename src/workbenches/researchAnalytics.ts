@@ -17,7 +17,7 @@ export function priceChange(current: string | null, previous: string | null): nu
 
 // History compares adjacent periods; the ledger keeps its last-price-movement comparison.
 export function compareCostPeriods<T extends { record_type?: string; purchase_version?: number; products: { id: string; latest_cost: string | null }[] }>(versions: T[]) {
-  let costVersion = Math.max(0, ...versions.map(version => version.purchase_version ?? 0));
+  let costVersion = Math.max(0, ...versions.filter(version => version.record_type === "backfill").map(version => version.purchase_version ?? 0));
   const previous = new Map<string, string | null>();
   return [...versions].reverse().map(version => {
     return { ...version, cost_version: version.record_type === "backfill" ? version.purchase_version : ++costVersion, products: version.products.map(row => {
@@ -28,6 +28,25 @@ export function compareCostPeriods<T extends { record_type?: string; purchase_ve
       return { ...(row as T["products"][number]), period_change: { direction, percent: direction === "stable" ? 0 : priceChange(row.latest_cost, before ?? null), reason } };
     }) };
   }).reverse();
+}
+
+export function costComparisonRecord<T extends { latest_cost: string | null; inventory_cost: string | null }>(history: T[], index: number, policy: "latest" | "inventory") {
+  const current = priceCents(history[index]?.[`${policy}_cost`]);
+  if (current == null) return undefined;
+  for (const previous of history.slice(index + 1)) {
+    const value = priceCents(previous[`${policy}_cost`]);
+    if (value == null) return undefined;
+    if (value !== current) return previous;
+  }
+  return undefined;
+}
+
+export function linePriceMovement(line: { kind: string; ref: string; quantity: string; unit_cost: string | null }, previous: { kind: string; ref: string; quantity: string; unit_cost: string | null }[] | undefined) {
+  if (!(Number(line.quantity) > 0)) return null;
+  const before = previous?.find(item => item.kind === line.kind && item.ref === line.ref && Number(item.quantity) > 0);
+  const current = priceCents(line.unit_cost), prior = priceCents(before?.unit_cost);
+  if (current == null || prior == null || current === prior) return null;
+  return { direction: current > prior ? "up" as const : "down" as const, current: line.unit_cost!, previous: before!.unit_cost! };
 }
 
 export function rankCostGaps<T extends { name: string; status: string; latest_cost: string | null; inventory_cost: string | null }>(products: T[], direction: CostGapDirection) {

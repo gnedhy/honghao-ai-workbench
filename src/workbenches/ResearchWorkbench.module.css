@@ -245,3 +245,6 @@ dialog:has(> .reasonFields) { width: min(480px, calc(100vw - 32px)); max-height:
 .reasonOptions button[aria-pressed="true"] { border-color: #555; background: #f2f3f4; color: var(--text); }
 
 @media (max-width: 600px) { .linkHelp [role="tooltip"] { left: -72px; right: auto; } }
+.linePriceMovement { display: inline-flex; margin-left: 4px; vertical-align: middle; }
+.linePriceMovement[data-direction="up"] { color: #b42318; }
+.linePriceMovement[data-direction="down"] { color: #187764; }

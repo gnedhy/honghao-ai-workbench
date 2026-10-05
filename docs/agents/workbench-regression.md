@@ -12,6 +12,8 @@ W6 原料公开只读入口为 `ProcurementMaterialView.tsx`，采购写入在 `
 
 W7 研发维护入口为 `researchData.ts`（根读取）、`ResearchProductDrawer.tsx`（身份与详情）、`researchEditSession.ts`（填写、草稿、试算和写动作）、`ResearchFormulaEditor.tsx`（原编辑界面）及 `ResearchProductView.tsx`／`researchModel.ts`（原展示与类型）。`tests/test_research_ui.py` 启动 `scripts/check-research.mjs`，核对 18 个真实场景、冻结历史前缀和销售表指纹；完整／研发／采购范围自动收集。fixture 注入随机 API、合成账号，测试工作线程调用原事件处理验证采购→研发→销售；组合 Host 切页走共享退出契约，不宣称完整 App 覆盖。`W7_RED=1` 仅用于本机原组件复现，统一 verifier 清除该变量；正式门禁总是当前候选。
 
+投料原料穿透在 `ResearchProductView.tsx` 注入研发只读请求，复用 `ReadOnlyMaterialDrawer` 和原生子 `Drawer`。`scripts/check-workbench-loading.mjs` 中的 `research-material-drilldown-return-history-and-focus` 覆盖当前／冻结历史入口、仅当前层及单层遮罩可见、返回／关闭／Esc、逐帧滑出与返回滑入且不叠层、口径／展开／滚动／焦点保留、失败重试及缺失关联，接入 `tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements`。共用详情变更继续选择采购范围，覆盖 W6 原料消费者及 W7 研发会话，不用模拟场景代替实库权限证明。
+
 W8 的 `tests/test_app_ui.py` 通过 `scripts/check-app.mjs` 挂载实际 App 与登录 Root，覆盖静态注册、反馈全生命周期、身份、状态失败及上述四种真实编辑器的公共退出。隔离示例只由该测试 Vite 注入，不进入正式导航。导入检查与确认请求分别验证 busy；启用对话框使用合成待启用 overview，写请求在 API 前返回故障，不代表真实启用事务验证。同 ID 撤权场景仅刷新 currentUser props 并核对前端缓存入口隐藏，不作为服务端会话撤销或授权写入证明。Modal 覆盖下通过 DOM 触发现有 App 回调，只证明契约接线；原生关闭、Escape、刷新提示按实际浏览器操作检查。`W8_RED` 仅复现保存的原源码，JUnit 包装器拒绝该模式，统一 verifier 清除它。
 
 | 变更／业务不变量 | 实际消费者与入口 | 复用用例／命令 |
