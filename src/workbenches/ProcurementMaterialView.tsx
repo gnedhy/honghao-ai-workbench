@@ -4,6 +4,7 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import { PriceMovement as Movement } from "../components/PriceMovement";
 import { WorkbenchLoading } from "../components/WorkbenchLayout";
 import { useExitTransition } from "../components/Interaction";
+import { Drawer } from "../components/Drawer";
 import type { ProcurementBatchDetail, ProcurementMaterial, ProcurementUpdate, ResearchMaterialDetail } from "../types";
 import styles from "../components/WorkbenchSurface.module.css";
 
@@ -97,30 +98,32 @@ export function MaterialPriceBody({detail,batches,notice}: {detail: ResearchMate
 }
 
 // The caller supplies its authorized read endpoint; this module has no write API.
-export function ReadOnlyMaterialDrawer({batches,materialId,loadMaterial,refreshEveryMs,onClose}: {
+export function ReadOnlyMaterialDrawer({batches,materialId,loadMaterial,refreshEveryMs,onClose,backLabel,notice}: {
   batches: Batches; materialId: string; loadMaterial: (id: string,signal?: AbortSignal)=>Promise<ResearchMaterialDetail>;
-  refreshEveryMs?: number; onClose: ()=>void;
+  refreshEveryMs?: number; onClose: ()=>void; backLabel?: string; notice?: React.ReactNode;
 }) {
   const [detail,setDetail]=useState<ResearchMaterialDetail|null>(null);
-  const [failed,setFailed]=useState(false);
+  const [failed,setFailed]=useState("");
   const [retry,setRetry]=useState(0);
   const {closing,close}=useExitTransition(onClose);
   useEffect(()=>{
     const controller=new AbortController(); let pending=false;
-    setDetail(value=>value?.material.id===materialId?value:null); setFailed(false);
+    setDetail(value=>value?.material.id===materialId || value?.material.code===materialId ? value : null); setFailed("");
     const load=async()=>{
       if(pending)return; pending=true;
-      try { const value=await loadMaterial(materialId,controller.signal); if(!controller.signal.aborted){setDetail(value);setFailed(false);} }
-      catch {if(!controller.signal.aborted)setFailed(true);}
+      try { const value=await loadMaterial(materialId,controller.signal); if(!controller.signal.aborted){setDetail(value);setFailed("");} }
+      catch(error) {if(!controller.signal.aborted)setFailed(error instanceof Error ? error.message : "原料详情读取失败");}
       finally {pending=false;}
     };
     void load(); const timer=refreshEveryMs?window.setInterval(()=>void load(),refreshEveryMs):null;
     return ()=>{controller.abort();if(timer!==null)clearInterval(timer);};
   },[materialId,loadMaterial,refreshEveryMs,retry]);
+  const body = !detail ? failed ? <div className={styles.drawerLoading}><span><strong>原料详情暂时不可用</strong><p role="alert">{failed}</p><button className="secondary-button" type="button" onClick={()=>setRetry(value=>value+1)}>重新加载</button></span></div> : <WorkbenchLoading local title="正在读取原料详情"/> : <MaterialPriceBody detail={detail} batches={batches} notice={<>{notice}{failed&&<p role="alert" className={styles.error}>价格更新失败，当前显示上次读取的内容。<button type="button" onClick={()=>setRetry(value=>value+1)}>重试</button></p>}</>}/>;
+  if(backLabel) return <Drawer title={detail?.material.code ?? materialId} label="原料详情" onClose={onClose} backLabel={backLabel} closeLabel="关闭原料详情" bodyClassName={styles.materialDrawerBody}>{body}</Drawer>;
   return <div inert={closing} className={`${styles.drawerLayer} ${closing?styles.closing:""}`} role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)close();}} onKeyDown={event=>recordDialogKeys(event)}>
     <aside className={styles.drawer} role="dialog" aria-modal="true" aria-label="原料价格详情">
       <header className={styles.drawerHeader}><div><span>原料详情</span><h2>{detail?detail.material.code:"正在读取"}</h2></div><div className={styles.drawerHeaderActions}><button className="icon-button" type="button" aria-label="关闭详情" ref={focusWithoutScroll} onClick={close}><X size={17}/></button></div></header>
-      {!detail?failed?<div className={styles.drawerLoading}><span><strong>原料详情暂时不可用</strong><button className="secondary-button" type="button" onClick={()=>setRetry(value=>value+1)}>重新加载</button></span></div>:<WorkbenchLoading local title="正在读取原料详情"/>:<MaterialPriceBody detail={detail} batches={batches} notice={failed&&<p role="alert" className={styles.error}>价格更新失败，当前显示上次读取的内容。<button type="button" onClick={()=>setRetry(value=>value+1)}>重试</button></p>}/>}
+      {body}
     </aside>
   </div>;
 }

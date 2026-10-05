@@ -1,6 +1,7 @@
 """Frozen purchase-version replay, kept separate from real research events."""
 import json
 from copy import deepcopy
+from decimal import Decimal
 
 
 def backfill(db):
@@ -57,13 +58,41 @@ def backfill(db):
     return {'status':'created','versions':len(batches)}
 
 
-def linked_history(db, key):
+def purchase_periods(db):
+    """Read-only recovery for legacy events; validate their frozen prices before assigning a period."""
+    periods = {}
+    rows = db.execute("""
+        SELECT e.id,e.inputs::jsonb->'purchase_period',e.inputs::jsonb->'prices',b.id,b.version,b.price_date,
+               (SELECT json_object_agg(code,latest_price) FROM procurement_price_batch_items WHERE batch_id=b.id)
+        FROM research_events e LEFT JOIN LATERAL (
+            SELECT id,version,price_date FROM procurement_price_batches
+            WHERE published_at::timestamptz <= e.recorded_at::timestamptz
+            ORDER BY version DESC LIMIT 1
+        ) b ON true WHERE e.reason='采购正式价格更新'
+    """).fetchall()
+    for event_id, frozen_period, prices, batch_id, version, price_date, snapshot in rows:
+        if frozen_period and frozen_period.get('price_date'):
+            periods[event_id] = frozen_period
+        elif batch_id and snapshot and prices and all(
+                (value.get('latest_price') is None and snapshot.get(code) is None) or
+                (value.get('latest_price') is not None and snapshot.get(code) is not None and
+                 Decimal(value['latest_price']) == Decimal(snapshot[code]))
+                for code, value in prices.items()):
+            periods[event_id] = {'id': batch_id, 'version': version, 'price_date': price_date}
+    return periods
+
+
+def linked_history(db, key, periods=None):
     """Project comparisons without ever editing original payloads or their signatures."""
     from api.research import comparison, comparison_price
+    periods = purchase_periods(db) if periods is None else periods
     entries = [json.loads(raw) for raw, in db.execute('SELECT payload FROM research_backfill_records WHERE product_id=%s ORDER BY purchase_version',(key,))]
     for raw, in db.execute('SELECT payload FROM research_cost_records WHERE product_id=%s ORDER BY sequence',(key,)):
         row=json.loads(raw)
         row.update(record_type='formal',effective_date=row['recorded_at'][:10],product_id=key)
+        period = periods.get(row['event_id'])
+        if period and period.get('price_date'):
+            row.update(effective_date=period['price_date'], purchase_version=period['version'])
         entries.append(row)
     previous = None
     basis = None
@@ -83,9 +112,10 @@ def linked_history(db, key):
 
 def version_history(db, event_id=None):
     versions = {}
+    periods = purchase_periods(db)
     keys = [r[0] for r in db.execute("SELECT DISTINCT product_id FROM research_cost_records UNION SELECT DISTINCT product_id FROM research_backfill_records ORDER BY product_id")]
     for key in keys:
-        for row in linked_history(db,key):
+        for row in linked_history(db,key,periods):
             if row['kind'] != 'recipe' or (event_id and row['event_id']!=event_id):
                 continue
             eid=row['event_id']

@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "产品当前投料与冻结历史投料的原料编号可打开复用的只读原料详情；返回、关闭和 Esc 回到原配方，保留口径、展开状态、焦点及滚动位置。 系统更新日志补记同日已发布的五项用户可见变化。",
+  "modules": [
+    "research",
+    "procurement",
+    "sales"
+  ],
+  "files": [
+    "src/components/Drawer.tsx",
+    "src/components/WorkbenchSurface.module.css",
+    "src/workbenches/ProcurementMaterialView.tsx",
+    "src/workbenches/ResearchProductView.tsx",
+    "src/workbenches/ResearchProductDrawer.tsx",
+    "src/components/SettingsDialog.tsx"
+  ],
+  "consumers": [
+    "src/workbenches/ResearchProductDrawer.tsx",
+    "src/workbenches/ResearchWorkbench.tsx",
+    "src/workbenches/ResearchMaterialPrices.tsx",
+    "src/workbenches/ProcurementWorkbench.tsx",
+    "src/workbenches/SalesWorkbench.tsx",
+    "src/components/SettingsDialog.tsx",
+    "src/App.tsx"
+  ],
+  "permissions": "只调用研发已有原料目录及详情 GET，沿用研发查看权限；不调用采购写 API或增加授权。",
+  "data": "从投料引用编码严格匹配当前目录中的原料 ID；没有对应项时显示不可用原因，不猜测映射。不更改价格、配方、成本、冻结记录或数据库结构。",
+  "lifecycle": "原料详情在原生子 modal 内读取并按已有十秒间隔刷新；取消时中断请求及计时器。父抽屉持续挂载以保留状态，但进入下层时隐藏上层抽屉和遮罩，任一时刻只显示当前层；当前价格与冻结核算单价分别说明。配方删除、停用及编辑忙碌期间禁止当前和历史投料导航。",
+  "exits": "返回箭头、关闭按钮、遮罩及 Esc 使用现有共享退出流程，仅关闭原料层；退出下层先完成滑出，再按既有抽屉时长滑入上层；引用配方按产品身份挂载，进入和返回均滑入，不因异步标题加载重复播放。减少动态效果时取消位移。其口径、展开状态、滚动位置及原入口焦点保留。",
+  "compatibility": "原料页和采购看板继续使用原有只读入口；引用配方与复配原料沿用已有配方穿透。共享 Drawer 未提供返回文案时行为与结构不变。 SettingsDialog 仅追加日志日期与文字；设置状态、权限、请求和历史条目不变，日志在实际正式关于页面核验。",
+  "recovery": "恢复此前前端即可回退，没有迁移或业务数据写入；本轮正式替换需当前有效授权。",
+  "verification": {
+    "api": [
+      "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements",
+      "tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle",
+      "tests/test_app_ui.py::test_browser_app_static_entry_and_feedback"
+    ],
+    "node": [],
+    "browser": [
+      {
+        "file": "scripts/check-workbench-loading.mjs",
+        "id": "research-reference-back-in-drawer-header",
+        "apiTest": "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+      },
+      {
+        "file": "scripts/check-workbench-loading.mjs",
+        "id": "research-material-drilldown-return-history-and-focus",
+        "apiTest": "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+      },
+      {
+        "file": "scripts/check-app.mjs",
+        "id": "settings-account-toggle-keeps-unsaved-permissions",
+        "apiTest": "tests/test_app_ui.py::test_browser_app_static_entry_and_feedback"
+      }
+    ]
+  }
+}

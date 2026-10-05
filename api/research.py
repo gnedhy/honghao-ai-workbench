@@ -40,13 +40,14 @@ def capture(db):
     package = {k:package[k] for k in ("materials", "default_composite", "source_sha256", "source_filename") if k in package}
     package["recipes"] = [json.loads(r[0]) for r in db.execute("SELECT formula FROM research_formulas WHERE lifecycle='active' ORDER BY position")]
     package["current_policy"] = {"material_replacements": {"CF020C": "CF020D"}}
-    batch = db.execute("SELECT id FROM procurement_price_batches ORDER BY version DESC LIMIT 1").fetchone()
+    batch = db.execute("SELECT id,version,price_date FROM procurement_price_batches ORDER BY version DESC LIMIT 1").fetchone()
     prices = {r[0]: {"latest_price": r[1], "inventory_price": r[2]} for r in db.execute("""
         SELECT m.code,b.latest_price,i.price FROM procurement_materials m
         LEFT JOIN procurement_price_batch_items b ON b.material_id=m.id AND b.batch_id=%s
         LEFT JOIN procurement_inventory i ON i.material_id=m.id WHERE m.archived_at IS NULL
         """, (batch[0] if batch else None,))}
-    return {"package": package, "prices": prices}
+    return {"package": package, "prices": prices,
+            "purchase_period": None if batch is None else {"id": batch[0], "version": batch[1], "price_date": batch[2]}}
 
 
 def enqueue(db, reason):
@@ -195,19 +196,24 @@ class ResearchStore:
                 for name, kind in (("recipes", "recipe"), ("composites", "composite"))}}
 
     def _rows(self, db):
+        from api.research_history import purchase_periods
+        periods = purchase_periods(db)
+        records = {key: raw for key, raw in db.execute("""SELECT DISTINCT ON (product_id) product_id,payload
+            FROM research_cost_records WHERE product_id IN (SELECT id FROM research_formulas WHERE lifecycle='active')
+            ORDER BY product_id,sequence DESC""")}
         rows = []
         pending = db.execute("SELECT status FROM research_events WHERE status!='done' ORDER BY _order LIMIT 1").fetchone()
         for formula_raw, has_draft in db.execute("SELECT f.formula,EXISTS(SELECT 1 FROM research_drafts d WHERE d.id=f.id) FROM research_formulas f WHERE f.lifecycle='active' ORDER BY f.position"):
             formula = json.loads(formula_raw)
             if formula["kind"] != "recipe":
                 continue
-            record = db.execute("SELECT payload FROM research_cost_records WHERE product_id=%s ORDER BY sequence DESC LIMIT 1", (formula["id"],)).fetchone()
-            payload = json.loads(record[0]) if record else dict(formula, latest_cost=None,inventory_cost=None,change={"percent":None,"reason":"首次核算中"},missing_materials=[])
+            record = records.get(formula["id"])
+            payload = json.loads(record) if record else dict(formula, latest_cost=None,inventory_cost=None,change={"percent":None,"reason":"首次核算中"},missing_materials=[])
             payload["cost_details"] = {p: {k:payload.get(p, {}).get(k) for k in ("cost_source", "auto_cost", "difference")} for p in ("latest", "inventory")}
             for key in ("graph", "calculations", "formula", "latest", "inventory"):
                 payload.pop(key, None)
             payload.update(has_draft=bool(has_draft), revision=formula["revision"])
-            linked = self._linked_history(db, formula['id'])
+            linked = self._linked_history(db, formula['id'], periods)
             if linked:
                 payload.update(change=linked[0]['change'],comparison_basis=linked[0].get('comparison_basis'),
                                includes_backfill=any(r['record_type']=='backfill' for r in linked))
@@ -299,9 +305,9 @@ class ResearchStore:
         with transaction(self.url, write=True) as db:
             return backfill(db)
 
-    def _linked_history(self, db, key):
+    def _linked_history(self, db, key, periods=None):
         from api.research_history import linked_history
-        return linked_history(db,key)
+        return linked_history(db,key,periods)
 
     def formulas(self):
         with transaction(self.url) as db:

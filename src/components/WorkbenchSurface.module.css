@@ -930,9 +930,18 @@ dialog.importPanel { position: fixed; inset: 0; margin: auto; padding: 0; width:
 .grantBadge[data-status="invalid"] { color: #965619; background: #fff3e3; }
 
 .drawerDialog { position: fixed; inset: 0 0 0 auto; max-width: 100%; height: 100dvh; max-height: 100dvh; margin: 0; padding: 0; border: 0; border-left: 1px solid var(--border); color: var(--text); }
-.drawerDialog[open] { display: flex; flex-direction: column; }
+.drawerDialog[open] { display: flex; flex-direction: column; visibility: visible; }
+.drawerDialog:has(.drawerDialog[open]), .drawerDialog:has(.drawerDialog[open])::backdrop { visibility: hidden; }
+.drawerDialog:has(.drawerDialog[open]) { transform: translateX(100%); transition: none; }
+.drawerDialog:has(.drawerDialog[open])::backdrop { opacity: 0; transition: none; }
+@media (prefers-reduced-motion: reduce) { .drawerDialog:has(.drawerDialog[open]) { transform: none; } }
 .drawerTitle { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .drawerTitle h2 { white-space: normal; overflow-wrap: anywhere; }
+.drawerHeadingWithBack { display: flex; align-items: center; gap: 10px; }
+.drawerHeadingWithBack > div { min-width: 0; }
+.drawerHeader:has(> .drawerHeadingWithBack) { flex-wrap: nowrap; }
+.drawerHeader > .drawerHeadingWithBack:first-child { flex: 1 1 auto; }
+.materialDrawerBody { padding: 0; }
 
 .loadingSpinner { animation: workbenchSpin 1s linear infinite; }
 @keyframes workbenchSpin { to { transform: rotate(360deg); } }

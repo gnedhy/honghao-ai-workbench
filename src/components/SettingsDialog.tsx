@@ -366,6 +366,15 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
     </div>
     <h3 className="settings-section-label">更新日志</h3>
     <ol className="settings-timeline" tabIndex={0} aria-label="更新日志"><li>
+      <div className="changelog-date"><time dateTime="2026-10-05">2026年10月5日</time></div>
+      <div className="settings-timeline-content">
+        <div><strong>热门报价产品查看</strong><p>悬停或聚焦热门产品时显示进入箭头，点击可直接查看已有的产品报价与成本详情。</p></div>
+        <div><strong>成本历史日期与期数</strong><p>采购价格更新按所属行情日期和采购期号显示，库存与配方调整保留实际发生日期。各次成本记录完整保留，可查看对应投料和取价依据。</p></div>
+        <div><strong>投料价格变化</strong><p>投料核算单价上涨显示红色向上箭头，下降显示绿色向下箭头，可悬停查看前后单价。最新优先与库存优先分别按各自口径对比。</p></div>
+        <div><strong>原料详情穿透</strong><p>当前和历史投料中的原料编号可直接打开原料详情，查看当前价格、价格走势和历史版本。历史核算单价与当前原料价格分开说明。</p></div>
+        <div><strong>抽屉层级与返回</strong><p>详情按操作层级一次显示一个抽屉，标题左侧可返回上层，保留原来的取价口径、历史展开和滚动位置。补齐关闭与切换动效，并适配减少动态效果设置。</p></div>
+      </div>
+    </li><li>
       <div className="changelog-date"><time dateTime="2026-10-03">2026年10月3日</time></div>
       <div className="settings-timeline-content">
         <div><strong>销售保存与历史报价</strong><p>在当前报价明细内，保存中断后保留已完成的进度和填写内容，重试继续处理原报价。部分采用后可继续保存未采用项目；重开历史报价仍保留原成本依据，更新成本前需明确确认。</p></div>

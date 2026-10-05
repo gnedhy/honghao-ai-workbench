@@ -33,6 +33,14 @@
   },
   "compatibility": [
     {
+      "from": "src/workbenches/ResearchProductView.tsx",
+      "to": "src/workbenches/ProcurementMaterialView.tsx",
+      "symbols": ["ReadOnlyMaterialDrawer"],
+      "reason": "投料穿透复用原料只读详情；研发注入自己的只读接口，历史成本保持冻结",
+      "maintainer": "采购展示与研发展示维护者",
+      "removeWhen": "原料只读详情契约变更时回归采购、研发原料页和投料穿透"
+    },
+    {
       "from": "src/workbenches/ResearchMaterialPrices.tsx",
       "to": "src/workbenches/ProcurementMaterialView.tsx",
       "symbols": [

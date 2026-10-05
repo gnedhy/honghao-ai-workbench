@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "热门报价产品复用已有详情抽屉；采购重算历史按核验后的行情日期与采购期号展示；投料明细显示对应成本口径的单价升降。区间涨跌排行公式保持原样。",
+  "modules": [
+    "research",
+    "sales"
+  ],
+  "files": [
+    "api/research.py",
+    "api/research_history.py",
+    "src/workbenches/researchAnalytics.ts",
+    "src/workbenches/ResearchProductView.tsx",
+    "src/workbenches/ResearchProductDrawer.tsx",
+    "src/workbenches/ResearchWorkbench.module.css",
+    "src/workbenches/SalesWorkbench.tsx",
+    "src/workbenches/SalesWorkbench.module.css",
+    "src/workbenches/researchModel.ts"
+  ],
+  "consumers": [
+    "src/workbenches/ResearchWorkbench.tsx",
+    "src/workbenches/ResearchProductDrawer.tsx",
+    "src/workbenches/ResearchProductView.tsx",
+    "src/workbenches/SalesWorkbench.tsx"
+  ],
+  "permissions": "沿用研发与销售的查看、编辑及启用权限；新增点击入口不增加写权限。",
+  "data": "后续冻结输入补采购期元数据；旧采购事件仅在发布时点与冻结最新价格逐项匹配后投影行情日期。库存及配方事件保留真实事件日期；不改写冻结 payload、signature、录入时间、成本或业务表，不新增迁移。",
+  "lifecycle": "复用现有销售产品详情状态与研发读取生命周期。原料箭头按最新或库存口径追到上次不同成本，缺价中断；匹配投料引用及有效数量，不将新引用、零投料、同价或纯配方调整当作价格涨跌。",
+  "exits": "沿用已有 Drawer 的遮罩、Esc、焦点恢复与未保存及忙碌保护；不创建新的编辑会话。",
+  "compatibility": "老事件缺采购元数据时只读核验采购快照，无法匹配时不猜测期号。采购期号不替代独立成本版本编号。保留所有正式及回算记录和既有区间排行算法。",
+  "recovery": "代码回退保留所有合法业务写入；新增冻结输入字段为兼容扩展，旧代码可忽略，无数据库迁移或清理。正式替换另按项目当前授权执行。",
+  "verification": {
+    "api": [
+      "tests/test_research_workbench.py::test_purchase_history_projects_period_dates_without_rewriting_frozen_records",
+      "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+    ],
+    "node": [
+      {
+        "file": "tests_ui/researchAnalytics.test.ts",
+        "id": "投料单价比较沿对应成本口径追到最后变化基准，不把同价库存更新当新基准"
+      }
+    ],
+    "browser": [
+      {
+        "file": "scripts/check-workbench-loading.mjs",
+        "id": "sales-hot-product-existing-drawer",
+        "apiTest": "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+      },
+      {
+        "file": "scripts/check-workbench-loading.mjs",
+        "id": "research-history-periods-and-material-price-arrows",
+        "apiTest": "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+      }
+    ]
+  }
+}
