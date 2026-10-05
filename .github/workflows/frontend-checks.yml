@@ -85,6 +85,8 @@ jobs:
         run: bash scripts/ci/install-postgres-client.sh
       - name: Verify CI report boundaries
         run: uv run --locked python -m unittest discover -s scripts/ci -p 'test_*.py'
+      - name: Verify H01 probe guards without credentials or API calls
+        run: uv run --locked python scripts/check-codex-h01.py --self-test
       - name: Audit locked dependencies
         run: uv run --locked python scripts/check-dependencies.py --output .scratch/dependency-audit.json
       - name: Prepare isolated PostgreSQL test roles
