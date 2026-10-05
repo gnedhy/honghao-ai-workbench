@@ -457,8 +457,7 @@ enabled_tools = ["lookup"]
                 listing = rpc.call("skills/list", {"cwds": [str(project)], "forceReload": True})
                 skills = [item for entry in listing["data"] for item in entry["skills"]]
             require(all(not item["enabled"] or Path(item["path"]).is_relative_to(root) for item in skills), "PERSONAL_SKILL_DISCOVERY")
-            receipt["checks"].append({"id": "dedicated-windows-account", "status": "not-verified", "foreignSkillsDisabled": len(foreign)})
-            receipt["checks"].append({"id": "isolated-skill-list", "status": "passed"})
+            receipt["checks"].append({"id": "isolated-skill-list", "status": "passed", "foreignSkillsDisabled": len(foreign)})
             start = rpc.call("thread/start", {"cwd": str(project), "modelProvider": "deepseek", "model": "deepseek-flash",
                                              "baseInstructions": "Use only synthetic inputs. Do not run shell commands or modify files."})
             thread = start["thread"]["id"]
@@ -484,7 +483,7 @@ enabled_tools = ["lookup"]
         finally:
             rpc.close()
     receipt["localFeasibility"] = "passed" if args.windows_sandbox == "mxc" else "not-verified"
-    receipt["checks"].append({"id": "target-server-and-service-account", "status": "not-verified"})
+    receipt["checks"].append({"id": "target-server-capability", "status": "not-verified"})
     receipt["status"] = "blocked"
 
 
