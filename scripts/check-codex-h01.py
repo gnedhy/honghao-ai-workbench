@@ -1,6 +1,6 @@
-"""Windows development H01 probe, not Ubuntu deployment acceptance.
+"""H01 synthetic Windows / Ubuntu probe, not production deployment acceptance.
 
-No dependencies beyond Python 3.12. Credentials and raw protocol messages are
+No dependencies beyond Python 3.10. Credentials and raw protocol messages are
 never printed or included in receipts. Run --self-test without a model or key.
 """
 from __future__ import annotations
@@ -10,6 +10,7 @@ from collections import deque
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import queue
 import re
@@ -25,6 +26,7 @@ import urllib.request
 
 VERSION = "codex-cli 0.160.0"
 BINARY_SHA256 = "fdda5fa3cf3fb3d000b876720742857676293e4315e4b045fae6f8bd7e866d1d"
+LINUX_BINARY_SHA256 = "12eb3e81114588aca3b7998f4f19e8997b056aca08e57a7ca7c8a3ec8c652aad"
 MARKER = "H01-SYNTHETIC-7351"
 
 
@@ -63,6 +65,10 @@ def environment(home, key=""):
                HOMEDRIVE=home.drive, HOMEPATH=str(home / "profile")[len(home.drive):], USERNAME="h01-synthetic")
     (home / "tmp").mkdir(parents=True, exist_ok=True)
     (home / "profile").mkdir(exist_ok=True)
+    if os.name == "posix":
+        return {"PATH": "/usr/bin:/bin", "HOME": str(home / "profile"),
+                "CODEX_HOME": str(home), "TMPDIR": str(home / "tmp"),
+                "LANG": "C.UTF-8", "PYTHONUTF8": "1", "H01_DEEPSEEK_API_KEY": key}
     for folder in ("Roaming", "Local", "LocalLow"):
         (home / "profile" / "AppData" / folder).mkdir(parents=True, exist_ok=True)
     return env
@@ -231,7 +237,11 @@ def self_test():
         try:
             env = environment(root / "owned-home", key)
             assert "H01_SYNTHETIC_BUSINESS_CREDENTIAL" not in env
-            assert Path(env["APPDATA"]).is_dir() and Path(env["LOCALAPPDATA"]).is_dir()
+            assert Path(env["HOME"]).is_dir()
+            if os.name == "nt":
+                assert Path(env["APPDATA"]).is_dir() and Path(env["LOCALAPPDATA"]).is_dir()
+            else:
+                assert env["PATH"] == "/usr/bin:/bin" and "USERPROFILE" not in env
         finally:
             if previous is None:
                 os.environ.pop("H01_SYNTHETIC_BUSINESS_CREDENTIAL")
@@ -299,27 +309,35 @@ def sandbox_checks(binary, project, home, root, receipt):
     (outside / "private.txt").write_text("SYNTHETIC_OTHER_PROJECT", encoding="utf-8")
     junction = work / "other-project-link"
     quote = lambda path: str(path).replace("'", "''")
-    creation = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-                               f"New-Item -ItemType Junction -Path '{quote(junction)}' -Target '{quote(outside)}' | Out-Null"],
-                              capture_output=True, timeout=15)
-    require(creation.returncode == 0 and junction.is_dir(), "JUNCTION_FIXTURE_FAILED")
+    if os.name == "nt":
+        creation = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                                   f"New-Item -ItemType Junction -Path '{quote(junction)}' -Target '{quote(outside)}' | Out-Null"],
+                                  stdin=subprocess.DEVNULL, capture_output=True, timeout=15)
+        require(creation.returncode == 0 and junction.is_dir(), "JUNCTION_FIXTURE_FAILED")
+    else:
+        junction.symlink_to(outside, target_is_directory=True)
+        require(junction.resolve() == outside and (junction / "private.txt").read_text() == "SYNTHETIC_OTHER_PROJECT",
+                "SYMLINK_FIXTURE_FAILED")
     with (home / "config.toml").open("a", encoding="utf-8") as config:
         config.write(f'''\n[permissions.h01-work.filesystem]
 ":minimal" = "read"
 {json.dumps(str(project))} = "read"
 {json.dumps(str(work))} = "write"
 {json.dumps(str(Path(sys.executable).parent))} = "read"
+{json.dumps(str(binary.parent))} = "read"
 [permissions.h01-work.network]
 enabled = false
 ''')
-    script = '''import json, os, socket, sys
+    script = '''import errno, json, os, socket, sys
 from pathlib import Path
 original, work, outside, junction, config = map(Path, sys.argv[1:6])
 checks = []
 def blocked(name, operation):
     try:
         operation()
-    except PermissionError:
+    except OSError as error:
+        if error.errno not in {errno.EACCES, errno.EPERM, errno.EROFS, errno.ENOENT}:
+            raise
         checks.append(name)
         return
     raise AssertionError(name)
@@ -335,6 +353,8 @@ blocked("junction-read-denied", lambda: (junction / "private.txt").read_text())
 blocked("junction-write-denied", lambda: (junction / "forbidden.txt").write_text("FORBIDDEN"))
 assert not os.environ.get("H01_DEEPSEEK_API_KEY")
 checks.append("no-model-credential-in-command")
+assert sys.stdin.read() == ""
+checks.append("no-model-credential-in-stdin")
 for name, address, port in [("loopback-network-denied", "127.0.0.1", int(sys.argv[6])), ("public-network-denied", sys.argv[7], 443)]:
     try:
         connection = socket.create_connection((address, port), timeout=2)
@@ -359,27 +379,36 @@ print(json.dumps(checks))
         result = subprocess.run([str(binary), "sandbox", "--permission-profile", "h01-work", "--cd", str(project), "--",
                                  sys.executable, "-c", script, str(original), str(work), str(outside), str(junction),
                                  str(home / "config.toml"), str(port), public_ip],
-                                cwd=project, env=environment(home), capture_output=True, text=True, encoding="utf-8", timeout=40)
+                                cwd=project, env=environment(home), stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, encoding="utf-8", timeout=40)
     require(result.returncode == 0, "OS_SANDBOX_CHECK_FAILED")
     checks = json.loads(result.stdout)
     expected = {"original-readable", "working-copy-writable", "original-write-denied", "other-project-read-denied",
                 "other-project-write-denied", "runtime-config-read-denied", "junction-read-denied", "junction-write-denied",
-                "no-model-credential-in-command", "loopback-network-denied", "public-network-denied"}
+                "no-model-credential-in-command", "no-model-credential-in-stdin", "loopback-network-denied", "public-network-denied"}
+    if os.name != "nt":
+        checks = [check.replace("junction-", "symlink-") for check in checks]
+        expected = {check.replace("junction-", "symlink-") for check in expected}
     require(set(checks) == expected and len(checks) == len(expected), "OS_CHECK_RECEIPT_INCOMPLETE")
     require(original.read_text() == "SYNTHETIC_ORIGINAL" and not (outside / "forbidden.txt").exists(), "OS_FIXTURE_MODIFIED")
     receipt["checks"].extend({"id": name, "status": "passed"} for name in sorted(expected))
 
 
 def run(args, receipt):
-    require(os.name == "nt", "WINDOWS_DEVELOPMENT_PROBE_ONLY")
+    require(os.name == "nt" or sys.platform == "linux", "UNSUPPORTED_PROBE_PLATFORM")
+    if sys.platform == "linux":
+        release = platform.freedesktop_os_release()
+        require(release.get("ID") == "ubuntu" and release.get("VERSION_ID") == "22.04", "UBUNTU_BASELINE")
+        require(os.geteuid() != 0 and platform.machine() == "x86_64", "LINUX_IDENTITY_OR_ARCH")
+        receipt["linuxEnvironment"] = {"os": release["PRETTY_NAME"], "kernel": platform.release(),
+                                       "architecture": platform.machine(), "uid": os.geteuid()}
     binary = args.codex.resolve(strict=True)
-    with binary.open("rb") as stream:
-        require(hashlib.file_digest(stream, "sha256").hexdigest() == BINARY_SHA256, "BINARY_HASH")
-    version = subprocess.run([str(binary), "--version"], capture_output=True, text=True, timeout=15)
+    expected_hash = BINARY_SHA256 if os.name == "nt" else LINUX_BINARY_SHA256
+    require(hashlib.sha256(binary.read_bytes()).hexdigest() == expected_hash, "BINARY_HASH")
+    version = subprocess.run([str(binary), "--version"], stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, timeout=15)
     require(version.returncode == 0 and version.stdout.strip() == VERSION, "BINARY_VERSION")
     receipt["checks"].append({"id": "binary", "status": "passed"})
-    key = read_key(args.key_file)
-    direct_checks(key, receipt)
     with tempfile.TemporaryDirectory(prefix="h01-") as directory:
         root = Path(directory)
         project, home = root / "project", root / "home"
@@ -393,6 +422,7 @@ def run(args, receipt):
         command_env.pop("H01_DEEPSEEK_API_KEY")
         command_env.pop("CODEX_HOME")
         command_env_toml = "{ " + ", ".join(json.dumps(name) + " = " + json.dumps(value) for name, value in command_env.items()) + " }"
+        windows_config = f'[windows]\nsandbox = {json.dumps(args.windows_sandbox)}\n' if os.name == "nt" else ""
         config = f'''model = "deepseek-flash"
 model_provider = "deepseek"
 model_catalog_json = {json.dumps(str(args.catalog.resolve()))}
@@ -403,10 +433,10 @@ default_permissions = "h01"
 [permissions.h01.filesystem]
 ":minimal" = "read"
 {json.dumps(str(project))} = "read"
+{json.dumps(str(binary.parent))} = "read"
 [permissions.h01.network]
 enabled = false
-[windows]
-sandbox = {json.dumps(args.windows_sandbox)}
+{windows_config}
 [model_providers.deepseek]
 name = "deepseek"
 base_url = "https://api.deepseek.com/"
@@ -426,6 +456,8 @@ plugins = false
 multi_agent = false
 memories = false
 skip_host_skill_discovery = true
+use_linux_sandbox_bwrap = true
+use_legacy_landlock = false
 [analytics]
 enabled = false
 [skills]
@@ -437,16 +469,23 @@ env = {{ H01_DEEPSEEK_API_KEY = "" }}
 enabled_tools = ["lookup"]
 '''
         (home / "config.toml").write_text(config, encoding="utf-8")
-        env = environment(home, key)
-        if args.windows_sandbox == "mxc":
+        if os.name != "nt" or args.windows_sandbox == "mxc":
             sandbox_checks(binary, project, home, root, receipt)
-            receipt["checks"].append({"id": "windows-read-write-isolation", "status": "passed"})
+            receipt["checks"].append({"id": "windows-read-write-isolation" if os.name == "nt" else "ubuntu-read-write-isolation",
+                                       "status": "passed"})
+        if args.sandbox_only:
+            receipt["status"] = "passed"
+            return
+        key = parse_key(sys.stdin.read()) if args.key_stdin else read_key(args.key_file)
+        direct_checks(key, receipt)
+        env = environment(home, key)
         rpc = Rpc(binary, project, env)
         try:
             rpc.initialize()
             receipt["checks"].append({"id": "stdio-initialize", "status": "passed"})
-            readiness = rpc.call("windowsSandbox/readiness", {})
-            receipt["checks"].append({"id": "windows-sandbox-readiness", "status": readiness["status"]})
+            if os.name == "nt":
+                readiness = rpc.call("windowsSandbox/readiness", {})
+                receipt["checks"].append({"id": "windows-sandbox-readiness", "status": readiness["status"]})
             listing = rpc.call("skills/list", {"cwds": [str(project)], "forceReload": True})
             skills = [item for entry in listing["data"] for item in entry["skills"]]
             require(any(item["name"] == "h01-proof" and Path(item["path"]) == skill for item in skills), "PROJECT_SKILL_MISSING")
@@ -482,9 +521,11 @@ enabled_tools = ["lookup"]
             receipt["checks"].append({"id": "process-restart-resume", "status": "passed"})
         finally:
             rpc.close()
-    receipt["localFeasibility"] = "passed" if args.windows_sandbox == "mxc" else "not-verified"
-    receipt["checks"].append({"id": "ubuntu-target-isolation", "status": "not-verified"})
-    receipt["status"] = "blocked"
+    receipt["localFeasibility"] = "passed" if os.name != "nt" or args.windows_sandbox == "mxc" else "not-verified"
+    if os.name == "nt":
+        receipt["checks"].append({"id": "ubuntu-target-isolation", "status": "not-verified"})
+    receipt["productionAcceptance"] = "not-verified"
+    receipt["status"] = "blocked" if os.name == "nt" else "passed"
 
 
 def main():
@@ -493,7 +534,10 @@ def main():
     parser.add_argument("--mcp-stub", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--codex", type=Path)
     parser.add_argument("--catalog", type=Path)
-    parser.add_argument("--key-file", type=Path)
+    credentials = parser.add_mutually_exclusive_group()
+    credentials.add_argument("--key-file", type=Path)
+    credentials.add_argument("--key-stdin", action="store_true", help="Read a test key through protected stdin; never save it.")
+    parser.add_argument("--sandbox-only", action="store_true", help="Run OS isolation checks without a model or credential.")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--windows-sandbox", choices=("unelevated", "elevated", "mxc"), default="unelevated")
     args = parser.parse_args()
@@ -503,16 +547,23 @@ def main():
     if args.mcp_stub:
         mcp_stub()
         return 0
-    require(all((args.codex, args.catalog, args.key_file, args.output)), "REQUIRED_ARGUMENTS")
+    require(all((args.codex, args.catalog, args.output)) and
+            (args.sandbox_only or args.key_file or args.key_stdin), "REQUIRED_ARGUMENTS")
+    require(not args.sandbox_only or os.name != "nt" or args.windows_sandbox == "mxc", "SANDBOX_BACKEND_REQUIRED")
     args.output = args.output.resolve()
-    inputs = [args.codex, args.catalog, args.key_file]
+    inputs = [path for path in (args.codex, args.catalog, args.key_file) if path]
     require(args.output not in {path.resolve() for path in inputs}, "OUTPUT_OVERWRITES_INPUT")
     require(not args.output.exists(), "OUTPUT_ALREADY_EXISTS")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     receipt = {"schema": 1, "checkedAt": datetime.now(timezone.utc).isoformat(), "version": VERSION,
-               "validationScope": "windows-development-only", "deploymentTarget": "Ubuntu 22.04.5 LTS",
-               "windowsSandboxMode": args.windows_sandbox,
+               "validationScope": "windows-development-only" if os.name == "nt" else "local-ubuntu-vm",
+               "deploymentTarget": "Ubuntu 22.04.5 LTS",
+               "validationMode": "sandbox-only" if args.sandbox_only else "real-model",
                "model": "deepseek-flash", "status": "failed", "checks": []}
+    if os.name == "nt":
+        receipt["windowsSandboxMode"] = args.windows_sandbox
+    else:
+        receipt["linuxSandbox"] = "bubblewrap"
     started = time.monotonic()
     try:
         run(args, receipt)
@@ -532,7 +583,7 @@ def main():
     with args.output.open("x", encoding="utf-8") as output:
         output.write(json.dumps(receipt, indent=2) + "\n")
     print(json.dumps(receipt))
-    return 2 if receipt["status"] == "blocked" else 1
+    return {"passed": 0, "blocked": 2}.get(receipt["status"], 1)
 
 
 if __name__ == "__main__":
