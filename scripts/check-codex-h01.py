@@ -1,4 +1,4 @@
-"""Synthetic H01 probe. This checks feasibility, never enables a product module.
+"""Windows development H01 probe, not Ubuntu deployment acceptance.
 
 No dependencies beyond Python 3.12. Credentials and raw protocol messages are
 never printed or included in receipts. Run --self-test without a model or key.
@@ -371,7 +371,7 @@ print(json.dumps(checks))
 
 
 def run(args, receipt):
-    require(os.name == "nt", "WINDOWS_REQUIRED")
+    require(os.name == "nt", "WINDOWS_DEVELOPMENT_PROBE_ONLY")
     binary = args.codex.resolve(strict=True)
     with binary.open("rb") as stream:
         require(hashlib.file_digest(stream, "sha256").hexdigest() == BINARY_SHA256, "BINARY_HASH")
@@ -483,7 +483,7 @@ enabled_tools = ["lookup"]
         finally:
             rpc.close()
     receipt["localFeasibility"] = "passed" if args.windows_sandbox == "mxc" else "not-verified"
-    receipt["checks"].append({"id": "target-server-capability", "status": "not-verified"})
+    receipt["checks"].append({"id": "ubuntu-target-isolation", "status": "not-verified"})
     receipt["status"] = "blocked"
 
 
@@ -510,6 +510,7 @@ def main():
     require(not args.output.exists(), "OUTPUT_ALREADY_EXISTS")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     receipt = {"schema": 1, "checkedAt": datetime.now(timezone.utc).isoformat(), "version": VERSION,
+               "validationScope": "windows-development-only", "deploymentTarget": "Ubuntu 22.04.5 LTS",
                "windowsSandboxMode": args.windows_sandbox,
                "model": "deepseek-flash", "status": "failed", "checks": []}
     started = time.monotonic()
