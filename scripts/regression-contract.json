@@ -97,7 +97,7 @@
     "tests/test_modules.py::test_production_cannot_bypass_review_gate_with_module_environment_variables",
     "tests/test_modules.py::test_off_module_business_routes_are_not_available[chat-/api/projects]",
     "tests/test_modules.py::test_off_module_business_routes_are_not_available[knowledge-/api/knowledge]",
-    "tests/test_modules.py::test_off_module_business_routes_are_not_available[automation-/api/skills]",
+    "tests/test_modules.py::test_off_module_business_routes_are_not_available[chat-/api/skills]",
     "tests/test_modules.py::test_off_module_business_routes_are_not_available[workbench-/api/workbenches]",
     "tests/test_modules.py::test_off_module_business_routes_are_not_available[tasks-/api/tasks]",
     "tests/test_modules.py::test_module_registry_reports_every_module_mode[off-chat]",
@@ -501,7 +501,17 @@
     "tests/test_workbenches.py::test_production_workbench_activation_requires_and_records_reviews",
     "tests/test_workbenches.py::test_production_rejects_unreviewed_active_workbench_history",
     "tests/test_workbenches.py::test_core_schema_ignores_additive_workbench_tables",
-    "tests/test_performance_budget.py::test_critical_store_performance"
+    "tests/test_performance_budget.py::test_critical_store_performance",
+    "tests/test_ai_workspace.py::test_private_graph_and_modules_are_isolated_even_from_administrators",
+    "tests/test_ai_workspace.py::test_continuation_and_request_receipts_survive_reassociation_and_retries",
+    "tests/test_ai_workspace.py::test_required_revision_serializes_competing_updates_without_blind_overwrite",
+    "tests/test_ai_workspace.py::test_runtime_input_and_active_run_are_protected_and_revocation_is_immediate",
+    "tests/test_ai_workspace.py::test_old_history_is_read_only_and_migration_preserves_every_task",
+    "tests/test_ai_workspace.py::test_workspace_snapshot_restores_owners_links_receipts_and_runs",
+    "tests/test_ai_workspace_ui.py::test_browser_ai_workspace_actual_consumers",
+    "tests/test_ai_workspace.py::test_concurrent_new_work_messages_continue_one_task",
+    "tests/test_ai_workspace.py::test_multiple_historical_tasks_require_explicit_target_without_merging",
+    "tests/test_security_gate.py::test_failure_reports_redact_test_passwords_without_hiding_failure_details"
   ],
   "frontend": [
     {
@@ -510,7 +520,8 @@
       "ids": [
         "extension contracts reject missing registry, backend scope, lazy entry, pages and live regression",
         "new module scope collects its declared files and unknown or empty scope fails closed",
-        "each product diff needs a current complete declaration tied to collected and executed consumers"
+        "each product diff needs a current complete declaration tied to collected and executed consumers",
+        "chat contracts use real module IDs and require collected browser consumers"
       ]
     },
     {
@@ -822,7 +833,30 @@
       "ids": [
         "concurrent verifier cannot overwrite receipts and lock releases for the next process"
       ]
+    },
+    {
+      "file": "scripts/check-ai-workspace.mjs",
+      "kind": "browser",
+      "ids": [
+        "h03-actual-app-task-continuity",
+        "h03-private-app-reader",
+        "h03-account-ai-grant-with-exit-protection"
+      ]
     }
   ],
-  "retirements": []
+  "retirements": [
+    {
+      "asset": {
+        "kind": "api",
+        "id": "tests/test_modules.py::test_off_module_business_routes_are_not_available[automation-/api/skills]"
+      },
+      "reason": "H02/H03 明确技能入口改归聊天；保持 automation 关闭验证，使用真实模块归属替代旧断言。",
+      "replacements": [
+        {
+          "kind": "api",
+          "id": "tests/test_modules.py::test_off_module_business_routes_are_not_available[chat-/api/skills]"
+        }
+      ]
+    }
+  ]
 }

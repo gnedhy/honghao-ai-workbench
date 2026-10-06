@@ -43,6 +43,7 @@ def test_admin_can_log_in_and_read_current_session(tmp_path: Path) -> None:
         "additional_department_ids": [],
         "departments": [{"id": login.json()["primary_department_id"], "name": "总经办", "is_primary": True}],
         "is_system_admin": True,
+        "ai_enabled": False,
         "scope_levels": {},
     }
     assert current.status_code == 200
@@ -210,8 +211,8 @@ def test_identity_schema_is_additive_to_core_schema_v5(tmp_path: Path) -> None:
         ).fetchone()
 
     assert health.status_code == 200
-    assert Database(settings.database_url).schema_version() == 5
-    assert identity_version == (6,)
+    assert Database(settings.database_url).schema_version() == 6
+    assert identity_version == (7,)
 
 
 def test_non_admin_cannot_manage_users(tmp_path: Path) -> None:
@@ -238,7 +239,7 @@ def test_newer_identity_schema_is_not_silently_downgraded(tmp_path: Path) -> Non
     settings.ensure_directories()
     with transaction(settings.database_url, write=True) as connection:
         connection.execute(
-            "UPDATE schema_metadata SET value=7 WHERE key='identity_schema_version'"
+            "UPDATE schema_metadata SET value=8 WHERE key='identity_schema_version'"
         )
 
     with TestClient(create_app(settings)) as client:
@@ -249,7 +250,7 @@ def test_newer_identity_schema_is_not_silently_downgraded(tmp_path: Path) -> Non
         version = connection.execute(
             "SELECT value FROM schema_metadata WHERE key = 'identity_schema_version'"
         ).fetchone()
-    assert version == (7,)
+    assert version == (8,)
 
 
 def test_postgresql_username_uniqueness_preserves_ascii_case_insensitivity(tmp_path: Path) -> None:

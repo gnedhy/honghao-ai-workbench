@@ -13,7 +13,7 @@ from api.settings import Settings
 def test_version_three_partial_migration_is_rejected_without_runtime_ddl(tmp_path: Path) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
     with transaction(os.environ['HONGHAO_TEST_MIGRATION_URL'], write=True) as connection:
-        connection.execute("DROP TABLE tasks")
+        connection.execute("DROP TABLE tasks CASCADE")
         connection.execute("ALTER TABLE conversation_messages DROP COLUMN submission_key")
         connection.execute("UPDATE schema_metadata SET value=3 WHERE key='schema_version'")
         connection.execute("INSERT INTO projects(id,title) VALUES ('project-1','已有项目')")

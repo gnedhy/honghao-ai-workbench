@@ -50,3 +50,16 @@ test('each product diff needs a current complete declaration tied to collected a
   assert.throws(()=>check({...declaration,verification:{api:[id],node:[],browser:[{file:'scripts/check-probe.mjs',id:'probe-save',apiTest:'missing'}]}}),/not connected/);
   validateChanges(['docs/README.md','scripts/verify.mjs'],{},contract,sources,[id]);
 });
+
+
+test('chat contracts use real module IDs and require collected browser consumers',()=>{
+  const extendedSources={...sources,'src/types.ts':sources['src/types.ts']+'export type Section="chat"|"tasks"|"workbench";'};
+  const extendedBackend={...backend,modules:['chat','tasks','workbench']};
+  const chat={...row,id:'chat'};
+  const extended={...contract,modules:[chat]};
+  validateContracts(extended,extendedSources,extendedBackend,[id],exists);
+  assert.deepEqual(scopeFiles(extended,'chat',['test_probe_save.py']),['tests/test_probe_save.py']);
+  assert.throws(()=>validateContracts({...extended,modules:[{...chat,id:'fake'}]},extendedSources,extendedBackend,[id],exists),/unknown non-workbench/);
+  assert.throws(()=>validateContracts({...extended,modules:[{...chat,browserTests:[]}]},extendedSources,extendedBackend,[id],exists),/no actual browser/);
+  assert.throws(()=>validateContracts(extended,extendedSources,{...extendedBackend,browserWrappers:{}},[id],exists),/not connected|no API wrapper/);
+});

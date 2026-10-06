@@ -143,7 +143,7 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
     return () => controller.abort();
   }, [procurementEnabled, currentUser.id]);
   const [newUserOpen, setNewUserOpen] = useState(false);
-  const emptyUser = () => ({ username: '', display_name: '', primary_department_id: null as string | null, additional_department_ids: [] as string[], password: '123456', is_system_admin: false, scope_levels: {} as Partial<Record<AccessScope, AccessLevel>> });
+  const emptyUser = () => ({ username: '', display_name: '', primary_department_id: null as string | null, additional_department_ids: [] as string[], password: '123456', is_system_admin: false, ai_enabled: false, scope_levels: {} as Partial<Record<AccessScope, AccessLevel>> });
   const [newUser, setNewUser] = useState(emptyUser);
   const [departments, setDepartments] = useState<OrganizationDepartment[]>([]);
   const [departmentToDelete, setDepartmentToDelete] = useState<string | null>(null);
@@ -157,6 +157,7 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
   const busy = useRef(false);
   const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
   const [userAdminDraft, setUserAdminDraft] = useState(false);
+  const [userAiDraft, setUserAiDraft] = useState(false);
   const [userScopeDraft, setUserScopeDraft] = useState<Partial<Record<AccessScope, AccessLevel>>>({});
 
   useEffect(() => {
@@ -184,8 +185,9 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
 
   useEffect(() => {
     setUserAdminDraft(selectedUser?.is_system_admin ?? false);
+    setUserAiDraft(selectedUser?.ai_enabled ?? false);
     setUserScopeDraft(JSON.parse(selectedScopeLevels) as Partial<Record<AccessScope, AccessLevel>>);
-  }, [selectedUserId, selectedUser?.is_system_admin, selectedScopeLevels]);
+  }, [selectedUserId, selectedUser?.is_system_admin, selectedUser?.ai_enabled, selectedScopeLevels]);
 
   const accessRuntime = { moduleStatuses, moduleRegistryState, workbenchStatuses, workbenchRegistryState };
 
@@ -202,12 +204,14 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
   };
 
   const accessDirty = Boolean(selectedUser) && (userAdminDraft !== selectedUser!.is_system_admin
+    || userAiDraft !== Boolean(selectedUser!.ai_enabled)
     || ACCESS_SCOPES.some(scope => userScopeDraft[scope.id] !== selectedUser!.scope_levels[scope.id]));
-  const newUserDirty = newUserOpen && Boolean(newUser.username || newUser.display_name || newUser.primary_department_id || newUser.additional_department_ids.length || newUser.password !== '123456' || newUser.is_system_admin || Object.keys(newUser.scope_levels).length);
+  const newUserDirty = newUserOpen && Boolean(newUser.username || newUser.display_name || newUser.primary_department_id || newUser.additional_department_ids.length || newUser.password !== '123456' || newUser.is_system_admin || newUser.ai_enabled || Object.keys(newUser.scope_levels).length);
   const dirty = profileDirty || accessDirty || newUserDirty;
   const closeProfile = () => { setProfileOpen(false); setProfileDirty(false); setProfileRevision(value => value + 1); };
   const resetDrafts = () => {
     setUserAdminDraft(selectedUser?.is_system_admin ?? false);
+    setUserAiDraft(selectedUser?.ai_enabled ?? false);
     setUserScopeDraft(selectedUser?.scope_levels ?? {});
     closeProfile();
     setNewUser(emptyUser());
@@ -251,7 +255,7 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
     if (!selectedUser || busy.current || !accessDirty) return;
     busy.current = true; setSaving(true);
     try {
-      const updated = await updateUser(selectedUser.id, { is_system_admin: userAdminDraft, scope_levels: userAdminDraft ? {} : userScopeDraft });
+      const updated = await updateUser(selectedUser.id, { is_system_admin: userAdminDraft, ai_enabled: userAiDraft, scope_levels: userAdminDraft ? {} : userScopeDraft });
       setUsers((current) => current.map((user) => user.id === updated.id ? updated : user));
       setUserAdminDraft(updated.is_system_admin); setUserScopeDraft(updated.scope_levels);
       showNotice("工作台与功能权限已更新，原登录会话已失效");
@@ -320,7 +324,7 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
             {(tab === "accounts" || tab === "audit") && loadState === "error" && <SettingsState copy="管理数据暂时无法读取，请稍后重试。" error />}
             {tab === "accounts" && loadState === "ready" && <section className="admin-settings-section">
               <div className="admin-section-heading"><div><h2>用户管理</h2><p>在一个入口管理账号资料、工作台访问与操作权限。</p></div><button className="secondary-button" type="button" disabled={saving} onClick={() => requestLeave(() => { resetDrafts(); setNewUserOpen(true); })}><Plus size={14} />新建账号</button></div>
-              {newUserOpen && <form className="admin-create-form" onSubmit={submitUser}><fieldset className="admin-edit-fields" disabled={saving}><div className="admin-detail-heading"><h3>新建账号</h3><span className="admin-dirty">{newUserDirty ? "未保存" : "填写账号资料"}</span></div><div className="admin-form-grid"><label>姓名<input required maxLength={100} value={newUser.display_name} onChange={(event) => setNewUser({ ...newUser, display_name: event.target.value })} /></label><label>账号名<input required maxLength={100} pattern="[A-Za-z0-9._-]+" autoComplete="off" value={newUser.username} onChange={(event) => setNewUser({ ...newUser, username: event.target.value })} /></label><label>初始密码（默认 123456）<input required pattern="123456|.{12,1000}" title="使用默认初始密码，或设置至少12个字符的自定义密码" maxLength={1000} type="password" autoComplete="new-password" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} /></label></div><MembershipFields departments={departments} value={newUser} onChange={membership => setNewUser({ ...newUser, ...membership })} disabled={saving} /><AccountAccessEditor id="new-user-access" runtime={accessRuntime} dirty={newUserDirty} isSystemAdmin={newUser.is_system_admin} scopeLevels={newUser.scope_levels} onAdminChange={(is_system_admin) => setNewUser({ ...newUser, is_system_admin })} onScopeLevelChange={(scopeId, level) => setNewUser({ ...newUser, scope_levels: setScopeLevel(newUser.scope_levels, scopeId, level) })} /><div className="admin-form-actions"><button type="button" className="secondary-button" onClick={resetDrafts}>取消</button><button type="submit" className="primary-button">{saving ? "正在创建…" : "创建账号"}</button></div></fieldset></form>}
+              {newUserOpen && <form className="admin-create-form" onSubmit={submitUser}><fieldset className="admin-edit-fields" disabled={saving}><div className="admin-detail-heading"><h3>新建账号</h3><span className="admin-dirty">{newUserDirty ? "未保存" : "填写账号资料"}</span></div><div className="admin-form-grid"><label>姓名<input required maxLength={100} value={newUser.display_name} onChange={(event) => setNewUser({ ...newUser, display_name: event.target.value })} /></label><label>账号名<input required maxLength={100} pattern="[A-Za-z0-9._-]+" autoComplete="off" value={newUser.username} onChange={(event) => setNewUser({ ...newUser, username: event.target.value })} /></label><label>初始密码（默认 123456）<input required pattern="123456|.{12,1000}" title="使用默认初始密码，或设置至少12个字符的自定义密码" maxLength={1000} type="password" autoComplete="new-password" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} /></label></div><MembershipFields departments={departments} value={newUser} onChange={membership => setNewUser({ ...newUser, ...membership })} disabled={saving} /><AccountAccessEditor id="new-user-access" runtime={accessRuntime} dirty={newUserDirty} isSystemAdmin={newUser.is_system_admin} aiEnabled={newUser.ai_enabled} onAiChange={(ai_enabled) => setNewUser({ ...newUser, ai_enabled })} scopeLevels={newUser.scope_levels} onAdminChange={(is_system_admin) => setNewUser({ ...newUser, is_system_admin })} onScopeLevelChange={(scopeId, level) => setNewUser({ ...newUser, scope_levels: setScopeLevel(newUser.scope_levels, scopeId, level) })} /><div className="admin-form-actions"><button type="button" className="secondary-button" onClick={resetDrafts}>取消</button><button type="submit" className="primary-button">{saving ? "正在创建…" : "创建账号"}</button></div></fieldset></form>}
               {!newUserOpen && <div className="admin-split">
                 <OrganizationDirectory departments={departments} users={users} selectedId={departmentEdit ? '' : selectedUserId} disabled={saving}
                   onSelect={id => { if (id !== selectedUserId || departmentEdit) requestLeave(() => { resetDrafts(); setSelectedUserId(id); }); }}
@@ -333,8 +337,8 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
                   {profileOpen && <UserProfileEditor departments={departments} key={selectedUser.id + ":" + profileRevision} user={selectedUser} disabled={saving} onDirty={setProfileDirty} onSaving={value => { busy.current = value; setSaving(value); }} onCancel={closeProfile} onSaved={updated => { setUsers(current => current.map(user => user.id === updated.id ? updated : user)); if (updated.id === currentUser.id) onUserChanged(updated); closeProfile(); showNotice("资料已保存"); }} />}
                   {!profileOpen && <><h3 className="settings-section-label settings-permissions-title" id="account-access-title">访问权限 <AccessPolicyHelp /></h3>
                   <fieldset aria-labelledby="account-access-title" className="admin-edit-fields admin-access-section" disabled={saving}>
-                    <ResearchGrantStatus user={selectedUser}/><AccountAccessEditor key={selectedUser.id} id="user-access" runtime={accessRuntime} dirty={accessDirty} isSystemAdmin={userAdminDraft} scopeLevels={userScopeDraft} onAdminChange={setUserAdminDraft} onScopeLevelChange={(scopeId, level) => setUserScopeDraft(current => setScopeLevel(current, scopeId, level))} disabledAdmin={selectedUser.id === currentUser.id}>
-                    {accessDirty && <div className="admin-form-actions account-access-actions"><span className="admin-dirty">授权有未保存修改</span><button className="secondary-button" type="button" onClick={() => { setUserAdminDraft(selectedUser.is_system_admin); setUserScopeDraft({ ...selectedUser.scope_levels }); }}>取消</button><button className="primary-button" type="button" disabled={selectedUser.id === currentUser.id} onClick={saveUserAccess}>保存授权</button></div>}
+                    <ResearchGrantStatus user={selectedUser}/><AccountAccessEditor key={selectedUser.id} id="user-access" runtime={accessRuntime} dirty={accessDirty} isSystemAdmin={userAdminDraft} aiEnabled={userAiDraft} onAiChange={setUserAiDraft} scopeLevels={userScopeDraft} onAdminChange={setUserAdminDraft} onScopeLevelChange={(scopeId, level) => setUserScopeDraft(current => setScopeLevel(current, scopeId, level))} disabledAdmin={selectedUser.id === currentUser.id}>
+                    {accessDirty && <div className="admin-form-actions account-access-actions"><span className="admin-dirty">授权有未保存修改</span><button className="secondary-button" type="button" onClick={() => { setUserAdminDraft(selectedUser.is_system_admin); setUserAiDraft(Boolean(selectedUser.ai_enabled)); setUserScopeDraft({ ...selectedUser.scope_levels }); }}>取消</button><button className="primary-button" type="button" disabled={selectedUser.id === currentUser.id} onClick={saveUserAccess}>保存授权</button></div>}
                     </AccountAccessEditor>
                   </fieldset>
                   <h3 className="settings-section-label" id="account-status-title">账号状态</h3><section aria-labelledby="account-status-title" className="admin-account-status"><div><p>{selectedUser.id === currentUser.id ? "当前登录账号不可停用或修改自身授权。" : selectedUser.is_active ? "停用后无法登录，已有会话立即失效。" : "启用后可使用原有工作台与功能权限。"}</p></div><button className={selectedUser.is_active ? "secondary-button account-disable-button" : "secondary-button"} type="button" disabled={saving || selectedUser.id === currentUser.id} onClick={toggleUserActive}>{selectedUser.is_active ? "停用账号" : "启用账号"}</button></section></>}
@@ -531,11 +535,11 @@ function UserProfileEditor({ departments, user, onSaved, onDirty, onSaving, onCa
 
 type AccessRuntime = Pick<SettingsDialogProps, "moduleStatuses" | "moduleRegistryState" | "workbenchStatuses" | "workbenchRegistryState">;
 
-function AccountAccessEditor({ id, runtime, dirty, isSystemAdmin, scopeLevels, onAdminChange, onScopeLevelChange, disabledAdmin = false, children }: {
-  id: string; runtime: AccessRuntime; dirty: boolean; isSystemAdmin: boolean; scopeLevels: Partial<Record<AccessScope, AccessLevel>>;
+function AccountAccessEditor({ id, runtime, dirty, isSystemAdmin, aiEnabled, onAiChange, scopeLevels, onAdminChange, onScopeLevelChange, disabledAdmin = false, children }: {
+  id: string; runtime: AccessRuntime; dirty: boolean; isSystemAdmin: boolean; aiEnabled: boolean; onAiChange: (value: boolean) => void; scopeLevels: Partial<Record<AccessScope, AccessLevel>>;
   onAdminChange: (value: boolean) => void; onScopeLevelChange: (scopeId: AccessScope, level: AccessLevel | null) => void; disabledAdmin?: boolean; children?: ReactNode;
 }) {
-  const summary = (scopes: AccessScope[]) => (isSystemAdmin ? "系统管理员" : `已授权 ${scopes.filter(scope => scopeLevels[scope]).length} 个范围`) + (dirty ? " · 未保存" : "");
+  const summary = (scopes: AccessScope[], additional = 0) => (isSystemAdmin ? "系统管理员" : `已授权 ${scopes.filter(scope => scopeLevels[scope]).length + additional} 个范围`) + (dirty ? " · 未保存" : "");
   const scopeRow = (scope: typeof ACCESS_SCOPES[number]) => {
     const registry = runtime.moduleRegistryState !== "ready" ? runtime.moduleRegistryState : scope.id === "knowledge" ? "ready" : runtime.workbenchRegistryState;
     const parentMode = runtime.moduleStatuses.find(module => module.id === (scope.id === "knowledge" ? "knowledge" : "workbench"))?.mode ?? "off";
@@ -547,8 +551,8 @@ function AccountAccessEditor({ id, runtime, dirty, isSystemAdmin, scopeLevels, o
   return <fieldset className="scope-access-editor" data-admin={isSystemAdmin}>
       <legend className="scope-access-help">访问权限</legend>
       <label className="system-admin-option" data-selected={isSystemAdmin}><input type="checkbox" checked={isSystemAdmin} disabled={disabledAdmin} onChange={event => onAdminChange(event.target.checked)} /><span><strong>系统管理</strong><small>{isSystemAdmin ? "拥有全部范围，无需逐项授权；业务仍按模块启用状态开放。" : "拥有全部范围，并可管理账号、模块配置与审计。"}</small></span></label>
-      <SettingsGroup id={id + "-modules"} title="功能模块" description="仅显示已接入人员权限的模块，未启用时保留配置。" summary={summary(["knowledge"])}>
-        <div className="scope-access-list" aria-disabled={isSystemAdmin}>{scopeRow({ id: "knowledge", name: "知识库" })}</div>
+      <SettingsGroup id={id + "-modules"} title="功能模块" description="仅显示已接入人员权限的模块，未启用时保留配置。" summary={summary(["knowledge"], aiEnabled ? 1 : 0)}>
+        <div className="scope-access-list" aria-disabled={isSystemAdmin}><div className="scope-access-row"><div className="scope-access-name"><strong>项目 AI 工作区</strong><small>{isSystemAdmin ? "系统管理员已包含" : aiEnabled ? "已授权" : "未授权"} · 功能按模块状态开放</small></div><Switch type="button" role="switch" className="settings-mode-switch" aria-label="项目 AI 使用权" aria-checked={isSystemAdmin || aiEnabled} disabled={isSystemAdmin || disabledAdmin} onClick={() => onAiChange(!aiEnabled)}><span /></Switch></div>{scopeRow({ id: "knowledge", name: "知识库" })}</div>
       </SettingsGroup>
       <SettingsGroup id={id + "-workbenches"} title="职能工作台" description="各工作台独立授权，未运行时保留原有配置。" summary={summary(ACCESS_SCOPES.filter(scope => scope.id !== "knowledge").map(scope => scope.id))}>
         <div className="scope-access-list" aria-disabled={isSystemAdmin}>{ACCESS_SCOPES.filter(scope => scope.id !== "knowledge").map(scopeRow)}</div>

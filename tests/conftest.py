@@ -1,6 +1,6 @@
 """Real PostgreSQL tests. Only the explicit local test database may be reset."""
 import os
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 from uuid import uuid4
 
 import psycopg
@@ -9,6 +9,26 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict
 
 from api import postgres
+
+
+def redact_test_credentials(text):
+    for variable in ('HONGHAO_TEST_DATABASE_URL', 'HONGHAO_TEST_MIGRATION_URL', 'HONGHAO_TEST_CLUSTER_URL'):
+        try:
+            password = conninfo_to_dict(os.environ.get(variable, '')).get('password')
+        except psycopg.Error:
+            continue
+        if password:
+            text = text.replace(password, '[redacted]').replace(quote(password, safe=''), '[redacted]')
+    return text
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if report.longrepr:
+        report.longrepr = redact_test_credentials(str(report.longrepr))
+    report.sections = [(name, redact_test_credentials(text)) for name, text in report.sections]
 
 
 def _test_target(variable, user):
@@ -73,7 +93,10 @@ def second_pg(pg_targets):
         parts = urlsplit(url)
         return urlunsplit(parts._replace(path="/" + name))
     app, migration = map(target, pg_targets)
-    with postgres.connect(admin) as connection:
+    # Administrative CREATE/DROP can wait for a checkpoint. Keep the business
+    # connection's 30-second deadline on runtime queries, not test maintenance.
+    with psycopg.connect(admin, autocommit=True, connect_timeout=5,
+                         options="-c statement_timeout=0 -c lock_timeout=10000") as connection:
         connection.execute(sql.SQL("CREATE DATABASE {} OWNER honghao_test_migration TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C'").format(sql.Identifier(name)))
         connection.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM PUBLIC").format(sql.Identifier(name)))
         connection.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO honghao_test_app").format(sql.Identifier(name)))
@@ -84,5 +107,8 @@ def second_pg(pg_targets):
         yield {"url": app, "migration_url": migration, "environment": "test"}
     finally:
         # name is generated here; no user-controlled or pre-existing database can reach DROP.
-        with postgres.connect(admin) as connection:
-            connection.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
+        with psycopg.connect(admin, autocommit=True, connect_timeout=5,
+                             options="-c statement_timeout=0 -c lock_timeout=10000") as connection:
+            # Native DROP waits for closed test connections and stops autovacuum;
+            # FORCE adds unnecessary cross-role signal checks and hides leaked clients.
+            connection.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(name)))

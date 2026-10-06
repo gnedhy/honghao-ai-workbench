@@ -21,8 +21,20 @@ from api.postgres import database_lease, transaction
 from api.settings import Settings
 
 # The frozen SQLite baseline predates sales. New PostgreSQL tables stay empty.
-POST_SQLITE_TABLES = {'sales_batches', 'sales_trials', 'sales_records', 'sales_events', 'sales_calculator_saved'}
+POST_SQLITE_TABLES = {'sales_batches', 'sales_trials', 'sales_records', 'sales_events', 'sales_calculator_saved', 'task_runs'}
 POST_SQLITE_VERSION = 'workbench_sales_schema_version'
+
+POST_SQLITE_COLUMNS = {
+    'identity_users': {'ai_enabled'},
+    'projects': {'owner_id','revision'},
+    'conversations': {'owner_id','revision'},
+    'conversation_messages': {'owner_id','role','task_id','submission_request','submission_receipt'},
+    'tasks': {'owner_id','revision'},
+}
+FROZEN_VERSIONS = {'schema_version':5, 'identity_schema_version':6,
+    'authorization_schema_version':5, 'knowledge_schema_version':6,
+    'workbench_procurement_schema_version':7, 'organization_schema_version':1,
+    'workbench_research_schema_version':2}
 
 
 def _quote(name: str) -> str:
@@ -74,7 +86,7 @@ def _prepare(baseline: Path, staging: Path, environment: str) -> tuple[dict, lis
 def _source_evidence(source: sqlite3.Connection) -> dict:
     if source.execute('PRAGMA integrity_check').fetchall() != [('ok',)] or source.execute('PRAGMA foreign_key_check').fetchall():
         raise ValueError('SQLite 完整性或外键校验失败')
-    expected = {key: value for key, value in ops._expected_schema_versions().items() if key != POST_SQLITE_VERSION}
+    expected = FROZEN_VERSIONS
     if dict(source.execute('SELECT key,value FROM schema_metadata')) != expected:
         raise ValueError('SQLite 业务版本与迁移工具不兼容')
     tables = {}
@@ -120,11 +132,22 @@ def _source_paths(source: sqlite3.Connection, staging: Path, target: Path, recor
 
 def _legacy_evidence(db, mappings=None):
     evidence = {key: value for key, value in ops._table_evidence(db, mappings).items() if key not in POST_SQLITE_TABLES}
-    rows = db.execute('SELECT * FROM schema_metadata WHERE key!=%s ORDER BY _order', (POST_SQLITE_VERSION,)).fetchall()
-    digest = hashlib.sha256()
-    for row in rows:
-        digest.update(json.dumps(row, ensure_ascii=False, separators=(',', ':')).encode('utf-8') + b'\n')
-    evidence['schema_metadata'].update(count=len(rows), sha256=digest.hexdigest())
+    for table in (*POST_SQLITE_COLUMNS, 'schema_metadata'):
+        columns = [name for name in evidence[table]['columns'] if name not in POST_SQLITE_COLUMNS.get(table, set())]
+        cursor = db.execute(sql.SQL('SELECT {} FROM public.{} ORDER BY _order').format(sql.SQL(',').join(map(sql.Identifier, columns)), sql.Identifier(table)))
+        digest, count = hashlib.sha256(), 0
+        for row in cursor:
+            if table == 'schema_metadata':
+                if row[0] == POST_SQLITE_VERSION:
+                    continue
+                if row[0] in ('schema_version', 'identity_schema_version'):
+                    # Only known current versions normalize to their frozen predecessors.
+                    if row[1] != ops._expected_schema_versions()[row[0]]:
+                        raise ValueError('目标业务版本不兼容')
+                    row = (row[0], FROZEN_VERSIONS[row[0]], *row[2:])
+            digest.update(json.dumps(row, ensure_ascii=False, separators=(',', ':'), default=lambda value: {'bytes':bytes(value).hex()}).encode('utf-8') + b'\n')
+            count += 1
+        evidence[table] = {'columns':columns, 'count':count, 'sha256':digest.hexdigest()}
     return evidence
 
 
@@ -141,10 +164,10 @@ def _target_check(db, settings: Settings, tables: dict) -> None:
 
 def _copy_rows(source: sqlite3.Connection, db, tables: dict, mappings: dict[str, str]) -> dict:
     graph = {table: set() for table in tables}
-    for table, parent in db.execute("SELECT child.relname,parent.relname FROM pg_constraint c "
+    for table, parent, constraint in db.execute("SELECT child.relname,parent.relname,c.conname FROM pg_constraint c "
             "JOIN pg_class child ON child.oid=c.conrelid JOIN pg_class parent ON parent.oid=c.confrelid "
             "JOIN pg_namespace n ON n.oid=child.relnamespace WHERE c.contype='f' AND n.nspname='public'"):
-        if table in graph and table != parent:
+        if table in graph and parent in graph and table != parent and constraint != 'message_task_source':
             graph[table].add(parent)
     order = tuple(TopologicalSorter(graph).static_order())
     db.execute(sql.SQL('TRUNCATE {} RESTART IDENTITY').format(sql.SQL(',').join(sql.Identifier('public', name) for name in ops._table_names(db))))
@@ -159,6 +182,9 @@ def _copy_rows(source: sqlite3.Connection, db, tables: dict, mappings: dict[str,
                     row[index] = mappings[row[index]]
                 copier.write_row(row)
     # COPY checks native FKs (including self references) at statement end. No constraints are disabled.
+    db.execute("UPDATE conversation_messages m SET task_id=t.id FROM tasks t WHERE t.message_id=m.id")
+    for key in ('schema_version', 'identity_schema_version'):
+        db.execute('UPDATE schema_metadata SET value=%s WHERE key=%s', (ops._expected_schema_versions()[key], key))
     actual = _legacy_evidence(db, {new: old for old, new in mappings.items()})
     if actual != tables:
         raise ValueError('迁入后的内容、主键或行顺序不一致，事务已撤回')

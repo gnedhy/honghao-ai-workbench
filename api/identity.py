@@ -14,7 +14,7 @@ from api.authorization import AuthorizationStore
 from api import organization
 
 
-IDENTITY_SCHEMA_VERSION = 6
+IDENTITY_SCHEMA_VERSION = 7
 SESSION_COOKIE_NAME = "honghao_session"
 SYSTEM_ADMIN_ROLE_ID = "system-admin"
 # Explicit deployment policy for new and administrator-reset credentials.
@@ -55,6 +55,7 @@ class IdentityStore:
         department: str | None,
         password: str,
         is_system_admin: bool = False,
+        ai_enabled: bool = False,
         scope_levels: dict[str, int] | None = None,
         primary_department_id: str | None = None,
         additional_department_ids: list[str] | None = None,
@@ -68,8 +69,8 @@ class IdentityStore:
             with transaction(self.url, write=True) as connection:
 
                 connection.execute(
-                    "INSERT INTO identity_users (id, username, display_name, department, password_salt, password_hash, is_active, access_level, created_at) VALUES (%s, %s, %s, %s, %s, %s, 1, %s, %s)",
-                    (user_id, username, display_name, department, salt, password_hash, 5 if is_system_admin else 1, created_at),
+                    "INSERT INTO identity_users (id, username, display_name, department, password_salt, password_hash, is_active, access_level, created_at, ai_enabled) VALUES (%s, %s, %s, %s, %s, %s, 1, %s, %s, %s)",
+                    (user_id, username, display_name, department, salt, password_hash, 5 if is_system_admin else 1, created_at, int(ai_enabled)),
                 )
                 connection.cursor().executemany(
                     "INSERT INTO identity_user_scopes (user_id, scope_id, access_level) VALUES (%s, %s, %s)",
@@ -234,7 +235,7 @@ class IdentityStore:
     def get_user(self, user_id: str) -> dict[str, Any] | None:
         with transaction(self.url) as connection:
             row = connection.execute(
-                "SELECT id, username, display_name, department, is_active, access_level FROM identity_users WHERE id = %s",
+                "SELECT id, username, display_name, department, is_active, access_level, ai_enabled FROM identity_users WHERE id = %s",
                 (user_id,),
             ).fetchone()
             if row is None:
@@ -254,6 +255,7 @@ class IdentityStore:
             "departments": [{"id": d, "name": name, "is_primary": bool(primary)} for d, name, primary in memberships],
             "is_active": bool(row[4]),
             "is_system_admin": int(row[5]) == 5,
+            "ai_enabled": bool(row[6]),
             "scope_levels": {
                 scope_id: next(int(level) for stored_scope, level in scope_rows if stored_scope == scope_id)
                 for scope_id in SCOPE_IDS
@@ -276,6 +278,7 @@ class IdentityStore:
         *,
         is_active: bool | None = None,
         is_system_admin: bool | None = None,
+        ai_enabled: bool | None = None,
         scope_levels: dict[str, int] | None = None,
     ) -> dict[str, Any] | None:
         normalized_scopes = _validate_scope_levels(scope_levels) if scope_levels is not None else None
@@ -306,6 +309,8 @@ class IdentityStore:
                     "UPDATE identity_users SET is_active = %s WHERE id = %s",
                     (int(is_active), user_id),
                 )
+            if ai_enabled is not None:
+                connection.execute("UPDATE identity_users SET ai_enabled=%s WHERE id=%s", (int(ai_enabled), user_id))
             connection.execute("DELETE FROM identity_sessions WHERE user_id = %s", (user_id,))
             from api.procurement_collaboration import capabilities, pause_schedules
             current_scopes = dict(connection.execute(

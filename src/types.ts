@@ -24,6 +24,7 @@ export type CurrentUser = {
   additional_department_ids?: string[];
   departments?: { id: string; name: string; is_primary: boolean }[];
   is_system_admin: boolean;
+  ai_enabled?: boolean;
   scope_levels: Partial<Record<AccessScope, AccessLevel>>;
 };
 
@@ -315,24 +316,32 @@ export type ConversationView = "new" | "existing";
 export type WorkApproval = "pending" | "approved" | "rejected";
 
 export type Project = {
+  owner_id?: string | null;
+  revision: number;
   id: string;
   title: string;
 };
 
 export type Conversation = {
+  owner_id?: string | null;
+  revision: number;
   id: string;
   title: string;
   project_id: string | null;
 };
 
+export type TaskStatus = "created" | "running" | "waiting" | "completed" | "stopped" | "failed" | "blocked";
+
 export type ConversationMessage = {
+  owner_id?: string | null;
+  role?: "user" | "assistant" | "tool";
   id: string;
   conversation_id: string;
   mode: "chat" | "work";
   content: string;
   created_at: string;
   task_id: string | null;
-  task_status: "created" | null;
+  task_status: TaskStatus | null;
 };
 
 export type KnowledgeItem = {
@@ -363,11 +372,13 @@ export type WorkflowItem = {
 };
 
 export type TaskItem = {
+  owner_id?: string | null;
+  revision?: number;
   id: string;
   conversation_id: string;
   objective: string;
   project_id: string | null;
-  status: "created";
+  status: TaskStatus;
   created_at: string;
   latest_run: string | null;
 };

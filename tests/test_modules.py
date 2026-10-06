@@ -376,7 +376,8 @@ def test_production_cannot_bypass_review_gate_with_module_environment_variables(
     [
         ("chat", "/api/projects"),
         ("knowledge", "/api/knowledge"),
-        ("automation", "/api/skills"),
+        ("chat", "/api/skills"),
+        ("automation", "/api/workflows"),
         ("workbench", "/api/workbenches"),
         ("tasks", "/api/tasks"),
     ],

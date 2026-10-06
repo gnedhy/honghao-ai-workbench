@@ -74,7 +74,7 @@ def test_procurement_migration_is_additive_and_overview_starts_empty(tmp_path: P
         "missing_price_count": 0,
         "published_batch_count": 0,
     }
-    assert Database(settings.database_url).schema_version() == 5
+    assert Database(settings.database_url).schema_version() == 6
     assert not list((settings.data_dir / "backups").glob("pre-procurement-migration-*.db"))
     with transaction(settings.database_url) as connection:
         version = connection.execute(

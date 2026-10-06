@@ -39,7 +39,7 @@ W8 的 `tests/test_app_ui.py` 通过 `scripts/check-app.mjs` 挂载实际 App �
 - 浏览器：运行 `node scripts/check-sales-baseline.mjs --scenario smoke|exits|interruptions|all`（一次选一个值）。由脚本创建随机本机端口、独立 Vite 缓存；不加载根代理配置。所有 API 请求拦截，服务器侧 API 另返回 503，意外 API／外部请求导致检查失败。浏览器结束即销毁模拟数据；不启动后端、不使用附件目录、不访问正式服务。失败返回非零，不跳过已知风险。
 - 实库浏览器：运行 `uv run python -m pytest tests/test_sales_recovery.py`，仍先完成下文测试库检查。复用 `sales` fixture 合成 `recipe:Q`（成本 4／12）及测试管理员，在同一测试进程的数据库锁和服务 lease 内启动随机 API 端口、临时附件目录及隔离 Vite。真实登录、API 和事务参与验证；前端代理未加载。脚本无默认后端地址，并校验健康接口环境为 `test`；不手工启动常驻测试库服务。输出只包含合成对象 ID、revision、请求阶段和计数。
 - 后端：由受保护环境配置注入 `HONGHAO_TEST_DATABASE_URL`、`HONGHAO_TEST_MIGRATION_URL`，Windows 设置 `PYTHONUTF8=1`。只允许 `127.0.0.1/honghao_test` 的 `honghao_test_app`／`honghao_test_migration`。先核对库内 `test` 身份、服务锁未占用、没有其他服务连接；`tests/conftest.py` 每例重建 public，整个测试进程持独占测试锁。该库不能存业务或交互验收数据，不并发运行两套后端测试。
-- 恢复：另注入 `HONGHAO_TEST_CLUSTER_URL`（本机维护库及现有 `honghao_cluster_admin`），并配置 PostgreSQL 18 原生工具。fixture 只创建生成名称的临时恢复库。没有权限时记录阻塞，不创建管理员或改权限。
+- 恢复：另注入 `HONGHAO_TEST_CLUSTER_URL`（本机维护库及 `honghao_cluster_admin`），并配置 PostgreSQL 18 原生工具。一次性隔离集群初始化时，创建账号继承 `honghao_test_migration` 的库所有者权限；CI 临时集群由 `scripts/ci/prepare-postgres.py` 配置。fixture 只创建生成名称的临时恢复库，使用普通 `DROP DATABASE` 等待已关闭的测试连接退出及清理 autovacuum，仍有真实客户端连接时明确失败；不强制终止应用会话，不增加信号角色权限。维护连接与业务查询期限分开。已有环境缺少权限时记录阻塞，不自行创建管理员或改权限；本次授权新建的隔离集群按明确的初始化范围配置。
 - 交互开发另用 `development` 库／独立附件目录；不拿自动重建的 `honghao_test` 启动交互服务。配置方法见运行维护。锁文件安装，不升级依赖。
 
 最小实库入口（先完成上面检查）：

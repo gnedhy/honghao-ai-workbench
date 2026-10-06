@@ -177,5 +177,5 @@ def test_core_schema_ignores_additive_workbench_tables(tmp_path: Path) -> None:
         project = client.post("/api/projects", json={"title": "采购成本验证"})
 
     assert health.status_code == 200
-    assert Database(settings.database_url).schema_version() == 5
+    assert Database(settings.database_url).schema_version() == 6
     assert project.status_code == 201
