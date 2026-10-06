@@ -8,7 +8,9 @@
 | --- | --- | --- |
 | 确认与放弃修改 | `src/components/Interaction.tsx` → `DiscardChangesDialog` | 标题、说明、按钮、危险／普通确认；设置、资料、反馈、采购、研发、销售 |
 | 未保存保护 | 同文件 → `useUnsavedChanges`；`interactionNavigation.ts` | 业务提供 dirty、busy；取消保留输入，确认后继续原导航 |
-| 抽屉 | `src/components/Drawer.tsx` | 标题、宽度、正文、关闭前检查；研发详情／编辑、采购版本／本轮记录、销售参数／历史 |
+| 会话输入与项目导航 | `Composer.tsx`／`Sidebar.tsx` | 业务提供正文、busy／只读、项目列表及动作；公共组件不创建请求或保存草稿，真实消费者为 `ConversationScreen.tsx`／`App.tsx` |
+| 分段选择 | `SegmentedControl.tsx` | 值、选项、可访问名称及整体 disabled 由业务提供；聊天意图、任务看板、职能工作台等现有消费者 |
+| 抽屉 | `src/components/Drawer.tsx` | 标题、宽度、正文、关闭前检查；研发详情／编辑、采购版本／本轮记录、销售参数／历史、项目详情／任务运行；关闭时同步归还焦点 |
 | 折叠与滚动 | `Interaction.tsx` → `SettingsGroup`、`useMeasuredContent`、`useFadingScrollbars` | 异步高度、默认展开、收起 inert；设置、资料、帮助、授权记录 |
 | 单选菜单、搜索单选与日期 | `src/components/WorkbenchMenus.tsx` | 普通单选、可选删除、搜索候选、日期区间；采购／研发看板、销售测算。部门树与多选继续使用 `OrganizationControls.tsx` |
 | 开关 | `src/components/Switch.tsx` | 受控选中、禁用、忙碌；设置、授权、配方自动换算。确认及提交由业务提供 |
@@ -16,7 +18,7 @@
 | 台账与工具栏 | `src/components/WorkbenchLayout.tsx`；`WorkbenchSurface.module.css` | 结构与样式复用，列、宽度、筛选及权限由业务提供；采购／研发／销售 |
 | 分页、记录筛选 | `LedgerPagination.tsx`、`RecordFilters.tsx` | 总数、页数、筛选状态；采购／研发／销售／反馈 |
 | 原料只读详情与价格单元格 | `src/workbenches/ProcurementMaterialView.tsx` → `ReadOnlyMaterialDrawer`、`ledgerCell` | 采购排行、研发 `ResearchMaterialPrices`；调用方注入各自只读 GET。采购台账与分流的可写详情在 `ProcurementMaterialDrawer.tsx`，共用 `MaterialPriceBody` |
-| 表单操作栏 | `WorkbenchLayout.tsx` → `FormFooter` | 左侧状态，右侧操作，主操作最后；研发编辑。台账顶部保存不迁入底部 |
+| 表单操作栏 | `WorkbenchLayout.tsx` → `FormFooter` | 左侧状态，右侧操作，主操作最后；研发编辑及项目创建／更名。台账顶部保存不迁入底部 |
 | 客户报价编辑 | `src/workbenches/SalesQuoteEditor.tsx` → `salesQuoteSession.ts` | 销售内部展示／业务会话；状态、保存恢复、采用及退出由会话提供领域动作，复用 Drawer、DecimalInput、FormFooter 和 SalesProductPicker；公开工作台入口不变 |
 | 独立测算工作区 | `src/workbenches/SalesCalculator.tsx` → `salesCalculatorWorkspace.ts`／`SalesCalculatorPanel.tsx` | 工作区／请求属业务 Hook；分档、命名、展开和拖拽属面板，修改提议参与退出保护；复用金额输入、菜单、选品和确认；纯逻辑在 `salesCalculatorModel.ts` |
 | 研发详情与编辑 | `ResearchProductDrawer.tsx`／`ResearchFormulaEditor.tsx` → `researchEditSession.ts` | 业务内部维护产品身份、原因、可编辑基线、试算 token、draft revision、保存锁与冲突；复用共享退出契约、Drawer、金额输入和底部操作栏 |

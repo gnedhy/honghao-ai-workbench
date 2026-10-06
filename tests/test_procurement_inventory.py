@@ -183,10 +183,10 @@ def test_inventory_schema_verification_preserves_preferences_and_only_migrates_o
     store.save_preferences(admin, ['unit', 'latest_price', 'previous_latest_price', 'inventory_price', 'in_transit_price'], 'materials', 'scroll', 100)
     expected = store.preferences(admin)
     migration_count = migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test')
-    assert migration_count == 7
+    assert migration_count == 8
     assert store.schema_version() == 7
     assert store.preferences(admin) == expected
     store.save_preferences(admin, ['unit', 'latest_price'], 'materials', 'paged', 25)
     migration_count = migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test')
-    assert migration_count == 7
+    assert migration_count == 8
     assert store.preferences(admin)['ledger_columns'] == ['unit', 'latest_price']

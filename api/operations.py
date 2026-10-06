@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
+from uuid import UUID
 
 import psycopg
 from psycopg import sql
@@ -138,7 +139,7 @@ def _table_evidence(db, source_path_map: dict[str, str] | None = None) -> dict:
                 values[index] = source_path_map.get(values[index], values[index])
                 row = values
             encoded = json.dumps(row, ensure_ascii=False, separators=(',', ':'),
-                                 default=lambda value: {"bytes": bytes(value).hex()}).encode('utf-8')
+                                 default=lambda value: str(value) if isinstance(value, UUID) else {"bytes": bytes(value).hex()}).encode('utf-8')
             digest.update(encoded + b'\n')
             count += 1
         result[table] = {"count": count, "sha256": digest.hexdigest(), "columns": [c.name for c in cursor.description]}

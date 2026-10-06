@@ -68,25 +68,30 @@
       "permissions": "active AND (admin OR ai_enabled)，私有资源仍只属于本人，无主历史管理员只读",
       "data": "api/database.py 所有者、冻结来源、revision、持久接受回执及真实运行记录",
       "lifecycle": "持久消息接受与幂等执行分离；私有连续任务、SSE对账与真实停止／重启恢复",
-      "exits": "账号开关沿用 SettingsDialog dirty/busy；会话高级退出 H05，页面离开不取消后台",
-      "compatibility": "连续0005/0006/0007迁移与冻结SQLite原列投影；chat不建Task，固定内核无个人配置",
+      "exits": "消息与项目名草稿／busy参加共享检查；失权立即清理，离开不取消后台。",
+      "compatibility": "连续0005—0008迁移与冻结SQLite原列投影；title-only兼容，chat不建Task。",
       "recovery": "结束残留scope后收敛状态；失败不重放，正文／任务／合法成果保留",
       "consumers": [
         "src/App.tsx",
         "src/api.ts",
         "src/components/SettingsDialog.tsx",
-        "src/screens/ConversationScreen.tsx"
+        "src/screens/ConversationScreen.tsx",
+        "src/chat/useChatWorkspace.ts",
+        "src/chat/ProjectDrawer.tsx"
       ],
       "apiPatterns": [
         "test_ai_workspace*.py",
         "test_tasks.py",
         "test_sqlite_migration.py",
         "test_migrations.py",
-        "test_ai_runtime*.py"
+        "test_ai_runtime*.py",
+        "test_ai_project_ui*.py"
       ],
       "apiTests": [
         "tests/test_ai_workspace.py::test_private_graph_and_modules_are_isolated_even_from_administrators",
-        "tests/test_ai_runtime.py::test_execution_private_idempotent_stream_and_continuous_task"
+        "tests/test_ai_runtime.py::test_execution_private_idempotent_stream_and_continuous_task",
+        "tests/test_ai_project_ui.py::test_project_create_receipt_survives_rename_and_owner_isolation",
+        "tests/test_ai_project_ui.py::test_active_execution_uses_running_input_and_run_history_is_safe"
       ],
       "browserTests": [
         {
@@ -98,6 +103,11 @@
           "file": "scripts/check-ai-runtime.mjs",
           "id": "h04-actual-app-execute-and-reconcile",
           "apiTest": "tests/test_ai_runtime_ui.py::test_browser_ai_runtime_actual_consumers"
+        },
+        {
+          "file": "scripts/check-ai-project-ui.mjs",
+          "id": "h05-chat-work-draft-and-real-history",
+          "apiTest": "tests/test_ai_project_ui_browser.py::test_browser_ai_project_ui_actual_consumers"
         }
       ]
     },
@@ -107,25 +117,29 @@
       "permissions": "active AND (admin OR ai_enabled)，私有资源仍只属于本人，无主历史管理员只读",
       "data": "api/database.py 所有者、冻结来源、revision、持久接受回执及真实运行记录",
       "lifecycle": "持久消息接受与幂等执行分离；私有连续任务、SSE对账与真实停止／重启恢复",
-      "exits": "账号开关沿用 SettingsDialog dirty/busy；会话高级退出 H05，页面离开不取消后台",
-      "compatibility": "连续0005/0006/0007迁移与冻结SQLite原列投影；chat不建Task，固定内核无个人配置",
+      "exits": "消息与项目名草稿／busy参加共享检查；失权立即清理，离开不取消后台。",
+      "compatibility": "连续0005—0008迁移与冻结SQLite原列投影；title-only兼容，chat不建Task。",
       "recovery": "结束残留scope后收敛状态；失败不重放，正文／任务／合法成果保留",
       "consumers": [
         "src/App.tsx",
         "src/api.ts",
         "src/components/SettingsDialog.tsx",
-        "src/screens/TaskBoardScreen.tsx"
+        "src/screens/TaskBoardScreen.tsx",
+        "src/chat/useTaskRuns.ts"
       ],
       "apiPatterns": [
         "test_ai_workspace*.py",
         "test_tasks.py",
         "test_sqlite_migration.py",
         "test_migrations.py",
-        "test_ai_runtime*.py"
+        "test_ai_runtime*.py",
+        "test_ai_project_ui*.py"
       ],
       "apiTests": [
         "tests/test_ai_workspace.py::test_private_graph_and_modules_are_isolated_even_from_administrators",
-        "tests/test_ai_runtime.py::test_execution_private_idempotent_stream_and_continuous_task"
+        "tests/test_ai_runtime.py::test_execution_private_idempotent_stream_and_continuous_task",
+        "tests/test_ai_project_ui.py::test_project_create_receipt_survives_rename_and_owner_isolation",
+        "tests/test_ai_project_ui.py::test_active_execution_uses_running_input_and_run_history_is_safe"
       ],
       "browserTests": [
         {
@@ -137,6 +151,11 @@
           "file": "scripts/check-ai-runtime.mjs",
           "id": "h04-actual-app-execute-and-reconcile",
           "apiTest": "tests/test_ai_runtime_ui.py::test_browser_ai_runtime_actual_consumers"
+        },
+        {
+          "file": "scripts/check-ai-project-ui.mjs",
+          "id": "h05-chat-work-draft-and-real-history",
+          "apiTest": "tests/test_ai_project_ui_browser.py::test_browser_ai_project_ui_actual_consumers"
         }
       ]
     }

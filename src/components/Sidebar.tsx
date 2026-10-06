@@ -2,6 +2,7 @@ import {sectionNavigation,workbenchPages,procurementNavigationPage} from "../wor
 import { ArrowLeft, ChevronDown, ChevronUp, CircleHelp, ChevronRight, FolderClosed, LogOut, MessageCircle, Plus, Search, Settings, UserRound, X,  } from "lucide-react";
 import { useEffect, useState } from "react";
 import { HelpDialog } from "./HelpDialog";
+import {WorkbenchOptionMenu} from './WorkbenchMenus';
 import { PROCUREMENT_PAGE_LABELS, RESEARCH_PAGE_LABELS, SALES_PAGE_LABELS, type ResearchPage, type SalesPage, type Conversation, type CurrentUser, type ModuleVisibility, type ProcurementPage, type Project, type RuntimeEnvironment, type Section, type WorkbenchId } from "../types";
 
 type SidebarProps = {
@@ -24,7 +25,10 @@ type SidebarProps = {
   onSectionChange: (section: Section) => void;
   onNewConversation: () => void;
   onConversationOpen: (conversationId: string) => void;
-  onProjectCreate: (title: string) => void;
+  onProjectCreate: () => void;
+  onProjectOpen: (id:string) => void;
+  onProjectNewConversation: (id:string) => void;
+  onDataRetry:()=>void;
   onSearchOpen: () => void;
   onFeedbackOpen: () => void;
   feedbackUnread: number | null;
@@ -61,6 +65,9 @@ export function Sidebar({
   onNewConversation,
   onConversationOpen,
   onProjectCreate,
+  onProjectOpen,
+  onProjectNewConversation,
+  onDataRetry,
   onSearchOpen,
   onFeedbackOpen,
   feedbackUnread,
@@ -73,8 +80,6 @@ export function Sidebar({
   onLogout,
 }: SidebarProps) {
   const [expandedProjectId, setExpandedProjectId] = useState("");
-  const [projectCreateOpen, setProjectCreateOpen] = useState(false);
-  const [newProjectTitle, setNewProjectTitle] = useState("");
   const [helpOpen, setHelpOpen] = useState(false);
 
   useEffect(() => {
@@ -97,14 +102,6 @@ export function Sidebar({
   };
 
   const recentConversations = [...conversations].reverse();
-
-  const submitProject = () => {
-    const title = newProjectTitle.trim();
-    if (!title) return;
-    onProjectCreate(title);
-    setNewProjectTitle("");
-    setProjectCreateOpen(false);
-  };
 
   return (
     <>
@@ -154,22 +151,25 @@ export function Sidebar({
           })}</SidebarGroup>}
           {activeSection === "workbench" && openedWorkbenchId === "sales" && <SidebarGroup title="销售工作台">{workbenchPages.sales.map(({id,icon:Icon}) => { return <button className={`workbench-page-row${salesPage === id ? " is-active" : ""}`} type="button" key={id} aria-current={salesPage === id ? "page" : undefined} onClick={() => { onSalesPageChange(id); onMobileClose(); }}><Icon size={15} aria-hidden="true"/><span>{SALES_PAGE_LABELS[id]}</span></button>; })}</SidebarGroup>}
           {enabledModules.chat && <>
-            <SidebarGroup title="置顶"><p className="sidebar-empty">暂无置顶会话</p></SidebarGroup>
-            <SidebarGroup title="项目" action={<button className="sidebar-group__action" type="button" aria-label="新建项目" onClick={() => setProjectCreateOpen((open) => !open)}><Plus size={14} /></button>}>
-            {projectCreateOpen && <form className="project-create" onSubmit={(event) => { event.preventDefault(); submitProject(); }}><FolderClosed size={14} /><input autoFocus aria-label="项目名称" placeholder="项目名称" value={newProjectTitle} onChange={(event) => setNewProjectTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { setNewProjectTitle(""); setProjectCreateOpen(false); } }} /></form>}
+            <SidebarGroup title="项目" action={<button className="sidebar-group__action" type="button" aria-label="新建项目" onClick={onProjectCreate}><Plus size={14} /></button>}>
             {dataState === "loading" && <p className="sidebar-empty">正在加载项目…</p>}
-            {dataState === "error" && <p className="sidebar-empty sidebar-empty--error">项目暂时无法加载</p>}
+            {dataState === "error" && <p className="sidebar-empty sidebar-empty--error">项目刷新失败<button type="button" className="secondary-button" onClick={onDataRetry}>重试项目列表</button></p>}
             {dataState === "ready" && projects.length === 0 && <p className="sidebar-empty">还没有项目</p>}
             {projects.map((project, index) => {
               const expanded = expandedProjectId === project.id;
               const relatedConversations = conversations.filter((conversation) => conversation.project_id === project.id);
               return (
                 <div className="project-entry" key={project.id}>
+                  <div className="ai-project-nav-row">
                   <button className={expanded ? "project-row is-expanded" : "project-row"} type="button" aria-expanded={expanded} onClick={() => setExpandedProjectId(expanded ? "" : project.id)}>
                     <span className={`project-mark project-mark--${(index % 3) + 1}`}><FolderClosed size={14} /></span>
                     <ScrollingTitle>{project.title}</ScrollingTitle>
                     <ChevronRight className="project-row__chevron" size={14} />
                   </button>
+                  <WorkbenchOptionMenu label={`${project.title}项目操作`} value="" display="操作" className="ai-project-menu"
+                    options={[{value:'details',label:'项目详情'},...(project.owner_id===currentUser.id?[{value:'new',label:'新建会话'}]:[])]}
+                    onSelect={value=>value==='details'?onProjectOpen(project.id):onProjectNewConversation(project.id)}/>
+                  </div>
                   {expanded && (
                     <div className="project-thread-list">
                       {relatedConversations.length === 0 && <p className="sidebar-empty sidebar-empty--nested">暂无关联会话</p>}

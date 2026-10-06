@@ -21,14 +21,23 @@ const server = await createServer({ configFile: false, plugins: [react(), {
 import {createRoot} from 'react-dom/client';
 import {SalesCalculator} from '/src/workbenches/SalesCalculator';
 import {Composer} from '/src/components/Composer';
+import {useMessageDraft} from '/src/chat/useMessageDraft';
 import '/src/styles.css';
 const product={id:'test',code:'测试产品',name:'测试产品',source:'research',department:'测试',latest_cost:'4.99',inventory_cost:'5.10',status:'ready',special_allocation:false,source_version:'test'};
 window.submissions=[];
+function DraftComposer(){
+  const draft=useMessageDraft('id-check',{conversationId:null,projectId:null,mode:'chat'},async value=>{
+    window.submissions.push({message:value.content,key:value.key});
+    if(window.submissions.length===1)throw new Error('synthetic lost acknowledgement');
+    return {};
+  },()=>false);
+  return h(Composer,{compact:true,mode:'聊天',value:draft.value,onChange:draft.setValue,onSubmit:draft.submit,busy:draft.busy});
+}
 createRoot(document.getElementById('root')).render(new URLSearchParams(location.search).get('kind')==='composer'
-  ? h(Composer,{compact:true,onSubmit:async(message,key)=>{window.submissions.push({message,key});return window.submissions.length!==1;}})
+  ? h(DraftComposer)
   : h(SalesCalculator,{products:[product],accessLevel:3}));`;
   },
-}], server: { host: "127.0.0.1", port: 0, allowedHosts: ["workbench.test"] } });
+}], server: { host: "127.0.0.1", port: 0, hmr:false, allowedHosts: ["workbench.test"] } });
 await server.listen();
 const port = server.httpServer.address().port;
 const browser = await chromium.launch({ headless: true, args: ["--host-resolver-rules=MAP workbench.test 127.0.0.1", "--no-proxy-server"] });

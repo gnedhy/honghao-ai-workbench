@@ -47,7 +47,7 @@ function Root() {
       }
     }} />;
   }
-  return <App currentUser={user} onUserChanged={setUser} onPasswordChanged={(message) => { setLoginNotice(message); setUser(null); }} onLogout={async () => { try { await logout(); } finally { setUser(null); } }} />;
+  return <App currentUser={user} onUserChanged={setUser} onPasswordChanged={(message) => { setLoginNotice(message); setUser(null); }} onSessionInvalid={()=>{setUser(undefined);void fetchCurrentUser().then(setUser).catch(()=>{setLoginNotice("登录状态无法确认，请重新登录或稍后刷新。");setUser(null);});}} onLogout={async () => { try { await logout(); } finally { setUser(null); } }} />;
 }
 
 createRoot(document.getElementById("root")!).render(

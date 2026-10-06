@@ -3,9 +3,10 @@ type SegmentedControlProps<T extends string> = {
   options: readonly T[];
   onChange: (value: T) => void;
   label: string;
+  disabled?: boolean;
 };
 
-export function SegmentedControl<T extends string>({ value, options, onChange, label }: SegmentedControlProps<T>) {
+export function SegmentedControl<T extends string>({ value, options, onChange, label, disabled=false }: SegmentedControlProps<T>) {
   const activeIndex = options.indexOf(value);
 
   return (
@@ -17,6 +18,7 @@ export function SegmentedControl<T extends string>({ value, options, onChange, l
           key={option}
           type="button"
           role="tab"
+          disabled={disabled}
           aria-selected={option === value}
           onClick={() => onChange(option)}
         >

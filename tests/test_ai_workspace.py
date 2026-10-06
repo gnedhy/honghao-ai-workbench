@@ -189,6 +189,9 @@ def test_workspace_snapshot_restores_owners_links_receipts_and_runs(workspace, t
     from api.settings import Settings
     settings, client, users = workspace
     login(client,'alice')
+    project_request={'title':'snapshot creation receipt','submission_key':str(uuid4())}
+    project=client.post('/api/projects',json=project_request).json()
+    renamed=client.patch('/api/projects/'+project['id'],json={'title':'snapshot renamed','revision':project['revision']}).json()
     first = submit(client)
     Database(settings.database_url).create_run(first['task']['id'], first['message']['id'],
         'synthetic-controller', actor_id=users[0]['id'])
@@ -202,3 +205,5 @@ def test_workspace_snapshot_restores_owners_links_receipts_and_runs(workspace, t
     restore_snapshot(target,snapshot)
     with transaction(second_pg['url']) as db:
         assert {k:v for k,v in _table_evidence(db).items() if k in names} == before
+    restored=Database(second_pg['url']).create_project(project_request['title'],actor_id=users[0]['id'],submission_key=project_request['submission_key'])
+    assert restored['id']==renamed['id'] and restored['title']==renamed['title']

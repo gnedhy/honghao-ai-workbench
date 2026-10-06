@@ -7,7 +7,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from api.postgres import transaction
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 TASK_STATUSES = ('created', 'running', 'waiting', 'completed', 'stopped', 'failed', 'blocked')
 RUN_STATUSES = TASK_STATUSES[1:]
 
@@ -79,10 +79,16 @@ class Database:
             raise RuntimeError('Database schema is not initialized')
         return int(row[0])
 
-    def create_project(self, title, *, actor_id):
+    def create_project(self, title, *, actor_id, submission_key=None):
         with transaction(self.url, write=True) as db:
             _actor(db, actor_id)
-            return _one(db, 'INSERT INTO projects(id,title,owner_id) VALUES(%s,%s,%s) RETURNING *', (str(uuid4()), title, actor_id))
+            if submission_key:
+                existing = _one(db, 'SELECT * FROM projects WHERE owner_id=%s AND creation_key=%s', (actor_id, submission_key))
+                if existing:
+                    if existing['creation_title'] != title:
+                        raise WorkspaceConflictError('Creation request differs from accepted request')
+                    return existing
+            return _one(db, 'INSERT INTO projects(id,title,owner_id,creation_key,creation_title) VALUES(%s,%s,%s,%s,%s) RETURNING *', (str(uuid4()), title, actor_id, submission_key, title if submission_key else None))
 
     def list_projects(self, *, actor_id):
         with transaction(self.url) as db:
