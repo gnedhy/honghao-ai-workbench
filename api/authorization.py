@@ -35,9 +35,12 @@ class AuthorizationStore:
         scope_levels: dict[str, int],
         module_id: ModuleId,
         method: str,
+        *, ai_enabled: bool = False,
     ) -> bool:
         if is_system_admin:
             return True
+        if module_id in ("chat", "tasks"):
+            return ai_enabled
         if module_id == "knowledge":
             return scope_levels.get("knowledge", 0) >= (2 if method == "GET" else 3)
         if module_id == "workbench":

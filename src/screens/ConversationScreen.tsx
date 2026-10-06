@@ -10,6 +10,9 @@ type ConversationScreenProps = ScreenChromeProps & {
   mode: "聊天" | "工作";
   onModeChange: (mode: "聊天" | "工作") => void;
   projects: Project[];
+  projectSaving?: boolean;
+  projectError?: string;
+  onProjectRetry?: () => void;
   projectId: string | null;
   onProjectChange: (projectId: string | null) => void;
   messages: ConversationMessage[];
@@ -28,6 +31,9 @@ export function ConversationScreen({
   mode,
   onModeChange,
   projects,
+  projectSaving = false,
+  projectError,
+  onProjectRetry,
   projectId,
   onProjectChange,
   messages,
@@ -48,11 +54,12 @@ export function ConversationScreen({
         environment={environment}
       />
 
+      {projectError && <div className="conversation-state conversation-state--error" role="alert">{projectError}<button className="secondary-button" type="button" disabled={projectSaving} onClick={onProjectRetry}>重新读取项目归属</button></div>}
       {view === "new" ? (
         <section key={mode} className={`new-conversation-empty new-conversation-empty--${mode === "工作" ? "work" : "chat"}`}>
           <div className="new-conversation-empty__content">
             <h1>{mode === "工作" ? "我们该处理什么工作？" : "随时可以开始。"}</h1>
-            <Composer compact={mode === "聊天"} empty mode={mode} onSubmit={onSubmit} projects={projects} projectId={projectId} onProjectChange={onProjectChange} />
+            <Composer compact={mode === "聊天"} empty mode={mode} onSubmit={onSubmit} projects={projects} projectId={projectId} onProjectChange={onProjectChange} projectSaving={projectSaving} />
             {messagesState === "error" && (
               <p className="conversation-state conversation-state--error" role="alert">提交失败，内容已保留，请稍后重试。</p>
             )}
@@ -70,12 +77,12 @@ export function ConversationScreen({
               <div className="conversation-entry" key={message.id}>
                 <div className="chat-turn chat-turn--user"><p>{message.content}</p></div>
                 {message.task_id && message.task_status === "created" && (
-                  <div className="work-tool-event"><CheckCircle2 size={14} /><span>已创建持久任务 · 待执行</span></div>
+                  <div className="work-tool-event"><CheckCircle2 size={14} /><span>已接受工作请求 · 待执行</span></div>
                 )}
               </div>
             ))}
           </div>
-          <Composer compact={mode === "聊天"} mode={mode} onSubmit={onSubmit} projects={projects} projectId={projectId} onProjectChange={onProjectChange} />
+          <Composer compact={mode === "聊天"} mode={mode} onSubmit={onSubmit} projects={projects} projectId={projectId} onProjectChange={onProjectChange} projectSaving={projectSaving} />
         </section>
       )}
     </main>

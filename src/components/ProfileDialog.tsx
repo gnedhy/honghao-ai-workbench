@@ -102,6 +102,7 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
         <div className="personal-profile__scroll" tabIndex={0} role="region" aria-label="我的权限与密码设置">
         <section className="personal-profile__access personal-account-permissions" aria-label="我的权限">
           <SettingsGroup id="my-permissions" title="我的权限" description="查看功能模块与职能工作台的授权范围。" summary={profile.is_system_admin ? "系统管理员" : `${Object.keys(profile.scope_levels).length} 项已授权`}>
+            <div className="personal-account-scope-heading"><span>项目 AI 工作区</span><span>{profile.is_system_admin || profile.ai_enabled ? "已授权" : "未授权"}</span></div>
             {profile.is_system_admin && <p className="personal-profile__hint">拥有全部业务范围和系统管理权限。</p>}
             {[{ id: "modules", title: "功能模块", scopes: ["knowledge"] }, { id: "workbenches", title: "职能工作台", scopes: ["procurement", "research", "sales", "management"] }].map(group => ({ ...group, scopes: group.scopes.filter(scope => profile.is_system_admin || (profile.scope_levels[scope as keyof typeof profile.scope_levels] ?? 0) >= 2) })).filter(group => group.scopes.length > 0).map(group => <SettingsGroup key={group.id} id={"my-permissions-" + group.id} title={group.title} description={group.id === "modules" ? "查看各功能模块的访问权限。" : "查看各工作台的业务操作权限。"} summary={`${group.scopes.length} 项已授权`}>
               {group.scopes.map(scope => <div className="personal-account-scope" key={scope}>
@@ -113,7 +114,7 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
                 </div>}
               </div>)}
             </SettingsGroup>)}
-            <p className="personal-profile__hint">{!profile.is_system_admin && !Object.values(profile.scope_levels).some(level => level >= 2) ? "暂无已授权的功能模块或工作台。" : "业务功能仍受模块启用状态限制。"}</p>
+            <p className="personal-profile__hint">{!profile.is_system_admin && !profile.ai_enabled && !Object.values(profile.scope_levels).some(level => level >= 2) ? "暂无已授权的功能模块或工作台。" : "业务功能仍受模块启用状态限制。"}</p>
           </SettingsGroup>
         </section>
         <section className="personal-profile__security" aria-label="账号安全">

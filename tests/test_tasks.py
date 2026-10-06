@@ -47,14 +47,15 @@ def test_each_work_submission_creates_an_independent_persistent_task(tmp_path: P
             f"/api/conversations/{conversation['id']}/submissions",
             json={"mode": "work", "content": "整理访谈中的事实与缺口", "submission_key": "39d1978c-8f61-4e14-a1ac-ce8d04132b52"},
         ).json()["task"]
+        second_conversation = client.post("/api/conversations", json={"title": "独立目标", "project_id": project["id"]}).json()
         second = client.post(
-            f"/api/conversations/{conversation['id']}/submissions",
+            f"/api/conversations/{second_conversation['id']}/submissions",
             json={"mode": "work", "content": "生成下一轮访谈问题", "submission_key": "bfb2c77e-b960-431f-b2c7-7aa9ac721b45"},
         ).json()["task"]
 
     assert first["id"] != second["id"]
     assert first["conversation_id"] == conversation["id"]
-    assert second["conversation_id"] == conversation["id"]
+    assert second["conversation_id"] == second_conversation["id"]
     assert first["project_id"] == project["id"]
     assert second["project_id"] == project["id"]
     assert first["status"] == "created"
@@ -85,7 +86,7 @@ def test_tasks_keep_project_snapshot_when_conversation_project_changes(tmp_path:
         ).json()["task"]
         client.patch(
             f"/api/conversations/{conversation['id']}",
-            json={"project_id": next_project["id"]},
+            json={"project_id": next_project["id"], "revision": conversation["revision"]},
         )
         second_task = client.post(
             f"/api/conversations/{conversation['id']}/submissions",
@@ -93,7 +94,7 @@ def test_tasks_keep_project_snapshot_when_conversation_project_changes(tmp_path:
         ).json()["task"]
         client.patch(
             f"/api/conversations/{conversation['id']}",
-            json={"project_id": None},
+            json={"project_id": None, "revision": conversation["revision"] + 1},
         )
         third_task = client.post(
             f"/api/conversations/{conversation['id']}/submissions",
@@ -102,8 +103,8 @@ def test_tasks_keep_project_snapshot_when_conversation_project_changes(tmp_path:
         first_detail = client.get(f"/api/tasks/{first_task['id']}")
 
     assert first_task["project_id"] == first_project["id"]
-    assert second_task["project_id"] == next_project["id"]
-    assert third_task["project_id"] is None
+    assert first_task["id"] == second_task["id"] == third_task["id"]
+    assert second_task["project_id"] == third_task["project_id"] == first_project["id"]
     assert first_detail.status_code == 200
     assert first_detail.json() == first_task
 

@@ -67,6 +67,7 @@ try {
           if (detailReads === 1 || detailReads === 3) return route.fulfill({ status: 503, json: { detail: 'W6 合成详情失败' } });
         }
         const response = await route.fetch({ url: new URL(url.pathname + url.search, api).href });
+        if (fault === 'preferences-slow' && url.pathname === base + '/preferences' && req.method() === 'PUT') await new Promise(resolve => setTimeout(resolve, 500));
         if (adjusting) adjusted = true;
         const delayedOverview = fault === 'overview-slow' && url.pathname === base + '/overview' && ++overviewReads === 2;
         const delayedDetail = fault === 'drawer-refresh-slow' && adjusted && req.method() === 'GET' && url.pathname.startsWith(base + '/materials/');
@@ -117,11 +118,12 @@ try {
     assert.equal(data.current_update.input_items.find(row => row.code === 'W6-000').draft_price, '11');
     assert.equal(data.materials.find(row => row.code === 'W6-000').published_price, '10');
   });
-  await run('cross-page-sort-filter-zero-and-save', '', async ({ page, get, writes }) => {
+  await run('cross-page-sort-filter-zero-and-save', 'preferences-slow', async ({ page, get, writes }) => {
     await page.getByRole('button', { name: '编辑价格', exact: true }).waitFor();
     await page.locator('summary').filter({ hasText: '显示' }).click();
     await page.getByRole('spinbutton', { name: '自定义每页条目数' }).fill('10');
     await page.getByRole('spinbutton', { name: '自定义每页条目数' }).press('Enter');
+    await page.waitForFunction(() => document.querySelectorAll('tbody tr').length === 10);
     await page.getByRole('button', { name: '编辑价格', exact: true }).click();
     const order = () => page.locator('tbody tr td[data-column="identity"]').allTextContents();
     const before = await order();

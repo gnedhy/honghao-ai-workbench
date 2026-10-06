@@ -272,6 +272,7 @@ export function createUser(input: {
   additional_department_ids: string[];
   password?: string;
   is_system_admin: boolean;
+  ai_enabled?: boolean;
   scope_levels: Partial<Record<AccessScope, AccessLevel>>;
 }): Promise<ManagedUser> {
   return fetchJson<ManagedUser>("/api/users", {
@@ -291,7 +292,7 @@ export function deleteDepartment(id: string): Promise<void> {
   return fetchJson(`/api/departments/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
-export function updateUser(userId: string, input: { is_active?: boolean; is_system_admin?: boolean; scope_levels?: Partial<Record<AccessScope, AccessLevel>> }): Promise<ManagedUser> {
+export function updateUser(userId: string, input: { is_active?: boolean; is_system_admin?: boolean; ai_enabled?: boolean; scope_levels?: Partial<Record<AccessScope, AccessLevel>> }): Promise<ManagedUser> {
   return fetchJson<ManagedUser>(`/api/users/${userId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -329,11 +330,12 @@ export function createConversation(
 export function setConversationProject(
   conversationId: string,
   projectId: string | null,
+  revision: number,
 ): Promise<Conversation> {
   return fetchJson<Conversation>(`/api/conversations/${conversationId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ project_id: projectId }),
+    body: JSON.stringify({ project_id: projectId, revision }),
   });
 }
 
@@ -342,11 +344,12 @@ export function submitConversation(
   mode: "chat" | "work",
   content: string,
   submissionKey: string,
+  taskId?: string,
 ): Promise<{ message: ConversationMessage; task: TaskItem | null }> {
   return fetchJson(`/api/conversations/${conversationId}/submissions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode, content, submission_key: submissionKey }),
+    body: JSON.stringify({ mode, content, submission_key: submissionKey, task_id: taskId }),
   });
 }
 

@@ -59,23 +59,23 @@ def test_conversation_project_association_survives_rename_and_duplicate_titles(t
 
         associated = client.patch(
             f"/api/conversations/{conversation['id']}",
-            json={"project_id": original_project["id"]},
+            json={"project_id": original_project["id"], "revision": conversation["revision"]},
         )
         renamed = client.patch(
             f"/api/projects/{original_project['id']}",
-            json={"title": "同名项目"},
+            json={"title": "同名项目", "revision": original_project["revision"]},
         )
         duplicate_project = client.post("/api/projects", json={"title": "同名项目"}).json()
         listed = client.get("/api/conversations")
         unassociated = client.patch(
             f"/api/conversations/{conversation['id']}",
-            json={"project_id": None},
+            json={"project_id": None, "revision": associated.json()["revision"]},
         )
 
     assert associated.status_code == 200
     assert associated.json()["project_id"] == original_project["id"]
     assert renamed.status_code == 200
-    assert renamed.json() == {"id": original_project["id"], "title": "同名项目"}
+    assert renamed.json() == {**original_project, "title": "同名项目", "revision": 2}
     assert duplicate_project["id"] != original_project["id"]
     assert listed.json()[0]["project_id"] == original_project["id"]
     assert unassociated.status_code == 200

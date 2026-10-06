@@ -12,11 +12,12 @@ type ComposerProps = {
   mode?: "聊天" | "工作";
   onSubmit?: (message: string, submissionKey: string) => Promise<boolean>;
   projects?: Project[];
+  projectSaving?: boolean;
   projectId?: string | null;
   onProjectChange?: (projectId: string | null) => void;
 };
 
-export function Composer({ compact = false, empty = false, mode = "工作", onSubmit, projects = [], projectId = null, onProjectChange }: ComposerProps) {
+export function Composer({ compact = false, empty = false, mode = "工作", onSubmit, projects = [], projectId = null, onProjectChange, projectSaving = false }: ComposerProps) {
   const [message, setMessage] = useState("");
   const [chatMenuOpen, setChatMenuOpen] = useState(false);
   const [workMenuOpen, setWorkMenuOpen] = useState(false);
@@ -275,6 +276,8 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
             <button
               className="composer__project composer__project--selected"
               type="button"
+              disabled={projectSaving}
+              aria-busy={projectSaving}
               aria-label={`移除项目：${project.title}`}
               title="移除项目"
               onClick={() => onProjectChange?.(null)}
@@ -290,6 +293,8 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
               <button
                 className="composer__project composer__project--empty"
                 type="button"
+                disabled={projectSaving}
+                aria-busy={projectSaving}
                 aria-label="选择项目"
                 aria-haspopup="menu"
                 aria-expanded={projectMenuOpen}
@@ -308,6 +313,7 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
                   {projects.map((item, index) => (
                     <button
                       className="composer__project-option"
+                      disabled={projectSaving}
                       type="button"
                       role="menuitem"
                       key={item.id}

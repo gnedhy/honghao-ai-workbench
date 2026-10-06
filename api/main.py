@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 from api.authorization import AuthorizationStore
 from api.feedback import FeedbackStore, create_feedback_router
 from api.procurement_news import NewsStore
-from api.database import Database, SubmissionConflictError
+from api.database import Database, SubmissionConflictError, WorkspaceAccessError, WorkspaceNotFoundError, WorkspaceConflictError
 from api.identity import DuplicateIdentityError, IdentityStore, SESSION_COOKIE_NAME, INITIAL_ACCOUNT_PASSWORD
 from api.knowledge import InvalidKnowledgeSourceError, KnowledgeStore
 from api.modules import (
@@ -135,6 +135,7 @@ class CurrentUserResponse(BaseModel):
     additional_department_ids: list[str] = Field(default_factory=list)
     departments: list[dict] = Field(default_factory=list)
     is_system_admin: bool
+    ai_enabled: bool = False
     scope_levels: dict[AccessScope, AccessLevel]
 
 
@@ -150,6 +151,7 @@ class UserCreate(BaseModel):
     department: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)] | None = None
     password: Annotated[str, StringConstraints(min_length=1, max_length=1_000)] = INITIAL_ACCOUNT_PASSWORD
     is_system_admin: bool = False
+    ai_enabled: bool = False
     scope_levels: dict[AccessScope, AccessLevel] = Field(default_factory=dict)
     primary_department_id: str | None = None
     additional_department_ids: list[str] = Field(default_factory=list)
@@ -167,6 +169,7 @@ class UserUpdate(BaseModel):
 
     is_active: bool | None = None
     is_system_admin: bool | None = None
+    ai_enabled: bool | None = None
     scope_levels: dict[AccessScope, AccessLevel] | None = None
 
 
@@ -213,62 +216,87 @@ class AuditEventResponse(BaseModel):
 
 
 class ProjectCreate(BaseModel):
-    title: str
+    model_config = ConfigDict(extra="forbid")
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
 class ProjectResponse(BaseModel):
     id: str
     title: str
+    owner_id: str | None
+    revision: int
 
 
-class ProjectUpdate(BaseModel):
-    title: str
+class ProjectUpdate(ProjectCreate):
+    revision: int | None = Field(default=None, gt=0, strict=True)
 
 
-class ConversationCreate(BaseModel):
-    title: str
+class ConversationCreate(ProjectCreate):
     project_id: str | None = None
 
 
-class ConversationResponse(BaseModel):
-    id: str
-    title: str
+class ConversationResponse(ProjectResponse):
     project_id: str | None
 
 
 class ConversationProjectUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int | None = Field(default=None, gt=0, strict=True)
     project_id: str | None
 
 
 class ConversationSubmission(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_id: str | None = None
     mode: Literal["chat", "work"]
     content: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=10_000)]
     submission_key: UUID
 
 
 class InitialConversationSubmission(ConversationSubmission):
+    task_id: None = None
     title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
     project_id: str | None = None
 
 
+TaskStatus = Literal["created", "running", "waiting", "completed", "stopped", "failed", "blocked"]
+
+
 class MessageResponse(BaseModel):
+    owner_id: str | None
+    role: Literal["user", "assistant", "tool"]
     id: str
     conversation_id: str
     mode: Literal["chat", "work"]
     content: str
     created_at: str
     task_id: str | None
-    task_status: Literal["created"] | None
+    task_status: TaskStatus | None
 
 
 class TaskResponse(BaseModel):
+    owner_id: str | None
+    revision: int
     id: str
     conversation_id: str
     objective: str
     project_id: str | None
-    status: Literal["created"]
+    status: TaskStatus
     created_at: str
-    latest_run: None
+    latest_run: str | None
+
+
+class TaskRunResponse(BaseModel):
+    id: str
+    task_id: str
+    owner_id: str
+    input_message_id: str
+    status: Literal["running", "waiting", "completed", "stopped", "failed", "blocked"]
+    started_at: str
+    ended_at: str | None
+    waiting_reason: str | None
+    stop_reason: str | None
+    runtime_version: str
 
 
 class SubmissionResponse(BaseModel):
@@ -428,7 +456,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         if runtime_settings.module_modes["tasks"] == "off":
             raise HTTPException(status_code=404, detail="Module not available")
         if not authorization.has_module_access(
-            user["is_system_admin"], user["scope_levels"], "tasks", "POST"
+            user["is_system_admin"], user["scope_levels"], "tasks", "POST", ai_enabled=user["ai_enabled"]
         ):
             raise HTTPException(status_code=403, detail="Permission denied")
 
@@ -456,7 +484,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             # Evaluation accepts a JSON body but only reads costs; the sales router still checks its scope.
             access_method = "GET" if request.method == "POST" and request.url.path == "/api/workbenches/sales/calculator/evaluate" else request.method
             if user is None or not authorization.has_module_access(
-                user["is_system_admin"], user["scope_levels"], module_id, access_method
+                user["is_system_admin"], user["scope_levels"], module_id, access_method, ai_enabled=user["ai_enabled"]
             ):
                 return JSONResponse(status_code=403, content={"detail": "Permission denied"})
         return await call_next(request)
@@ -601,6 +629,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                     department=user.department,
                     password=user.password,
                     is_system_admin=user.is_system_admin,
+                    ai_enabled=user.ai_enabled,
                     scope_levels=user.scope_levels,
                     primary_department_id=user.primary_department_id,
                     additional_department_ids=user.additional_department_ids,
@@ -680,7 +709,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     def update_user(user_id: str, update: UserUpdate, request: Request) -> UserResponse:
         with transaction(runtime_settings.database_url, write=True):
             actor = require_system_admin(request)
-            if update.is_active is None and update.is_system_admin is None and update.scope_levels is None:
+            if update.is_active is None and update.is_system_admin is None and update.scope_levels is None and update.ai_enabled is None:
                 raise HTTPException(status_code=422, detail="No account changes supplied")
             if user_id == actor["id"]:
                 raise HTTPException(status_code=422, detail="Cannot modify the current administrator")
@@ -689,6 +718,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                     user_id,
                     is_active=update.is_active,
                     is_system_admin=update.is_system_admin,
+                    ai_enabled=update.ai_enabled,
                     scope_levels=update.scope_levels,
                 )
             except ValueError as error:
@@ -895,7 +925,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             ModuleStatusResponse(id=module_id, mode=runtime_settings.module_modes[module_id])
             for module_id in MODULE_IDS
             if authorization.has_module_access(
-                user["is_system_admin"], user["scope_levels"], module_id, "GET"
+                user["is_system_admin"], user["scope_levels"], module_id, "GET", ai_enabled=user["ai_enabled"]
             )
         ]
 
@@ -1002,27 +1032,41 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             filename=f"{Path(source['filename']).stem}.md",
         )
 
+    @app.exception_handler(WorkspaceAccessError)
+    async def workspace_access_error(request: Request, error: WorkspaceAccessError):
+        return JSONResponse(status_code=403, content={"detail": str(error)})
+
+    @app.exception_handler(WorkspaceNotFoundError)
+    async def workspace_not_found(request: Request, error: WorkspaceNotFoundError):
+        return JSONResponse(status_code=404, content={"detail": str(error)})
+
+    @app.exception_handler(WorkspaceConflictError)
+    async def workspace_conflict(request: Request, error: WorkspaceConflictError):
+        return JSONResponse(status_code=409, content={"detail": str(error)})
+
     @app.post("/api/projects", response_model=ProjectResponse, status_code=201)
     def create_project(project: ProjectCreate, request: Request) -> ProjectResponse:
         with transaction(runtime_settings.database_url, write=True):
             actor = current_user(request)
             module_id = module_for_api_path(request.url.path)
-            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method):
+            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method, ai_enabled=actor["ai_enabled"]):
                 raise HTTPException(status_code=403, detail="Permission denied")
-            return ProjectResponse(**request.app.state.database.create_project(project.title))
+            return ProjectResponse(**request.app.state.database.create_project(project.title, actor_id=actor["id"]))
 
     @app.get("/api/projects", response_model=list[ProjectResponse])
     def list_projects(request: Request) -> list[ProjectResponse]:
-        return [ProjectResponse(**project) for project in request.app.state.database.list_projects()]
+        return [ProjectResponse(**project) for project in request.app.state.database.list_projects(actor_id=current_user(request)["id"])]
 
     @app.patch("/api/projects/{project_id}", response_model=ProjectResponse)
     def rename_project(project_id: str, update: ProjectUpdate, request: Request) -> ProjectResponse:
         with transaction(runtime_settings.database_url, write=True):
             actor = current_user(request)
             module_id = module_for_api_path(request.url.path)
-            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method):
+            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method, ai_enabled=actor["ai_enabled"]):
                 raise HTTPException(status_code=403, detail="Permission denied")
-            project = request.app.state.database.rename_project(project_id, update.title)
+            if update.revision is None:
+                raise HTTPException(status_code=428, detail="Revision required; refresh the client")
+            project = request.app.state.database.rename_project(project_id, update.title, update.revision, actor_id=actor["id"])
             if project is None:
                 raise HTTPException(status_code=404, detail="Project not found")
             return ProjectResponse(**project)
@@ -1032,9 +1076,9 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         with transaction(runtime_settings.database_url, write=True):
             actor = current_user(request)
             module_id = module_for_api_path(request.url.path)
-            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method):
+            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method, ai_enabled=actor["ai_enabled"]):
                 raise HTTPException(status_code=403, detail="Permission denied")
-            created = request.app.state.database.create_conversation(conversation.title, conversation.project_id)
+            created = request.app.state.database.create_conversation(conversation.title, conversation.project_id, actor_id=actor["id"])
             if created is None:
                 raise HTTPException(status_code=404, detail="Project not found")
             return ConversationResponse(**created)
@@ -1043,7 +1087,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     def list_conversations(request: Request, project_id: str | None = None) -> list[ConversationResponse]:
         return [
             ConversationResponse(**conversation)
-            for conversation in request.app.state.database.list_conversations(project_id)
+            for conversation in request.app.state.database.list_conversations(project_id, actor_id=current_user(request)["id"])
         ]
 
     @app.patch("/api/conversations/{conversation_id}", response_model=ConversationResponse)
@@ -1055,11 +1099,15 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         with transaction(runtime_settings.database_url, write=True):
             actor = current_user(request)
             module_id = module_for_api_path(request.url.path)
-            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method):
+            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method, ai_enabled=actor["ai_enabled"]):
                 raise HTTPException(status_code=403, detail="Permission denied")
+            if update.revision is None:
+                raise HTTPException(status_code=428, detail="Revision required; refresh the client")
             conversation = request.app.state.database.set_conversation_project(
                 conversation_id,
                 update.project_id,
+                update.revision,
+                actor_id=actor["id"],
             )
             if conversation is None:
                 raise HTTPException(status_code=404, detail="Conversation or project not found")
@@ -1077,7 +1125,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         with transaction(runtime_settings.database_url, write=True):
             actor = current_user(request)
             module_id = module_for_api_path(request.url.path)
-            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method):
+            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method, ai_enabled=actor["ai_enabled"]):
                 raise HTTPException(status_code=403, detail="Permission denied")
             ensure_submission_modules_available(submission.mode, current_user(request))
             try:
@@ -1087,6 +1135,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                     submission.mode,
                     submission.content,
                     str(submission.submission_key),
+                    actor_id=actor["id"],
                 )
             except SubmissionConflictError as error:
                 raise HTTPException(status_code=409, detail="Submission key already used") from error
@@ -1107,7 +1156,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         with transaction(runtime_settings.database_url, write=True):
             actor = current_user(request)
             module_id = module_for_api_path(request.url.path)
-            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method):
+            if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method, ai_enabled=actor["ai_enabled"]):
                 raise HTTPException(status_code=403, detail="Permission denied")
             ensure_submission_modules_available(submission.mode, current_user(request))
             try:
@@ -1116,6 +1165,8 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                     submission.mode,
                     submission.content,
                     str(submission.submission_key),
+                    submission.task_id,
+                    actor_id=actor["id"],
                 )
             except SubmissionConflictError as error:
                 raise HTTPException(status_code=409, detail="Submission key already used") from error
@@ -1128,23 +1179,27 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         response_model=list[MessageResponse],
     )
     def list_messages(conversation_id: str, request: Request) -> list[MessageResponse]:
-        if request.app.state.database.get_conversation(conversation_id) is None:
+        if request.app.state.database.get_conversation(conversation_id, actor_id=current_user(request)["id"]) is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         return [
             MessageResponse(**message)
-            for message in request.app.state.database.list_messages(conversation_id)
+            for message in request.app.state.database.list_messages(conversation_id, actor_id=current_user(request)["id"])
         ]
 
     @app.get("/api/tasks", response_model=list[TaskResponse])
     def list_tasks(request: Request) -> list[TaskResponse]:
-        return [TaskResponse(**task) for task in request.app.state.database.list_tasks()]
+        return [TaskResponse(**task) for task in request.app.state.database.list_tasks(actor_id=current_user(request)["id"])]
 
     @app.get("/api/tasks/{task_id}", response_model=TaskResponse)
     def get_task(task_id: str, request: Request) -> TaskResponse:
-        task = request.app.state.database.get_task(task_id)
+        task = request.app.state.database.get_task(task_id, actor_id=current_user(request)["id"])
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
         return TaskResponse(**task)
+
+    @app.get("/api/tasks/{task_id}/runs", response_model=list[TaskRunResponse])
+    def list_task_runs(task_id: str, request: Request):
+        return request.app.state.database.list_runs(task_id, actor_id=current_user(request)["id"])
 
     app.include_router(create_procurement_router(procurement, authorization, runtime_settings))
     app.include_router(create_research_router(research, runtime_settings))

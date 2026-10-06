@@ -60,5 +60,71 @@
       "apiTests": ["tests/test_sales_calculator_ui.py::test_browser_sales_calculator", "tests/test_sales_recovery.py::test_sales_request_replay_binding_permissions_and_versions"],
       "browserTests": [{"file": "scripts/check-sales-calculator.mjs", "id": "save-slow-keeps-newer-input-and-busy-exit", "apiTest": "tests/test_sales_calculator_ui.py::test_browser_sales_calculator"}]
     }
+  ],
+  "modules": [
+    {
+      "id": "chat",
+      "owner": "聊天／任务业务维护者",
+      "permissions": "active AND (admin OR ai_enabled)，私有资源仍只属于本人，无主历史管理员只读",
+      "data": "api/database.py 所有者、冻结来源、revision、持久接受回执及真实运行记录",
+      "lifecycle": "接受提交与运行分离；补充沿用任务；同目标并发阻断",
+      "exits": "账号开关沿用 SettingsDialog dirty/busy；会话高级退出 H05，页面离开不取消后台",
+      "compatibility": "显式0005迁移；冻结SQLite原列投影；旧PATCH需刷新，历史不猜所有者",
+      "recovery": "对应版本恢复后迁移；不回退新写入，正式恢复由H12/H13验证",
+      "consumers": [
+        "src/App.tsx",
+        "src/api.ts",
+        "src/components/SettingsDialog.tsx",
+        "src/screens/ConversationScreen.tsx"
+      ],
+      "apiPatterns": [
+        "test_ai_workspace*.py",
+        "test_tasks.py",
+        "test_sqlite_migration.py",
+        "test_migrations.py"
+      ],
+      "apiTests": [
+        "tests/test_ai_workspace.py::test_private_graph_and_modules_are_isolated_even_from_administrators"
+      ],
+      "browserTests": [
+        {
+          "file": "scripts/check-ai-workspace.mjs",
+          "id": "h03-actual-app-task-continuity",
+          "apiTest": "tests/test_ai_workspace_ui.py::test_browser_ai_workspace_actual_consumers"
+        }
+      ]
+    },
+    {
+      "id": "tasks",
+      "owner": "聊天／任务业务维护者",
+      "permissions": "active AND (admin OR ai_enabled)，私有资源仍只属于本人，无主历史管理员只读",
+      "data": "api/database.py 所有者、冻结来源、revision、持久接受回执及真实运行记录",
+      "lifecycle": "接受提交与运行分离；补充沿用任务；同目标并发阻断",
+      "exits": "账号开关沿用 SettingsDialog dirty/busy；会话高级退出 H05，页面离开不取消后台",
+      "compatibility": "显式0005迁移；冻结SQLite原列投影；旧PATCH需刷新，历史不猜所有者",
+      "recovery": "对应版本恢复后迁移；不回退新写入，正式恢复由H12/H13验证",
+      "consumers": [
+        "src/App.tsx",
+        "src/api.ts",
+        "src/components/SettingsDialog.tsx",
+        "src/screens/TaskBoardScreen.tsx"
+      ],
+      "apiPatterns": [
+        "test_ai_workspace*.py",
+        "test_tasks.py",
+        "test_sqlite_migration.py",
+        "test_migrations.py"
+      ],
+      "apiTests": [
+        "tests/test_ai_workspace.py::test_private_graph_and_modules_are_isolated_even_from_administrators"
+      ],
+      "browserTests": [
+        {
+          "file": "scripts/check-ai-workspace.mjs",
+          "id": "h03-actual-app-task-continuity",
+          "apiTest": "tests/test_ai_workspace_ui.py::test_browser_ai_workspace_actual_consumers"
+        }
+      ]
+    }
   ]
 }

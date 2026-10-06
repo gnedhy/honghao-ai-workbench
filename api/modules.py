@@ -39,7 +39,7 @@ _API_PREFIXES: tuple[tuple[str, ModuleId], ...] = (
     ("/api/conversations", "chat"),
     ("/api/projects", "chat"),
     ("/api/knowledge", "knowledge"),
-    ("/api/skills", "automation"),
+    ("/api/skills", "chat"),
     ("/api/workflows", "automation"),
     ("/api/connectors", "automation"),
     ("/api/workbenches", "workbench"),

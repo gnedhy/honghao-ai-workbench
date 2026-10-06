@@ -105,6 +105,26 @@ export function validateContracts(contract, sources, backend, nodeids, fileExist
       assert.ok(row.browserTests.length, `${row.id}: no actual browser regression`);
     }
   }
+  const modules = contract.modules ?? [];
+  unique(modules.map(row => row.id), 'Module contracts');
+  if (modules.length) same(backend.modules, front.literalUnion('Section'), 'Backend/frontend module IDs');
+  for (const row of modules) {
+    assert.ok(backend.modules.includes(row.id) && !ids.includes(row.id), `${row.id}: unknown non-workbench module`);
+    for (const field of ['owner','permissions','data','lifecycle','exits','compatibility','recovery']) assert.ok(typeof row[field] === 'string' && row[field].trim(), `${row.id}: missing ${field}`);
+    unique(row.apiPatterns, `${row.id}: apiPatterns`);
+    assert.ok(row.apiPatterns.every(pattern => /^test_[A-Za-z0-9_*]+\.py$/.test(pattern)), `${row.id}: unsafe API pattern`);
+    unique(row.consumers, `${row.id}: consumers`);
+    for (const consumer of row.consumers) { safePath(consumer); assert.ok(fileExists(consumer), `${row.id}: missing consumer`); }
+    unique(row.apiTests, `${row.id}: apiTests`);
+    assert.ok(row.apiTests.length && row.apiTests.every(id => nodeids.includes(id)), `${row.id}: uncollected API test`);
+    assert.ok(Array.isArray(row.browserTests) && row.browserTests.length, `${row.id}: no actual browser regression`);
+    for (const test of row.browserTests) {
+      validateFrontendTest(test, sources, 'browser');
+      assert.ok(nodeids.includes(test.apiTest) && backend.browserWrappers[test.file]?.includes(test.apiTest), `${row.id}: browser test has no API wrapper`);
+    }
+    const selected = scopeFiles(contract, row.id, [...new Set(nodeids.map(id => path.posix.basename(id.split('::')[0])))]);
+    assert.ok([...row.apiTests,...row.browserTests.map(test => test.apiTest)].every(id => selected.includes(id.split('::')[0])), `${row.id}: regression outside scope`);
+  }
   return front;
 }
 
@@ -123,7 +143,7 @@ export function validateChanges(changed, declarations, contract, sources, nodeid
     assert.ok(['presentation', 'business'].includes(declaration.kind), `${file}: unknown change kind`);
     for (const field of ['summary', 'permissions', 'data', 'lifecycle', 'exits', 'compatibility', 'recovery']) assert.ok(typeof declaration[field] === 'string' && declaration[field].trim(), `${file}: missing ${field}`);
     unique(declaration.modules, `${file}: modules`);
-    assert.ok(declaration.modules.length && declaration.modules.every(id => contract.workbenches.some(row => row.id === id)), `${file}: unknown module`);
+    assert.ok(declaration.modules.length && declaration.modules.every(id => [...contract.workbenches,...(contract.modules ?? [])].some(row => row.id === id)), `${file}: unknown module`);
     unique(declaration.files, `${file}: files`);
     assert.ok(declaration.files.length, `${file}: files are empty`);
     for (const item of declaration.files) { safePath(item); assert.ok(product.includes(item), `${file}: file is not in this product diff: ${item}`); covered.add(item); }
@@ -147,7 +167,7 @@ export function validateChanges(changed, declarations, contract, sources, nodeid
 export function scopeFiles(contract, scope, files) {
   if (scope === 'all') return [];
   if (scope === 'frontend') return null;
-  const row = contract.workbenches.find(item => item.id === scope && item.entry !== null);
+  const row = [...contract.workbenches.filter(item => item.entry !== null),...(contract.modules ?? [])].find(item => item.id === scope);
   assert.ok(row, `Unknown verification scope: ${scope}`);
   const patterns = row.apiPatterns.map(pattern => new RegExp('^' + pattern.replaceAll('.', '\\.').replaceAll('*', '.*') + '$'));
   const selected = files.filter(file => patterns.some(pattern => pattern.test(file))).sort().map(file => 'tests/' + file);

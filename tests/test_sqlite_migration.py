@@ -21,12 +21,13 @@ def legacy(tmp_path, pg_targets):
             if table in migration.POST_SQLITE_TABLES:
                 continue
             columns = target.execute("SELECT column_name,data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=%s AND column_name!='_order' ORDER BY ordinal_position", (table,)).fetchall()
+            columns = [(name,kind) for name,kind in columns if name not in migration.POST_SQLITE_COLUMNS.get(table,set())]
             declarations = [migration._quote(name) + (' INTEGER PRIMARY KEY AUTOINCREMENT' if table == 'research_cost_records' and name == 'sequence' else ' ' + ('INTEGER' if kind in {'integer','bigint'} else 'BLOB' if kind == 'bytea' else 'TEXT')) for name, kind in columns]
             source.execute(f'CREATE TABLE {migration._quote(table)} ({",".join(declarations)})')
             names = ','.join(migration._quote(name) for name, _ in columns)
             rows = target.execute(f'SELECT {names},_order FROM public.{migration._quote(table)} ORDER BY _order').fetchall()
             if table == 'schema_metadata':
-                rows = [row for row in rows if row[0] != migration.POST_SQLITE_VERSION]
+                rows = [(row[0], migration.FROZEN_VERSIONS[row[0]], *row[2:]) for row in rows if row[0] != migration.POST_SQLITE_VERSION]
             source.executemany(f'INSERT INTO {migration._quote(table)} ({names},rowid) VALUES ({",".join("?" for _ in range(len(columns)+1))})', rows)
         source.execute("INSERT INTO identity_users(id,username,display_name,password_salt,password_hash,is_active,created_at,access_level,rowid) VALUES(?,?,?,?,?,1,'2026-09-14T01:02:03+00:00',1,19)", ('u1', 'MixedCase', '长姓名·测试', b'\x00\x01\xff', b'\x00secret-hash\xfe'))
         source.execute("INSERT INTO identity_user_roles VALUES('u1','employee')")

@@ -43,3 +43,7 @@ ModuleBoundary 按用户 ID／工作台 ID 隔离错误。chunk 加载失败使�
 反馈独立维护于 [useAppFeedback](../../src/appFeedback.ts)与[FeedbackDialog](../../src/components/FeedbackDialog.tsx)：草稿保留在本次登录，30 秒／聚焦／可见性单飞读未读，窗口卸载取消请求；普通关闭保留新建草稿，身份变化清空会话。反馈不成为工作台业务状态仓库。
 
 新增模块或关键任务还须同步 [生产监测约定](operations-monitoring.md)的实际检查、责任和恢复入口；统一 verifier 保护 moduleChecks 的完整性。
+
+## 聊天与任务增强
+
+H03 的 chat/tasks 使用同一静态契约文件的 `modules` 条目，校验真实模块 ID、业务维护者、权限、数据、退出恢复与实际消费者；不登记为职能工作台，不建立运行时注册器。已有工作台检查保持不变。任务范围验证可选 `--scope chat` 或 `--scope tasks`，涉及身份、迁移、公共类型和跨模块变更仍以 `--scope all` 收尾。文件、规则和技能实际接口在 H06/H07 接入时补齐对应合同与回归。

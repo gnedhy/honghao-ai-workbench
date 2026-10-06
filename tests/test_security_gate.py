@@ -138,3 +138,14 @@ def test_security_gate_scans_tests_and_build_output_for_strong_tokens(tmp_path: 
     assert "tests" in output
     assert "dist" in output
     assert "SEC002" in output
+
+
+def test_failure_reports_redact_test_passwords_without_hiding_failure_details(monkeypatch):
+    from tests.conftest import redact_test_credentials
+    from urllib.parse import quote
+    secret = 'synthetic-password-with-space and/slash'
+    encoded = quote(secret, safe='')
+    monkeypatch.setenv('HONGHAO_TEST_DATABASE_URL', 'postgresql://honghao_test_app:' + encoded + '@127.0.0.1:55434/honghao_test')
+    result = redact_test_credentials('AssertionError: expected 5; got 4; ' + secret + ' ' + encoded)
+    assert secret not in result and encoded not in result
+    assert 'AssertionError: expected 5; got 4' in result and result.count('[redacted]') == 2

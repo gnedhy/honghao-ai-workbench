@@ -31,6 +31,7 @@ def sequence(node, values):
 
 if __name__ == "__main__":
     workbenches = constants("api/workbenches.py")
+    modules = constants("api/modules.py")
     authorization = constants("api/authorization.py")
     alias = workbenches["WorkbenchId"]
     assert isinstance(alias, ast.Subscript) and isinstance(alias.value, ast.Name) and alias.value.id == "Literal"
@@ -42,6 +43,7 @@ if __name__ == "__main__":
                     if isinstance(value, ast.Constant) and isinstance(value.value, str) and value.value.startswith('scripts/check-') and value.value.endswith('.mjs'):
                         wrappers.setdefault(value.value, []).append(path.as_posix() + '::' + node.name)
     print(json.dumps({
+        "modules": sequence(modules["MODULE_IDS"], modules),
         "workbenches": sequence(workbenches["WORKBENCH_IDS"], workbenches),
         "typeIds": sequence(alias.slice, workbenches),
         "scopes": sequence(authorization["WORKBENCH_SCOPE_IDS"], authorization),
