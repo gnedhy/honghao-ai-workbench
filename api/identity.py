@@ -312,6 +312,9 @@ class IdentityStore:
             if ai_enabled is not None:
                 connection.execute("UPDATE identity_users SET ai_enabled=%s WHERE id=%s", (int(ai_enabled), user_id))
             connection.execute("DELETE FROM identity_sessions WHERE user_id = %s", (user_id,))
+            # A revoked then re-enabled account must not resume a cached native context.
+            connection.execute('UPDATE ai_contexts SET reusable=0 WHERE owner_id=%s', (user_id,))
+            connection.execute("UPDATE task_runs SET stop_requested=1,stop_reason='permission_changed' WHERE owner_id=%s AND status IN ('running','waiting')", (user_id,))
             from api.procurement_collaboration import capabilities, pause_schedules
             current_scopes = dict(connection.execute(
                 "SELECT scope_id, access_level FROM identity_user_scopes WHERE user_id = %s", (user_id,)

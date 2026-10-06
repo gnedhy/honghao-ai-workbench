@@ -211,7 +211,7 @@ def test_identity_schema_is_additive_to_core_schema_v5(tmp_path: Path) -> None:
         ).fetchone()
 
     assert health.status_code == 200
-    assert Database(settings.database_url).schema_version() == 6
+    assert Database(settings.database_url).schema_version() == 7
     assert identity_version == (7,)
 
 

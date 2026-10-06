@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "H04 固定 Codex 内核运行：私有幂等执行、持久 SSE、取消和恢复、受控模型转发及 Linux 资源隔离。",
+  "modules": [
+    "chat",
+    "tasks",
+    "procurement",
+    "research",
+    "sales"
+  ],
+  "files": [
+    "api/codex_runtime.py",
+    "api/database.py",
+    "api/main.py",
+    "api/identity.py",
+    "api/migrations/postgresql/0006_ai_runtime.sql",
+    "src/App.tsx",
+    "src/api.ts",
+    "src/types.ts",
+    "src/chat/useConversationExecution.ts",
+    "src/screens/ConversationScreen.tsx",
+    "src/components/Composer.tsx",
+    "api/migrations/postgresql/0007_ai_runtime_restore.sql"
+  ],
+  "consumers": [
+    "src/App.tsx",
+    "src/api.ts",
+    "src/chat/useConversationExecution.ts",
+    "src/screens/ConversationScreen.tsx",
+    "src/screens/TaskBoardScreen.tsx",
+    "src/components/Composer.tsx"
+  ],
+  "permissions": "消息／运行所有者由服务端身份校验；撤权立即使内核上下文失效并停止运行，模型请求逐次校验当前 AI 权限；管理员不跨私有资源。",
+  "data": "显式0006/0007迁移，业务schema7，保留旧运行和历史；chat运行无Task；每输入一次受控运行，事件与正文／终态原子保存；冻结SQLite增加明确排除列／表。",
+  "lifecycle": "接受与执行分离，POST幂等、GET对账；SSE按seq恢复，前端不转发RPC；停止确认后结束，启动恢复不自动重跑；scope／沙箱失败阻断AI。",
+  "exits": "执行启动／停止确认参加busy；服务器运行不阻止离开，取消订阅不取消任务；身份失效清空正文与订阅；H05继续完整草稿与视觉。",
+  "compatibility": "固定0.160.0二进制与bubblewrap、稳定协议和受保护配置；普通聊天不建任务；文件、技能、业务MCP归H06/H07/H08，不启用自动化或知识模块。",
+  "recovery": "单服务lease下先结束残留scope，无法确认时阻断AI；保留输入／部分正文／任务；同输入不重跑；恢复产品记录不自动重放内核缓存。",
+  "verification": {
+    "api": [
+      "tests/test_ai_runtime.py::test_execution_private_idempotent_stream_and_continuous_task",
+      "tests/test_ai_runtime.py::test_stop_closes_delayed_model_connection_before_worker_ends",
+      "tests/test_ai_runtime_ui.py::test_browser_ai_runtime_actual_consumers"
+    ],
+    "node": [
+      {
+        "file": "tests_ui/workbenchContracts.test.ts",
+        "id": "chat contracts use real module IDs and require collected browser consumers"
+      }
+    ],
+    "browser": [
+      {
+        "file": "scripts/check-ai-runtime.mjs",
+        "id": "h04-actual-app-execute-and-reconcile",
+        "apiTest": "tests/test_ai_runtime_ui.py::test_browser_ai_runtime_actual_consumers"
+      },
+      {
+        "file": "scripts/check-ai-runtime.mjs",
+        "id": "h04-actual-app-disconnect-stop-and-revoke",
+        "apiTest": "tests/test_ai_runtime_ui.py::test_browser_ai_runtime_actual_consumers"
+      }
+    ]
+  }
+}

@@ -67,10 +67,10 @@
       "owner": "聊天／任务业务维护者",
       "permissions": "active AND (admin OR ai_enabled)，私有资源仍只属于本人，无主历史管理员只读",
       "data": "api/database.py 所有者、冻结来源、revision、持久接受回执及真实运行记录",
-      "lifecycle": "接受提交与运行分离；补充沿用任务；同目标并发阻断",
+      "lifecycle": "持久消息接受与幂等执行分离；私有连续任务、SSE对账与真实停止／重启恢复",
       "exits": "账号开关沿用 SettingsDialog dirty/busy；会话高级退出 H05，页面离开不取消后台",
-      "compatibility": "显式0005迁移；冻结SQLite原列投影；旧PATCH需刷新，历史不猜所有者",
-      "recovery": "对应版本恢复后迁移；不回退新写入，正式恢复由H12/H13验证",
+      "compatibility": "连续0005/0006/0007迁移与冻结SQLite原列投影；chat不建Task，固定内核无个人配置",
+      "recovery": "结束残留scope后收敛状态；失败不重放，正文／任务／合法成果保留",
       "consumers": [
         "src/App.tsx",
         "src/api.ts",
@@ -81,16 +81,23 @@
         "test_ai_workspace*.py",
         "test_tasks.py",
         "test_sqlite_migration.py",
-        "test_migrations.py"
+        "test_migrations.py",
+        "test_ai_runtime*.py"
       ],
       "apiTests": [
-        "tests/test_ai_workspace.py::test_private_graph_and_modules_are_isolated_even_from_administrators"
+        "tests/test_ai_workspace.py::test_private_graph_and_modules_are_isolated_even_from_administrators",
+        "tests/test_ai_runtime.py::test_execution_private_idempotent_stream_and_continuous_task"
       ],
       "browserTests": [
         {
           "file": "scripts/check-ai-workspace.mjs",
           "id": "h03-actual-app-task-continuity",
           "apiTest": "tests/test_ai_workspace_ui.py::test_browser_ai_workspace_actual_consumers"
+        },
+        {
+          "file": "scripts/check-ai-runtime.mjs",
+          "id": "h04-actual-app-execute-and-reconcile",
+          "apiTest": "tests/test_ai_runtime_ui.py::test_browser_ai_runtime_actual_consumers"
         }
       ]
     },
@@ -99,10 +106,10 @@
       "owner": "聊天／任务业务维护者",
       "permissions": "active AND (admin OR ai_enabled)，私有资源仍只属于本人，无主历史管理员只读",
       "data": "api/database.py 所有者、冻结来源、revision、持久接受回执及真实运行记录",
-      "lifecycle": "接受提交与运行分离；补充沿用任务；同目标并发阻断",
+      "lifecycle": "持久消息接受与幂等执行分离；私有连续任务、SSE对账与真实停止／重启恢复",
       "exits": "账号开关沿用 SettingsDialog dirty/busy；会话高级退出 H05，页面离开不取消后台",
-      "compatibility": "显式0005迁移；冻结SQLite原列投影；旧PATCH需刷新，历史不猜所有者",
-      "recovery": "对应版本恢复后迁移；不回退新写入，正式恢复由H12/H13验证",
+      "compatibility": "连续0005/0006/0007迁移与冻结SQLite原列投影；chat不建Task，固定内核无个人配置",
+      "recovery": "结束残留scope后收敛状态；失败不重放，正文／任务／合法成果保留",
       "consumers": [
         "src/App.tsx",
         "src/api.ts",
@@ -113,16 +120,23 @@
         "test_ai_workspace*.py",
         "test_tasks.py",
         "test_sqlite_migration.py",
-        "test_migrations.py"
+        "test_migrations.py",
+        "test_ai_runtime*.py"
       ],
       "apiTests": [
-        "tests/test_ai_workspace.py::test_private_graph_and_modules_are_isolated_even_from_administrators"
+        "tests/test_ai_workspace.py::test_private_graph_and_modules_are_isolated_even_from_administrators",
+        "tests/test_ai_runtime.py::test_execution_private_idempotent_stream_and_continuous_task"
       ],
       "browserTests": [
         {
           "file": "scripts/check-ai-workspace.mjs",
           "id": "h03-actual-app-task-continuity",
           "apiTest": "tests/test_ai_workspace_ui.py::test_browser_ai_workspace_actual_consumers"
+        },
+        {
+          "file": "scripts/check-ai-runtime.mjs",
+          "id": "h04-actual-app-execute-and-reconcile",
+          "apiTest": "tests/test_ai_runtime_ui.py::test_browser_ai_runtime_actual_consumers"
         }
       ]
     }
