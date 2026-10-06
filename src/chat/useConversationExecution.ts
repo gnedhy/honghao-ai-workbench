@@ -4,7 +4,7 @@ import {useUnsavedChanges} from "../components/Interaction";
 
 const accessLost = (error: unknown) => [401,403,404].includes((error as {status?: number}).status ?? 0);
 
-export function useConversationExecution(owner: string | undefined, conversation: string | undefined, message: string | undefined, onSettled?: () => void | Promise<void>, onAccessLost?: () => void) {
+export function useConversationExecution(owner: string | undefined, conversation: string | undefined, message: string | undefined, onSettled?: () => void | Promise<void>, onAccessLost?: () => void, revision=0) {
   const [run, setRun] = useState<ConversationExecution | null>(null);
   const [ready, setReady] = useState(false);
   const [availability, setAvailability] = useState("正在检查 AI 执行配置…");
@@ -86,7 +86,7 @@ export function useConversationExecution(owner: string | undefined, conversation
       }});
     void read();
     return () => {live = false; controller.abort(); stream?.close(); clearTimeout(timer);};
-  }, [binding, conversation, message, retry]);
+  }, [binding, conversation, message, retry,revision]);
 
   const action = async (stop: boolean) => {
     if (operation.current || !conversation || !message) return;

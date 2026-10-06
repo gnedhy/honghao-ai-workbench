@@ -217,6 +217,11 @@ class CodexRuntime:
     def _modules(self, mode):
         _require(self.settings.module_modes['chat'] != 'off' and (mode == 'chat' or self.settings.module_modes['tasks'] != 'off'), 'module_unavailable')
 
+    def active(self, conversation, actor):
+        with transaction(self.url) as db:
+            _resource(db, 'conversations', conversation, actor, write=True)
+            return _one(db, f"SELECT {PUBLIC_COLUMNS} FROM task_runs WHERE conversation_id=%s AND context_id IS NOT NULL AND status IN ('running','waiting')", (conversation,))
+
     def stop(self, conversation, run, actor):
         with transaction(self.url, write=True) as db:
             row = self._owned(db, conversation, run, actor)

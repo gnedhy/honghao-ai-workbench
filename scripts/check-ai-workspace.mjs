@@ -56,9 +56,22 @@ try {
     const conv=(await get('api/conversations'))[0];
     const external=await page.request.patch(origin+`api/conversations/${conv.id}`,{data:{project_id:null,revision:conv.revision}});
     assert.equal(external.status(),200);
-    await page.getByLabel('输入工作要求',{exact:true}).fill('H03 after conflict');
-    await page.getByRole('button',{name:'选择项目',exact:true}).click();
-    await page.getByRole('menuitem',{name:project.title,exact:true}).click();
+    let releaseAssociation,associationReceived;
+    const heldAssociation=new Promise(resolve=>{releaseAssociation=resolve;});
+    const associationCaptured=new Promise(resolve=>{associationReceived=resolve;});
+    await page.route(`**/api/conversations/${conv.id}`,async route=>{
+      if(route.request().method()!=='PATCH')return route.continue();
+      const response=await route.fetch();associationReceived();await heldAssociation;await route.fulfill({response});
+    });
+    await page.getByLabel('输入工作要求',{exact:true}).fill('H03 before reassociation');
+    await page.getByLabel('选择项目',{exact:true}).click();
+    await page.locator('.composer').getByRole('button',{name:project.title,exact:true}).click();
+    await page.getByRole('button',{name:'继续编辑',exact:true}).click();
+    assert.equal(await page.getByLabel('输入工作要求',{exact:true}).inputValue(),'H03 before reassociation');
+    await page.getByLabel('选择项目',{exact:true}).click();
+    await page.locator('.composer').getByRole('button',{name:project.title,exact:true}).click();
+    await page.getByRole('button',{name:'放弃修改',exact:true}).click();await associationCaptured;
+    await page.getByLabel('输入工作要求',{exact:true}).fill('H03 after conflict');releaseAssociation();
     await page.getByRole('alert').filter({hasText:'已重新读取当前项目归属'}).waitFor();
     assert.equal(await page.getByLabel('输入工作要求',{exact:true}).inputValue(),'H03 after conflict');
     await page.getByRole('button',{name:'交给智能体执行',exact:true}).click();

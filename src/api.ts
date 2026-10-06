@@ -22,6 +22,7 @@ export type ConversationExecution = {
   phase: "starting" | "generating" | "ended"; output: string; event_seq: number;
   stop_requested: number; stop_reason: string | null; runtime_version: string;
 };
+export const workspaceHeaders=(actor?:string|null):Record<string,string> => actor?{'X-Workspace-Actor':actor}:{};
 export const fetchExecution = (conversation: string, message: string, signal?: AbortSignal) =>
   fetchJson<ConversationExecution | null>(`/api/conversations/${encodeURIComponent(conversation)}/messages/${encodeURIComponent(message)}/execution`, {signal});
 export const startExecution = (conversation: string, message: string) =>
@@ -72,16 +73,16 @@ export async function logout(): Promise<void> {
   if (!response.ok) throw new Error(`Logout failed with ${response.status}`);
 }
 
-export function fetchProjects(signal?: AbortSignal): Promise<Project[]> {
-  return fetchJson<Project[]>("/api/projects", { signal });
+export function fetchProjects(signal?: AbortSignal, actor?:string): Promise<Project[]> {
+  return fetchJson<Project[]>("/api/projects", { signal, headers:workspaceHeaders(actor) });
 }
 
-export function fetchConversations(signal?: AbortSignal): Promise<Conversation[]> {
-  return fetchJson<Conversation[]>("/api/conversations", { signal });
+export function fetchConversations(signal?: AbortSignal, actor?:string): Promise<Conversation[]> {
+  return fetchJson<Conversation[]>("/api/conversations", { signal, headers:workspaceHeaders(actor) });
 }
 
-export function fetchTasks(signal?: AbortSignal): Promise<TaskItem[]> {
-  return fetchJson<TaskItem[]>("/api/tasks", { signal });
+export function fetchTasks(signal?: AbortSignal, actor?:string): Promise<TaskItem[]> {
+  return fetchJson<TaskItem[]>("/api/tasks", { signal, headers:workspaceHeaders(actor) });
 }
 
 export function fetchWorkbenches(signal?: AbortSignal): Promise<WorkbenchStatus[]> {
@@ -317,15 +318,15 @@ export function fetchAuditEvents(): Promise<AuditEvent[]> {
   return fetchJson<AuditEvent[]>("/api/admin/audit-events");
 }
 
-export function fetchMessages(conversationId: string, signal?: AbortSignal): Promise<ConversationMessage[]> {
-  return fetchJson<ConversationMessage[]>(`/api/conversations/${conversationId}/messages`, { signal });
+export function fetchMessages(conversationId: string, signal?: AbortSignal, actor?:string): Promise<ConversationMessage[]> {
+  return fetchJson<ConversationMessage[]>(`/api/conversations/${conversationId}/messages`, {signal,headers:workspaceHeaders(actor)});
 }
 
-export function createProject(title: string): Promise<Project> {
+export function createProject(title: string, submissionKey?: string, actor?:string): Promise<Project> {
   return fetchJson<Project>("/api/projects", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
+    headers: { "Content-Type": "application/json", ...workspaceHeaders(actor) },
+    body: JSON.stringify({ title, submission_key: submissionKey }),
   });
 }
 
@@ -340,14 +341,31 @@ export function createConversation(
   });
 }
 
+export function renameProject(project: Project, title: string): Promise<Project> {
+  return fetchJson(`/api/projects/${project.id}`, {method:'PATCH', headers:{'Content-Type':'application/json',...workspaceHeaders(project.owner_id)}, body:JSON.stringify({title,revision:project.revision})});
+}
+export type TaskRun = {
+  id:string; task_id:string; owner_id:string|null; input_message_id:string;
+  status:Exclude<TaskItem['status'],'created'>; phase:'starting'|'generating'|'ended';
+  started_at:string; ended_at:string|null; stop_reason:string|null; waiting_reason:string|null;
+  runtime_version:string; output:string; model_requests:number; reported_model_tokens:number; model_network_ms:number;
+};
+export function fetchTaskRuns(taskId:string, signal?:AbortSignal,actor?:string):Promise<TaskRun[]> {
+  return fetchJson(`/api/tasks/${taskId}/runs`, {signal,headers:workspaceHeaders(actor)});
+}
+export function fetchActiveExecution(conversationId:string, signal?:AbortSignal,actor?:string):Promise<ConversationExecution|null> {
+  return fetchJson(`/api/conversations/${conversationId}/active-execution`, {signal,headers:workspaceHeaders(actor)});
+}
+
 export function setConversationProject(
   conversationId: string,
   projectId: string | null,
   revision: number,
+  actor?:string,
 ): Promise<Conversation> {
   return fetchJson<Conversation>(`/api/conversations/${conversationId}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...workspaceHeaders(actor) },
     body: JSON.stringify({ project_id: projectId, revision }),
   });
 }
@@ -358,10 +376,11 @@ export function submitConversation(
   content: string,
   submissionKey: string,
   taskId?: string,
+  actor?:string,
 ): Promise<{ message: ConversationMessage; task: TaskItem | null }> {
   return fetchJson(`/api/conversations/${conversationId}/submissions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...workspaceHeaders(actor) },
     body: JSON.stringify({ mode, content, submission_key: submissionKey, task_id: taskId }),
   });
 }
@@ -372,10 +391,11 @@ export function createConversationSubmission(
   mode: "chat" | "work",
   content: string,
   submissionKey: string,
+  actor?:string,
 ): Promise<{ conversation: Conversation; message: ConversationMessage; task: TaskItem | null }> {
   return fetchJson("/api/conversation-submissions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...workspaceHeaders(actor) },
     body: JSON.stringify({ title, project_id: projectId, mode, content, submission_key: submissionKey }),
   });
 }

@@ -112,7 +112,7 @@ def test_authorization_schema_is_additive_and_not_downgraded(tmp_path: Path) -> 
         )
 
     assert health.status_code == 200
-    assert Database(settings.database_url).schema_version() == 7
+    assert Database(settings.database_url).schema_version() == 8
     assert version == (5,)
     with TestClient(create_app(settings)) as client:
         assert client.get("/api/readiness").status_code == 503

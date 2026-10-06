@@ -37,16 +37,20 @@ try {
     await page.getByRole('button',{name:'交给智能体执行',exact:true}).click();
     await page.locator('.conversation-entry').filter({hasText:text}).waitFor();
   };
-  await run('h04-actual-app-execute-and-reconcile',1440,async({page,get})=>{
+  await run('h04-actual-app-execute-and-reconcile',1440,async({page,context,get})=>{
     let failConfig=true;
     await page.route('**/api/conversations/runtime-status',route=>failConfig
       ? route.fulfill({status:503,json:{detail:'Synthetic config read failure'}}) : route.continue());
-    await send(page,'H04 synthetic first');
+    // Seed two accepted pending inputs to keep the H04 ordering check explicit.
+    // H05's normal submit now starts the accepted input automatically.
+    const firstReply=await context.request.post(origin+'api/conversation-submissions',{data:{title:'H04 synthetic first',project_id:null,mode:'work',content:'H04 synthetic first',submission_key:crypto.randomUUID()}});
+    assert.equal(firstReply.status(),201);const first=await firstReply.json();
+    assert.equal((await context.request.post(origin+`api/conversations/${first.conversation.id}/submissions`,{data:{mode:'work',content:'H04 synthetic supplement',submission_key:crypto.randomUUID()}})).status(),201);
+    await page.reload();await page.getByRole('button',{name:'H04 synthetic first',exact:true}).click();
     await page.getByRole('alert').filter({hasText:'AI 执行配置读取失败'}).waitFor();
     failConfig=false;
     await page.getByRole('button',{name:'重新读取执行状态',exact:true}).click();
     await page.getByRole('button',{name:'开始执行',exact:true}).waitFor();
-    await send(page,'H04 synthetic supplement');
     await page.locator('.conversation-entry').filter({hasText:'H04 synthetic first'}).getByRole('button',{name:'查看本次执行',exact:true}).click();
     let failRefresh=true;
     await page.route('**/api/tasks',route=>failRefresh && route.request().method()==='GET'
@@ -76,7 +80,6 @@ try {
     await page.locator('.conversation-state').filter({hasText:'已完成'}).waitFor();
     const oldRows=await captured;
     await send(page,'LONG H04 next accepted while old refresh pending');
-    await page.getByRole('button',{name:'开始执行',exact:true}).click();
     await page.locator('.conversation-state').filter({hasText:'执行中'}).waitFor();
     releaseTasks();
     await page.waitForTimeout(300);
@@ -86,7 +89,7 @@ try {
     await page.getByRole('button',{name:'任务看板',exact:true}).click();
     await page.locator('.task-board').waitFor();
     await page.locator('.task-table .task-status').filter({hasText:'执行中'}).waitFor();
-    await page.getByRole('button',{name:'H04 synthetic first',exact:true}).click();
+    await page.locator('.task-table').getByRole('button',{name:'H04 synthetic first',exact:true}).click();
     await page.getByRole('button',{name:'停止执行',exact:true}).click();
     await page.locator('.conversation-state').filter({hasText:'已停止'}).waitFor();
     const runs=await get(`api/tasks/${tasks[0].id}/runs`);assert.equal(runs.length,3);
@@ -94,13 +97,12 @@ try {
     assert.ok(!await page.locator('.conversation-screen').textContent().then(text=>text.includes('synthetic-thread')));
   });
   await run('h04-actual-app-disconnect-stop-and-revoke',390,async({page,context,get})=>{
-    await send(page,'LONG H04 synthetic cancellation');
     let disconnected=false;
     await page.route('**/api/conversations/*/executions/*/events?*',route=>{
       if(!disconnected){disconnected=true;return route.abort('connectionclosed');}
       return route.continue();
     });
-    await page.getByRole('button',{name:'开始执行',exact:true}).click();
+    await send(page,'LONG H04 synthetic cancellation');
     await page.locator('.chat-turn--assistant').filter({hasText:'synthetic'}).waitFor();
     const tasks=await get('api/tasks');const current=tasks.find(task=>task.objective==='LONG H04 synthetic cancellation');
     assert.ok(current);
@@ -119,7 +121,6 @@ try {
       const users=await (await admin.request.get(origin+'api/users')).json();
       const alice=users.find(user=>user.username==='alice');
       await send(page,'LONG H04 synthetic revocation');
-      await page.getByRole('button',{name:'开始执行',exact:true}).click();
       await page.waitForFunction(async id=>{
         const rows=await fetch(`/api/tasks/${id}/runs`).then(response=>response.json());
         return Array.isArray(rows) && rows.length===2 && rows.at(-1).status==='running';

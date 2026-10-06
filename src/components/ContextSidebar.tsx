@@ -1,8 +1,6 @@
 import {
   ArrowLeft,
-  Check,
   CheckCircle2,
-  ChevronDown,
   Database,
   Download,
   FileText,
@@ -28,6 +26,7 @@ type ContextSidebarProps = {
   conversationMode: "聊天" | "工作";
   conversationView: "new" | "existing";
   projectTitle: string | null;
+  taskProjectTitle: string | null;
   automationTab: "技能" | "工作流";
   open: boolean;
   closing: boolean;
@@ -48,6 +47,7 @@ export function ContextSidebar({
   conversationMode,
   conversationView,
   projectTitle,
+  taskProjectTitle,
   automationTab,
   open,
   closing,
@@ -59,8 +59,6 @@ export function ContextSidebar({
   task,
   conversationTask,
 }: ContextSidebarProps) {
-  const [knowledgeScope, setKnowledgeScope] = useState("个人与公共知识");
-  const [model, setModel] = useState("宏昊企业模型");
   const [feedback, setFeedback] = useState<Feedback>(null);
 
   const panelTitle = section === "chat" ? (conversationMode === "聊天" ? "对话上下文" : "执行控制") : section === "knowledge" ? "文档工具" : section === "automation" ? (automationTab === "技能" ? "技能工具" : "工作流工具") : "任务详情";
@@ -77,51 +75,18 @@ export function ContextSidebar({
         </header>
 
         <div className="context-sidebar__body">
-          {section === "chat" && (
-            <>
-              {conversationMode === "聊天" ? (
-                <>
-                  <ToolSection title="本次上下文">
-                    <PropertyRow icon={<FolderClosed size={16} />} label="关联项目" value={conversationView === "existing" ? projectTitle ?? "未关联" : "未关联"} />
-                    <PropertyRow icon={<Database size={16} />} label="知识访问" value="按需引用" />
-                    <PropertyRow icon={<FileText size={16} />} label="当前引用" value={conversationView === "existing" ? "2 条知识" : "暂无"} />
-                    <PropertyRow icon={<FolderLock size={16} />} label="本次附件" value={conversationView === "existing" ? "1 个 · 仅当前会话" : "暂无"} />
-                  </ToolSection>
-                  <ToolSection title="对话边界">
-                    <PropertyRow icon={<ShieldCheck size={16} />} label="会话类型" value={conversationView === "existing" && projectTitle ? "项目上下文" : "个人对话"} />
-                    <PropertyRow icon={<FolderLock size={16} />} label="写入权限" value="关闭" />
-                    <PropertyRow icon={<CheckCircle2 size={16} />} label="知识沉淀" value={conversationView === "existing" ? "确认后保存" : "尚未启用"} />
-                  </ToolSection>
-                  <div className="tool-safety-note"><ShieldCheck size={16} /><p>对话模式只读取你主动引用的内容，不会执行文件写入或启动任务。</p></div>
-                </>
-              ) : (
-                <>
-                  <ToolSection title="执行环境">
-                    <PropertyRow icon={<FolderClosed size={16} />} label="项目上下文" value={projectTitle ?? "未选择"} />
-                    <ToolSelect icon={<Database size={16} />} label="知识范围" value={knowledgeScope} onChange={setKnowledgeScope} options={["个人与公共知识", "仅个人知识", "仅本次附件"]} />
-                    <ToolSelect icon={<WandSparkles size={16} />} label="执行模型" value={model} onChange={setModel} options={["宏昊企业模型", "通用模型", "轻量模型"]} />
-                    <div className="tool-setting">
-                      <span className="tool-setting__label"><FolderLock size={16} /><small>工作目录</small></span>
-                      <span className="tool-setting__value"><strong>{projectTitle ? "项目受控目录" : "临时受控目录"}</strong><span><CheckCircle2 size={14} />已授权</span></span>
-                    </div>
-                  </ToolSection>
-                  {conversationView === "existing" && conversationTask ? (
-                    <ToolSection title="当前任务">
-                      <PropertyRow icon={<CheckCircle2 size={16} />} label="任务状态" value={taskStatusLabel(conversationTask.status)} />
-                      <PropertyRow icon={<History size={16} />} label="最近运行" value={conversationTask.latest_run ?? "尚未运行"} />
-                      <PropertyRow icon={<FolderClosed size={16} />} label="项目快照" value={conversationTask.project_id ? "创建时已记录" : "未关联"} />
-                    </ToolSection>
-                  ) : (
-                    <ToolSection title="执行边界">
-                      <PropertyRow icon={<FileText size={16} />} label="文件写入" value="需人工确认" />
-                      <PropertyRow icon={<ShieldCheck size={16} />} label="外部操作" value="默认禁止" />
-                    </ToolSection>
-                  )}
-                  <div className="tool-safety-note"><ShieldCheck size={16} /><p>项目只提供本次工作的上下文与受控目录。任何写入仍会先生成修改预览，并等待你的确认。</p></div>
-                </>
-              )}
-            </>
-          )}
+          {section === "chat" && <>
+            <ToolSection title="当前会话">
+              <PropertyRow icon={<FolderClosed size={16}/>} label="会话项目" value={projectTitle??"未关联项目"}/>
+              <PropertyRow icon={<FileText size={16}/>} label="提交模式" value={conversationMode}/>
+            </ToolSection>
+            {conversationTask&&<ToolSection title="当前任务">
+              <PropertyRow icon={<FileText size={16}/>} label="目标" value={conversationTask.objective}/>
+              <PropertyRow icon={<CheckCircle2 size={16}/>} label="状态" value={taskStatusLabel(conversationTask.status)}/>
+              <PropertyRow icon={<FolderClosed size={16}/>} label="任务归属" value={taskProjectTitle??"未关联项目"}/>
+              <PropertyRow icon={<History size={16}/>} label="最近运行" value={conversationTask.latest_run?"已有运行记录":"尚未运行"}/>
+            </ToolSection>}
+          </>}
 
           {section === "knowledge" && (
             <KnowledgeStatusTools item={knowledgeItem} onFeedback={showFeedback} />
@@ -134,7 +99,7 @@ export function ContextSidebar({
           )}
 
           {section === "tasks" && (task
-            ? <TaskStatusTools task={task} onReturnChat={onReturnChat} />
+            ? <TaskStatusTools task={task} projectTitle={taskProjectTitle} onReturnChat={onReturnChat} />
             : <div className="tool-safety-note"><History size={16} /><p>选择一个任务后，这里会显示它的来源与项目快照。</p></div>
           )}
 
@@ -182,18 +147,16 @@ function KnowledgeStatusTools({ item, onFeedback }: { item: KnowledgeItem; onFee
   ]} note="个人知识只对本人可见。提交公共候选后仍需来源、内容和权限审查，原文不会被自动覆盖。" onFeedback={onFeedback} />;
 }
 
-function TaskStatusTools({ task, onReturnChat }: { task: TaskItem; onReturnChat: () => void }) {
+function TaskStatusTools({ task, projectTitle, onReturnChat }: { task: TaskItem; projectTitle:string|null; onReturnChat: () => void }) {
   return <>
     <ToolSection title="任务操作">
       <button className="tool-action" type="button" onClick={onReturnChat}><ArrowLeft size={16} /><span><strong>返回来源会话</strong><small>继续查看或补充这项工作</small></span></button>
     </ToolSection>
     <ToolSection title="任务快照">
       <PropertyRow icon={<CheckCircle2 size={16} />} label="状态" value={taskStatusLabel(task.status)} />
-      <PropertyRow icon={<FolderClosed size={16} />} label="项目关联" value={task.project_id ? "创建时已记录" : "未关联"} />
-      <PropertyRow icon={<History size={16} />} label="最近运行" value={task.latest_run ?? "尚未运行"} />
-      <PropertyRow icon={<FolderLock size={16} />} label="写入状态" value="未开始" />
+      <PropertyRow icon={<FolderClosed size={16} />} label="项目关联" value={projectTitle??"未关联项目"} />
+      <PropertyRow icon={<History size={16} />} label="最近运行" value={task.latest_run ? "已有运行记录" : "尚未运行"} />
     </ToolSection>
-    <div className="tool-safety-note"><ShieldCheck size={16} /><p>当前只创建了持久任务。后续接入受控执行环境后，才会产生真实运行、检查点与停止原因。</p></div>
   </>;
 }
 
@@ -269,29 +232,6 @@ function WorkflowStatusTools({ workflow, onFeedback }: { workflow: WorkflowItem;
 
 function ToolSection({ title, children }: { title: string; children: React.ReactNode }) {
   return <section className="tool-section"><h2>{title}</h2><div>{children}</div></section>;
-}
-
-function ToolSelect({ icon, label, value, options, onChange }: { icon: React.ReactNode; label: string; value: string; options: string[]; onChange: (value: string) => void }) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className={open ? "tool-select is-open" : "tool-select"} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false); }}>
-      <span className="tool-select__label">{icon}<small>{label}</small></span>
-      <button className="tool-select__control" type="button" aria-label={label} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
-        <strong>{value}</strong>
-        <ChevronDown size={15} />
-      </button>
-      {open && (
-        <div className="tool-select__menu" role="listbox" aria-label={`${label}选项`}>
-          {options.map((option) => (
-            <button className={option === value ? "is-selected" : ""} type="button" role="option" aria-selected={option === value} key={option} onClick={() => { onChange(option); setOpen(false); }}>
-              <span>{option}</span>{option === value && <Check size={15} />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 function PropertyRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {

@@ -528,7 +528,10 @@
     "tests/test_ai_runtime.py::test_cleanup_failure_keeps_run_unconfirmed_and_blocks_new_execution[scope]",
     "tests/test_ai_runtime.py::test_cleanup_failure_keeps_run_unconfirmed_and_blocks_new_execution[transport]",
     "tests/test_ai_runtime.py::test_runtime_snapshot_preserves_context_events_output_and_owner",
-    "tests/test_ai_runtime_ui.py::test_browser_ai_runtime_actual_consumers"
+    "tests/test_ai_runtime_ui.py::test_browser_ai_runtime_actual_consumers",
+    "tests/test_ai_project_ui.py::test_project_create_receipt_survives_rename_and_owner_isolation",
+    "tests/test_ai_project_ui.py::test_active_execution_uses_running_input_and_run_history_is_safe",
+    "tests/test_ai_project_ui_browser.py::test_browser_ai_project_ui_actual_consumers"
   ],
   "frontend": [
     {
@@ -866,6 +869,17 @@
       "ids": [
         "h04-actual-app-execute-and-reconcile",
         "h04-actual-app-disconnect-stop-and-revoke"
+      ]
+    },
+    {
+      "file": "scripts/check-ai-project-ui.mjs",
+      "kind": "browser",
+      "ids": [
+        "h05-project-receipt-rename-and-exits",
+        "h05-chat-work-draft-and-real-history",
+        "h05-mobile-navigation-draft-preservation",
+        "h05-legacy-admin-readonly-consumer",
+        "h05-identity-switch-never-submits-old-draft"
       ]
     }
   ],

@@ -228,6 +228,10 @@ class ProjectResponse(BaseModel):
     revision: int
 
 
+class ProjectSubmission(ProjectCreate):
+    submission_key: UUID | None = None
+
+
 class ProjectUpdate(ProjectCreate):
     revision: int | None = Field(default=None, gt=0, strict=True)
 
@@ -291,7 +295,7 @@ class TaskResponse(BaseModel):
 class TaskRunResponse(BaseModel):
     id: str
     task_id: str
-    owner_id: str
+    owner_id: str | None
     input_message_id: str
     status: Literal["running", "waiting", "completed", "stopped", "failed", "blocked"]
     started_at: str
@@ -299,6 +303,11 @@ class TaskRunResponse(BaseModel):
     waiting_reason: str | None
     stop_reason: str | None
     runtime_version: str
+    phase: Literal['starting', 'generating', 'ended']
+    output: str
+    model_requests: int
+    reported_model_tokens: int = Field(validation_alias='model_tokens')
+    model_network_ms: int
 
 
 class SubmissionResponse(BaseModel):
@@ -491,6 +500,11 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     @app.middleware("http")
     async def guard_disabled_modules(request: Request, call_next):
         module_id = module_for_api_path(request.url.path)
+        expected_actor = request.headers.get('X-Workspace-Actor')
+        if module_id in {'chat', 'tasks'} and expected_actor:
+            actor = getattr(request.state, 'current_user', None)
+            if actor is None or actor['id'] != expected_actor:
+                return JSONResponse(status_code=401, content={'detail':'Workspace identity changed; reload the session'})
         if module_id is not None and runtime_settings.module_modes[module_id] == "off":
             return JSONResponse(status_code=404, content={"detail": "Module not available"})
         if module_id is not None:
@@ -1059,13 +1073,13 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         return JSONResponse(status_code=409, content={"detail": str(error)})
 
     @app.post("/api/projects", response_model=ProjectResponse, status_code=201)
-    def create_project(project: ProjectCreate, request: Request) -> ProjectResponse:
+    def create_project(project: ProjectSubmission, request: Request) -> ProjectResponse:
         with transaction(runtime_settings.database_url, write=True):
             actor = current_user(request)
             module_id = module_for_api_path(request.url.path)
             if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method, ai_enabled=actor["ai_enabled"]):
                 raise HTTPException(status_code=403, detail="Permission denied")
-            return ProjectResponse(**request.app.state.database.create_project(project.title, actor_id=actor["id"]))
+            return ProjectResponse(**request.app.state.database.create_project(project.title, actor_id=actor["id"], submission_key=str(project.submission_key) if project.submission_key else None))
 
     @app.get("/api/projects", response_model=list[ProjectResponse])
     def list_projects(request: Request) -> list[ProjectResponse]:
@@ -1131,6 +1145,10 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     def execution_runtime_status(request: Request):
         current_user(request)
         return ai_runtime.status()
+
+    @app.get('/api/conversations/{conversation_id}/active-execution')
+    def active_execution(conversation_id: str, request: Request):
+        return ai_runtime.active(conversation_id, current_user(request)['id'])
 
     @app.post('/api/conversations/{conversation_id}/messages/{message_id}/execution')
     def start_execution(conversation_id: str, message_id: str, action: ExecutionAction, request: Request):

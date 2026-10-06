@@ -26,7 +26,7 @@ POST_SQLITE_VERSION = 'workbench_sales_schema_version'
 
 POST_SQLITE_COLUMNS = {
     'identity_users': {'ai_enabled'},
-    'projects': {'owner_id','revision'},
+    'projects': {'owner_id','revision','creation_key','creation_title'},
     'conversations': {'owner_id','revision'},
     'conversation_messages': {'owner_id','role','task_id','submission_request','submission_receipt','run_id'},
     'tasks': {'owner_id','revision'},
