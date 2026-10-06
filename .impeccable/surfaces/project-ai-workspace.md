@@ -1,6 +1,6 @@
 # 项目 AI 工作区
 
-- Mode: Operate。H02 页面约定，尚未实现或正式启用；当前范围以[领域与交互](../../docs/business/项目AI工作区-领域与交互.md)为准。
+- Mode: Operate。H02 页面约定；H04 已实现最小文本执行消费者，完整项目界面／文件／技能仍由 H05—H07 实现，尚未正式启用。当前范围以[领域与交互](../../docs/business/项目AI工作区-领域与交互.md)及 [H04 合同](../../docs/business/项目AI工作区-H04运行接入.md)为准。
 - Target: `src/screens/ConversationScreen.tsx`、`src/screens/TaskBoardScreen.tsx`、`src/components/Composer.tsx`、`src/components/Sidebar.tsx`、`src/components/ContextSidebar.tsx`。沿用现有聊天空状态、侧栏、菜单和职能工作台的抽屉与反馈。
 - THESIS：在同一任务内持续沟通与交付，项目组织资料和执行要求，正文与真实成果优先。
 - OWN-WORLD：`src/styles.css` 的白色内容、浅灰侧栏、公共字体、深色操作、边框与动效；不更换 DESIGN、组件库或另造职能工作台。
@@ -13,4 +13,4 @@
 - Responsive：宽屏延续当前三栏；窄屏侧栏与上下文按现有开关展开，主会话占满可用宽度，输入工具换行且提交与停止保留文字/可访问名称；长文件路径与正文换行，不整页横向溢出。
 - Accessibility：键盘可完成导航、选择、提交、停止及下载；焦点与 Esc 沿用公共菜单/抽屉，状态变化适度 aria-live，失败用明确错误文本，不能仅靠颜色；减少动态效果沿用现有规则。
 - Exit：所有对象和页面出口参加共享 dirty/busy 检查，取消保留草稿；上传成功原件及后台任务不随卸载删除。身份变化与撤权清理优先，具体保留边界见业务约定。
-- Verification：H02 文档一致性、术语与引用检查；H05—H07 才执行实际视口、浏览器交互、权限与退出验证，不把本页当截图或运行证据。
+- Verification：H02 文档一致性、术语与引用检查；H04 已补实际 App 的 1440／390 视口执行／停止／断线／撤权及旧回包与配置重试验证。H05—H07 继续完整页面、文件和技能的交互／权限／退出验证；证据见各阶段候选记录，本页不是截图或运行证据。

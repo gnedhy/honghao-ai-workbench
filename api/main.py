@@ -10,7 +10,7 @@ from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
@@ -34,6 +34,7 @@ from api.modules import (
     save_persisted_module_modes,
 )
 from api.settings import Settings
+from api.codex_runtime import CodexRuntime, RuntimeBlocked
 from api.workbenches import (
     WORKBENCH_IDS,
     WorkbenchId,
@@ -263,6 +264,7 @@ TaskStatus = Literal["created", "running", "waiting", "completed", "stopped", "f
 
 
 class MessageResponse(BaseModel):
+    run_id: str | None = None
     owner_id: str | None
     role: Literal["user", "assistant", "tool"]
     id: str
@@ -308,6 +310,10 @@ class InitialSubmissionResponse(SubmissionResponse):
     conversation: ConversationResponse
 
 
+class ExecutionAction(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+
 class KnowledgeSourceResponse(BaseModel):
     id: str
     filename: str
@@ -345,6 +351,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     feedback = FeedbackStore(runtime_settings.database_url)
     research = ResearchStore(runtime_settings.database_url)
     sales = SalesStore(runtime_settings.database_url)
+    ai_runtime = CodexRuntime(runtime_settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -386,6 +393,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                 app.state.database = database
                 app.state.identities = identities
                 app.state.authorization = authorization
+                ai_runtime.recover()
                 app.state.knowledge = knowledge
                 app.state.procurement = procurement
                 if runtime_settings.workbench_modes["procurement"] == "active":
@@ -408,6 +416,8 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             try:
                 yield
             finally:
+                if getattr(app.state, 'database', None) is not None:
+                    await asyncio.to_thread(ai_runtime.close)
                 if research_task is not None:
                     research_task.cancel()
                     with suppress(asyncio.CancelledError):
@@ -422,6 +432,10 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                         await scheduler_task
 
     app = FastAPI(title="Honghao AI API", version=API_VERSION, lifespan=lifespan)
+
+    @app.exception_handler(RuntimeBlocked)
+    async def ai_execution_error(request: Request, error: RuntimeBlocked):
+        return JSONResponse(status_code=503, content={'detail': 'AI 执行暂时不可用，请核对运行配置或稍后重试'})
 
     @app.exception_handler(psycopg.Error)
     async def database_error(request: Request, error: psycopg.Error):
@@ -1112,6 +1126,54 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             if conversation is None:
                 raise HTTPException(status_code=404, detail="Conversation or project not found")
             return ConversationResponse(**conversation)
+
+    @app.get('/api/conversations/runtime-status')
+    def execution_runtime_status(request: Request):
+        current_user(request)
+        return ai_runtime.status()
+
+    @app.post('/api/conversations/{conversation_id}/messages/{message_id}/execution')
+    def start_execution(conversation_id: str, message_id: str, action: ExecutionAction, request: Request):
+        return ai_runtime.start(conversation_id, message_id, current_user(request)['id'])
+
+    @app.get('/api/conversations/{conversation_id}/messages/{message_id}/execution')
+    def get_execution(conversation_id: str, message_id: str, request: Request):
+        return ai_runtime.get(conversation_id, message_id, current_user(request)['id'])
+
+    @app.post('/api/conversations/{conversation_id}/executions/{run_id}/stop')
+    def stop_execution(conversation_id: str, run_id: str, action: ExecutionAction, request: Request):
+        return ai_runtime.stop(conversation_id, run_id, current_user(request)['id'])
+
+    @app.get('/api/conversations/{conversation_id}/executions/{run_id}/events')
+    def execution_events(conversation_id: str, run_id: str, request: Request, after: Annotated[int, Field(ge=0, le=9223372036854775807)] = 0):
+        resumed = request.headers.get('Last-Event-ID')
+        if resumed is not None:
+            if not resumed.isascii() or not resumed.isdecimal() or len(resumed) > 19 or int(resumed) > 9223372036854775807:
+                raise HTTPException(status_code=400, detail='Invalid event position')
+            after = max(after, int(resumed))
+        ai_runtime.events(conversation_id, run_id, current_user(request)['id'], after)
+
+        async def stream():
+            import json
+            cursor = after
+            while not await request.is_disconnected():
+                try:
+                    def read():
+                        actor = current_user(request)
+                        return ai_runtime.events(conversation_id, run_id, actor['id'], cursor)
+                    row, events = await asyncio.to_thread(read)
+                except (HTTPException, WorkspaceAccessError, WorkspaceNotFoundError, psycopg.Error):
+                    return
+                for event in events:
+                    cursor = event['seq']
+                    payload = {'runId': run_id, 'seq': cursor, **event['payload']}
+                    yield f'id: {cursor}\nevent: {event["kind"]}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n'
+                if row['status'] not in ('running', 'waiting') and cursor >= row['event_seq']:
+                    return
+                yield ': keepalive\n\n'
+                await asyncio.sleep(0.5)
+
+        return StreamingResponse(stream(), media_type='text/event-stream', headers={'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no'})
 
     @app.post(
         "/api/conversation-submissions",

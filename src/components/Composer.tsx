@@ -13,11 +13,12 @@ type ComposerProps = {
   onSubmit?: (message: string, submissionKey: string) => Promise<boolean>;
   projects?: Project[];
   projectSaving?: boolean;
+  executionActive?: boolean;
   projectId?: string | null;
   onProjectChange?: (projectId: string | null) => void;
 };
 
-export function Composer({ compact = false, empty = false, mode = "工作", onSubmit, projects = [], projectId = null, onProjectChange, projectSaving = false }: ComposerProps) {
+export function Composer({ compact = false, empty = false, mode = "工作", onSubmit, projects = [], projectId = null, onProjectChange, projectSaving = false, executionActive = false }: ComposerProps) {
   const [message, setMessage] = useState("");
   const [chatMenuOpen, setChatMenuOpen] = useState(false);
   const [workMenuOpen, setWorkMenuOpen] = useState(false);
@@ -64,7 +65,7 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
 
   const submit = async () => {
     const content = message.trim();
-    if (!content || submittingRef.current) return;
+    if (!content || submittingRef.current || executionActive) return;
     const submissionKey = submissionKeyRef.current ?? createClientId();
     submissionKeyRef.current = submissionKey;
     submittingRef.current = true;
@@ -160,7 +161,7 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
             }}
           />
           <button className="composer__model" type="button">企业模型<ChevronDown size={13} /></button>
-          <button className="round-action composer__submit" type="button" aria-label="发送消息" aria-busy={submitting} onClick={() => { void submit(); }} disabled={submitting || !message.trim()}>
+          <button className="round-action composer__submit" type="button" aria-label="发送消息" aria-busy={submitting} onClick={() => { void submit(); }} disabled={submitting || executionActive || !message.trim()}>
             <ArrowUp size={16} />
           </button>
         </div>
@@ -363,7 +364,7 @@ export function Composer({ compact = false, empty = false, mode = "工作", onSu
             </button>
           )}
         </div>
-        <button className="round-action composer__submit" type="button" aria-label="交给智能体执行" aria-busy={submitting} onClick={() => { void submit(); }} disabled={submitting || !message.trim()}>
+        <button className="round-action composer__submit" type="button" aria-label="交给智能体执行" aria-busy={submitting} onClick={() => { void submit(); }} disabled={submitting || executionActive || !message.trim()}>
           <ArrowUp size={16} />
         </button>
       </div>

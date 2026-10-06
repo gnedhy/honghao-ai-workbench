@@ -4,6 +4,8 @@
 
 ## 变更、消费者与测试
 
+H04 的 `tests/test_ai_runtime.py` 联通专用 PostgreSQL 与真实控制器，注入合成 stdio／模型／沙箱，覆盖私有幂等、事件、预算、停止、撤权、重启和数据恢复；`test_ai_runtime_ui.py` 启动实际 App 的 `scripts/check-ai-runtime.mjs`，覆盖 1440/390 较早待执行输入、读取失败恢复、SSE 断线去重、停止和失权清理。上述不替代 OS／真实模型验证；Ubuntu 实测另用 `scripts/check-codex-h04.py`，只接受明确的 honghao_test_app/honghao_test/test 身份，并独占测试锁。完整门禁仍保留原工作台、API／Node／浏览器／性能样本。
+
 表中 `tests/` 用例在真实专用 PostgreSQL 中执行；`tests_ui/` 是 Node 逻辑检查，不能证明实际组件、数据库或权限。`check-sales-baseline.mjs` 使用模拟 API；`test_sales_recovery.py` 启动的 `check-sales-recovery.mjs` 联通真实测试 API 和 PostgreSQL。
 
 W5 独立测算维护入口为 `salesCalculatorWorkspace.ts`（工作区／请求）、`salesCalculatorModel.ts`（默认和分档）、`SalesCalculatorPanel.tsx`（分档／命名提议及拖拽）和 `SalesCalculator.tsx`（组合）。`tests_ui/salesCalculatorModel.test.ts` 验证纯逻辑；`tests/test_sales_calculator_ui.py` 启动 `scripts/check-sales-calculator.mjs`，核对 8 个真实场景、HTTP 分级／本人隔离／PUT 冲突及业务表前后指纹。统一销售范围和完整门禁自动收集该文件，没有额外过滤模式；运行脚本必须由隔离 fixture 注入随机 API 与测试账号。

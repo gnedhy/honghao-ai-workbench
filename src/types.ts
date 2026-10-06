@@ -333,6 +333,7 @@ export type Conversation = {
 export type TaskStatus = "created" | "running" | "waiting" | "completed" | "stopped" | "failed" | "blocked";
 
 export type ConversationMessage = {
+  run_id?: string | null;
   owner_id?: string | null;
   role?: "user" | "assistant" | "tool";
   id: string;

@@ -7,7 +7,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from api.postgres import transaction
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 TASK_STATUSES = ('created', 'running', 'waiting', 'completed', 'stopped', 'failed', 'blocked')
 RUN_STATUSES = TASK_STATUSES[1:]
 
@@ -147,6 +147,8 @@ class Database:
             result = self._replay(db, actor_id, submission_key, intent)
             if result is not None:
                 return result
+            if db.execute("SELECT 1 FROM task_runs WHERE conversation_id=%s AND status IN ('running','waiting')", (conversation_id,)).fetchone():
+                raise WorkspaceConflictError('Conversation already has an active run')
             task = None
             if task_id is not None:
                 task = _resource(db, 'tasks', task_id, actor_id, write=True)
@@ -185,7 +187,7 @@ class Database:
     def list_messages(self, conversation_id, *, actor_id):
         with transaction(self.url) as db:
             _resource(db, 'conversations', conversation_id, actor_id)
-            return _rows(db, 'SELECT m.id,m.conversation_id,m.owner_id,m.role,m.mode,m.content,m.created_at,m.task_id,t.status AS task_status FROM conversation_messages m LEFT JOIN tasks t ON t.id=m.task_id WHERE m.conversation_id=%s ORDER BY m._order', (conversation_id,))
+            return _rows(db, 'SELECT m.id,m.conversation_id,m.owner_id,m.role,m.mode,m.content,m.created_at,m.task_id,m.run_id,t.status AS task_status FROM conversation_messages m LEFT JOIN tasks t ON t.id=m.task_id WHERE m.conversation_id=%s ORDER BY m._order', (conversation_id,))
 
     def list_tasks(self, *, actor_id):
         with transaction(self.url) as db:
@@ -210,6 +212,6 @@ class Database:
                 raise WorkspaceNotFoundError('Input does not belong to this task')
             if db.execute("SELECT 1 FROM task_runs WHERE task_id=%s AND status IN ('running','waiting')", (task_id,)).fetchone():
                 raise WorkspaceConflictError('Task already has an active run')
-            run = _one(db, "INSERT INTO task_runs(id,task_id,owner_id,input_message_id,status,started_at,runtime_version) VALUES(%s,%s,%s,%s,'running',%s,%s) RETURNING *", (str(uuid4()), task_id, actor_id, input_message_id, datetime.now(UTC).isoformat(), runtime_version))
+            run = _one(db, "INSERT INTO task_runs(id,task_id,owner_id,input_message_id,conversation_id,status,started_at,runtime_version) VALUES(%s,%s,%s,%s,%s,'running',%s,%s) RETURNING *", (str(uuid4()), task_id, actor_id, input_message_id, message['conversation_id'], datetime.now(UTC).isoformat(), runtime_version))
             db.execute("UPDATE tasks SET status='running',revision=revision+1 WHERE id=%s", (task_id,))
             return run

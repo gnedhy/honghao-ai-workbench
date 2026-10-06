@@ -511,7 +511,24 @@
     "tests/test_ai_workspace_ui.py::test_browser_ai_workspace_actual_consumers",
     "tests/test_ai_workspace.py::test_concurrent_new_work_messages_continue_one_task",
     "tests/test_ai_workspace.py::test_multiple_historical_tasks_require_explicit_target_without_merging",
-    "tests/test_security_gate.py::test_failure_reports_redact_test_passwords_without_hiding_failure_details"
+    "tests/test_security_gate.py::test_failure_reports_redact_test_passwords_without_hiding_failure_details",
+    "tests/test_ai_runtime.py::test_execution_private_idempotent_stream_and_continuous_task",
+    "tests/test_ai_runtime.py::test_chat_has_no_task_and_cancel_preserves_partial_text",
+    "tests/test_ai_runtime.py::test_native_protocol_failures_keep_input_and_never_fake_success[EOF-protocol_eof]",
+    "tests/test_ai_runtime.py::test_native_protocol_failures_keep_input_and_never_fake_success[MALFORMED-protocol_eof]",
+    "tests/test_ai_runtime.py::test_native_protocol_failures_keep_input_and_never_fake_success[TOOL-tool_unavailable]",
+    "tests/test_ai_runtime.py::test_native_protocol_failures_keep_input_and_never_fake_success[OUTPUT_BUDGET-output_budget]",
+    "tests/test_ai_runtime.py::test_permission_change_stops_run_even_after_immediate_regrant",
+    "tests/test_ai_runtime.py::test_restart_reconciles_without_replaying_and_runtime_fault_is_local",
+    "tests/test_ai_runtime.py::test_accepted_order_and_wall_clock_budget_are_enforced",
+    "tests/test_ai_runtime.py::test_model_proxy_rejects_strangers_and_limits_actual_requests",
+    "tests/test_ai_runtime.py::test_stop_closes_delayed_model_connection_before_worker_ends",
+    "tests/test_ai_runtime.py::test_context_storage_limit_blocks_without_deleting_records",
+    "tests/test_ai_runtime.py::test_os_recovery_failure_keeps_uncertain_state_and_business_reads",
+    "tests/test_ai_runtime.py::test_cleanup_failure_keeps_run_unconfirmed_and_blocks_new_execution[scope]",
+    "tests/test_ai_runtime.py::test_cleanup_failure_keeps_run_unconfirmed_and_blocks_new_execution[transport]",
+    "tests/test_ai_runtime.py::test_runtime_snapshot_preserves_context_events_output_and_owner",
+    "tests/test_ai_runtime_ui.py::test_browser_ai_runtime_actual_consumers"
   ],
   "frontend": [
     {
@@ -841,6 +858,14 @@
         "h03-actual-app-task-continuity",
         "h03-private-app-reader",
         "h03-account-ai-grant-with-exit-protection"
+      ]
+    },
+    {
+      "file": "scripts/check-ai-runtime.mjs",
+      "kind": "browser",
+      "ids": [
+        "h04-actual-app-execute-and-reconcile",
+        "h04-actual-app-disconnect-stop-and-revoke"
       ]
     }
   ],

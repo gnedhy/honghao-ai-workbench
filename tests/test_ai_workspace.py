@@ -162,14 +162,16 @@ def test_old_history_is_read_only_and_migration_preserves_every_task(tmp_path, p
     from tests.conftest import _grant_app
     with transaction(pg_targets[1],write=True) as db:
         db.execute('DROP SCHEMA public CASCADE'); db.execute('CREATE SCHEMA public')
-        for _,_,_,content in postgres._migration_files()[1:-1]:
+        for _,_,_,content in postgres._migration_files()[1:4]:
             db.execute(content)
         db.execute("INSERT INTO projects(id,title) VALUES('old-project','historical')")
         db.execute("INSERT INTO conversations(id,title,project_id) VALUES('old-conv','history','old-project')")
         for i in range(2):
             db.execute("INSERT INTO conversation_messages(id,conversation_id,mode,content,created_at) VALUES(%s,'old-conv','work','unchanged','now')",(f'old-message-{i}',))
             db.execute("INSERT INTO tasks(id,conversation_id,objective,project_id,status,created_at,message_id) VALUES(%s,'old-conv','unchanged','old-project','created','now',%s)",(f'old-task-{i}',f'old-message-{i}'))
-        db.execute(postgres._migration_files()[-1][3]); _grant_app(db)
+        for _,_,_,content in postgres._migration_files()[4:]:
+            db.execute(content)
+        _grant_app(db)
     settings = chat_and_task_settings(tmp_path/'data')
     with authenticated_client(settings) as client:
         assert [t['id'] for t in client.get('/api/tasks').json()] == ['old-task-0','old-task-1']

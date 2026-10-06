@@ -16,6 +16,19 @@ export type ServiceConnection =
   | { state: "online"; health: ServiceHealth }
   | { state: "offline" };
 
+export type ConversationExecution = {
+  id: string; conversation_id: string; input_message_id: string; task_id: string | null;
+  status: "running" | "waiting" | "completed" | "stopped" | "failed" | "blocked";
+  phase: "starting" | "generating" | "ended"; output: string; event_seq: number;
+  stop_requested: number; stop_reason: string | null; runtime_version: string;
+};
+export const fetchExecution = (conversation: string, message: string, signal?: AbortSignal) =>
+  fetchJson<ConversationExecution | null>(`/api/conversations/${encodeURIComponent(conversation)}/messages/${encodeURIComponent(message)}/execution`, {signal});
+export const startExecution = (conversation: string, message: string) =>
+  fetchJson<ConversationExecution>(`/api/conversations/${encodeURIComponent(conversation)}/messages/${encodeURIComponent(message)}/execution`, {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"});
+export const stopExecution = (conversation: string, run: string) =>
+  fetchJson<ConversationExecution>(`/api/conversations/${encodeURIComponent(conversation)}/executions/${encodeURIComponent(run)}/stop`, {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"});
+
 export async function fetchServiceHealth(signal?: AbortSignal): Promise<ServiceHealth> {
   const response = await fetch("/api/health", { signal });
   if (!response.ok) throw new Error(`Health request failed with ${response.status}`);
