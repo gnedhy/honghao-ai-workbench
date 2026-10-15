@@ -25,7 +25,7 @@ PROCUREMENT_SCHEMA_VERSION = 7
 SHANGHAI = timezone(timedelta(hours=8), "Asia/Shanghai")
 EDITABLE_UPDATE_STATUSES = ("draft", "returned", "submitted")
 DEFAULT_LEDGER_COLUMNS = ["inventory_quantity", "unit", "latest_price", "inventory_price", "change", "price_date", "modifier", "status"]
-ALLOWED_LEDGER_COLUMNS = set(DEFAULT_LEDGER_COLUMNS) | {"in_transit_price", "previous_latest_price", "suggested_price"}
+ALLOWED_LEDGER_COLUMNS = set(DEFAULT_LEDGER_COLUMNS) | {"in_transit_price", "previous_latest_price", "suggested_price", "data_source"}
 PRICE_FIELD_ID = "procurement.material_unit_price"
 PRICE_KEYS = {
     "comparison": PRICE_FIELD_ID,
@@ -367,9 +367,9 @@ class ProcurementStore:
 
     def overview(self) -> dict[str, Any]:
         with transaction(self.url) as connection:
-            inventory = {row[0]: row[1:] for row in connection.execute(
-                "SELECT material_id, quantity, price FROM procurement_inventory"
-            )}
+            from api.procurement_inventory import inventory_snapshot
+            inventory = inventory_snapshot(connection)
+            provenance = {mid: values[2] for mid, values in inventory.items() if values[2]}
             material_rows = connection.execute(
                 """
                 SELECT materials.id, materials.code, materials.name, materials.unit,
@@ -435,9 +435,11 @@ class ProcurementStore:
             pending_authors = authorship["updates"].get(pending["id"], {}) if pending else {}
             pending_prices = {item["material_id"]: item["draft_price"] for item in pending["items"]} if pending else {}
             for material in materials:
+                if material["id"] in provenance:
+                    material["inventory_source"] = provenance[material["id"]]
                 material["inventory_quantity"] = None
                 if material["id"] in inventory:
-                    material["inventory_quantity"], material["inventory_price"] = inventory[material["id"]]
+                    material["inventory_quantity"], material["inventory_price"] = inventory[material["id"]][:2]
                 material["published_price"] = published_prices.get(material["id"])
                 material["previous_published_price"] = ledger_comparison["items"].get(material["id"], {}).get("previous") if ledger_comparison else previous_published_prices.get(material["id"])
                 material["published_price_date"] = published_price_date if material["published_price"] is not None else None
@@ -826,6 +828,7 @@ class ProcurementStore:
             return sorted(result, key=lambda item: item["material_code"])
 
     def material_detail(self, material_id: str, include_archived: bool = False) -> dict[str, Any] | None:
+        from api.procurement_inventory import inventory_snapshot
         with transaction(self.url) as connection:
             rows = self._active_history(include_archived=include_archived, material_id=material_id)
             material = connection.execute(
@@ -856,7 +859,8 @@ class ProcurementStore:
             previous = rows[-2] if len(rows) > 1 else None
             return {
                 "comparison": self.batch_comparison(official[-1][0], preserve_catalog=True)["items"].get(material_id) if official else None,
-                "material": {"id": str(material[0]), "code": str(material[1]), "name": str(material[2]), "unit": str(material[3]), "archived": material[4] is not None, "updated_at": material[5]},
+                "material": {"id": str(material[0]), "code": str(material[1]), "name": str(material[2]), "unit": str(material[3]), "archived": material[4] is not None, "updated_at": material[5],
+                             "inventory_source": inventory_snapshot(connection).get(material_id, (None,None,None))[2]},
                 "latest_price": latest["latest_price"] if latest else material[6],
                 "previous_price": previous["latest_price"] if previous else None,
                 "change": _change(latest["latest_price"] if latest else material[6], previous["latest_price"] if previous else None),

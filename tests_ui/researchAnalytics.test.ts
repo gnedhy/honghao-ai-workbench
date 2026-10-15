@@ -1,20 +1,48 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { rankCostGaps, priceCents, priceChange, compareCostPeriods, costComparisonRecord, linePriceMovement } from "../src/workbenches/researchAnalytics.ts";
+import {researchDepartment, yieldNeedsReview} from "../src/workbenches/researchAnalytics.ts";
+
+test("导入已确认收率不重复列待核对，后续手改和旧配方仍提示", () => {
+  assert.equal(yieldNeedsReview({yield:"1.08",source_kind:"erp_bom",yield_source:{kind:"mes_mean"}}),false);
+  assert.equal(yieldNeedsReview({yield:"1.08",source_kind:"erp_bom",yield_source:{kind:"manual_edit"}}),true);
+  assert.equal(yieldNeedsReview({yield:"1.08"}),true);
+  assert.equal(yieldNeedsReview({yield:"0.99"}),false);
+});
+import { rankCostGaps, priceCents, priceChange, compareCostPeriods, linePriceMovement } from "../src/workbenches/researchAnalytics.ts";
 const row = (name: string, latest_cost: string | null, inventory_cost: string | null, status = "ready") => ({ name, latest_cost, inventory_cost, status });
 
-test("投料单价比较沿对应成本口径追到最后变化基准，不把同价库存更新当新基准", () => {
-  const history = [row("now", "12.55", "10.93"), row("same", "12.55", "10.90"), row("before", "12.57", "10.90")];
-  assert.equal(costComparisonRecord(history, 0, "latest"), history[2]);
-  assert.equal(costComparisonRecord(history, 0, "inventory"), history[1]);
-  assert.equal(costComparisonRecord([history[0], row("missing", null, null), history[2]], 0, "latest"), undefined);
-  const line = (ref: string, unit_cost: string | null, quantity = "10") => ({ kind: "material", ref, unit_cost, quantity });
-  assert.equal(linePriceMovement(line("A", "15.5"), [line("A", "16")])?.direction, "down");
-  assert.equal(linePriceMovement(line("A", "16"), [line("A", "15.5")])?.direction, "up");
-  for (const [current, previous] of [[line("A", "1.004"), [line("A", "1")]], [line("A", "2"), [line("B", "1")]], [line("A", "2", "0"), [line("A", "1")]], [line("A", "2"), [line("A", "1", "0")]], [line("A", null), [line("A", "1")]]] as const) {
-    assert.equal(linePriceMovement(current, [...previous]), null);
+test("投料独立延续上次变价，不被配方收率或产品成本同价覆盖", () => {
+  const line = (ref: string, unit_cost: string | null, quantity = "10") => ({kind:"material",ref,unit_cost,quantity});
+  const current = line("CF132","10.6");
+  const history = [[line("CF132","10.6","20"),line("CF014","8")], [line("CF132","10.60")], [line("CF132","10.8"),line("CF014","7.8")]];
+  assert.deepEqual(linePriceMovement(current,history), {direction:"down",current:"10.6",previous:"10.8"});
+  assert.equal(linePriceMovement(line("CF014","8"),[history[0],history[2]])?.direction,"up");
+  assert.equal(linePriceMovement(line("CF132","10.8"),[[line("CF132","10.6")],...history])?.direction,"up");
+  assert.equal(linePriceMovement(line("CF132","10.6"),[[line("CF132","10.604")],[line("CF132","10.8")]])?.previous,"10.8");
+  assert.equal(linePriceMovement(line("CF132","0"),[[line("CF132","0")],[line("CF132","1")]])?.direction,"down");
+  assert.equal(linePriceMovement(line("CF132","1"),[[line("CF132","0")]])?.direction,"up");
+});
+
+test("投料变价不跨越缺价断点或猜测新引用，重复投料必须价格一致", () => {
+  const line = (ref: string, unit_cost: string | null, quantity = "10") => ({kind:"material",ref,unit_cost,quantity});
+  const current=line("CF132","10.6"), old=[line("CF132","10.8")];
+  for(const history of [[],[undefined,old],[[line("CF132",null)],old],[[line("CF132","10.6","0")],old],[[line("CF132B","10.8")],old],[[{...old[0],kind:"recipe"}],old],[[...old,line("CF132","10.7")]]]) {
+    assert.equal(linePriceMovement(current,history),null);
   }
-  assert.equal(linePriceMovement(line("A", "1"), [line("A", "0")])?.direction, "up");
+  assert.equal(linePriceMovement(line("CF132",null),[old]),null);
+  assert.equal(linePriceMovement(line("CF132","10.6","0"),[old]),null);
+  assert.equal(linePriceMovement(line("CF132","10.6","-2"),[old]),null);
+  assert.equal(linePriceMovement(current,[[...old,line("CF132","10.80","20")]])?.direction,"down");
+});
+
+test("投料单价比较沿对应成本口径追到最后变化基准，不把同价库存更新当新基准", () => {
+  const line = (ref: string, unit_cost: string | null, quantity = "10") => ({ kind: "material", ref, unit_cost, quantity });
+  assert.equal(linePriceMovement(line("A", "15.5"), [[line("A", "15.5")],[line("A", "16")]])?.direction, "down");
+  assert.equal(linePriceMovement(line("A", "16"), [[line("A", "15.5")]])?.direction, "up");
+  for (const [current, previous] of [[line("A", "1.004"), [line("A", "1")]], [line("A", "2"), [line("B", "1")]], [line("A", "2", "0"), [line("A", "1")]], [line("A", "2"), [line("A", "1", "0")]], [line("A", null), [line("A", "1")]]] as const) {
+    assert.equal(linePriceMovement(current, [[...previous]]), null);
+  }
+  assert.equal(linePriceMovement(line("A", "1"), [[line("A", "0")]])?.direction, "up");
 });
 
 test("历史比较相邻期，同价不延续台账涨跌，正式成本接续独立编号", () => {
@@ -60,4 +88,33 @@ test("金额按十进制四舍五入到分，区间百分比及差额使用相�
   assert.equal(priceChange(null, "1"), null);
   assert.equal(priceCents("1000000000000000000000000000"), 1e29);
   assert.equal(rankCostGaps([row("P", "16.3765", "15.883")], "all")[0].gap, 0.5);
+});
+
+import {numberText, yieldValue, yieldText} from "../src/workbenches/researchAnalytics.ts";
+test("只读数字两位小数，收率完整精度换算不经浮点数", () => {
+  const source = "0.9988020833333333333333333333";
+  assert.equal(yieldValue(source), "99.88020833333333333333333333");
+  assert.equal(yieldText(source), "99.88%");
+  assert.equal(yieldText("1"), "100.00%");
+  assert.equal(numberText("-1.005"), "-1.01");
+  assert.equal(numberText("1234.56789"), "1,234.57");
+  assert.equal(numberText(null), "—");
+});
+
+import {basisLabel} from "../src/workbenches/researchAnalytics.ts";
+test("取价简称保持四字，区分参考均价、浓度及库存兜底", () => {
+  assert.equal(basisLabel({basis:"reference_mean",price_refs:["CF109B","CF109D"]}),"参考均价");
+  assert.equal(basisLabel({basis:"cf232_inventory",price_ref:"CF232"}),"浓度折价");
+  assert.equal(basisLabel({basis:"erp_inventory_fallback"}),"库存兜底");
+  assert.equal(basisLabel({basis:"latest",price_ref:"CF001"}),"参考取价");
+  assert.equal(basisLabel({basis:"latest"}),"最新价格");
+  assert.equal(basisLabel({basis:"unknown"}).length,4);
+});
+
+test("旧配方部门显示及筛选沿用研发五部范围且不修改原字段", () => {
+  const legacy = {department: undefined};
+  assert.equal(researchDepartment(legacy), "研发五部");
+  assert.equal(researchDepartment({department: null}), "研发五部");
+  assert.equal(researchDepartment({department: "浙江实验室"}), "浙江实验室");
+  assert.equal(legacy.department, undefined);
 });

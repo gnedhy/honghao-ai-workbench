@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "当前产品投料的涨跌箭头按同编码同类别及最新／库存口径，独立追踪该投料最近一次变价，不再由产品总成本选择比较期。",
+  "modules": [
+    "research"
+  ],
+  "files": [
+    "src/workbenches/researchAnalytics.ts",
+    "src/workbenches/ResearchProductDrawer.tsx",
+    "src/workbenches/ResearchProductView.tsx"
+  ],
+  "consumers": [
+    "src/workbenches/ResearchProductDrawer.tsx",
+    "src/workbenches/ResearchProductView.tsx",
+    "src/workbenches/ResearchWorkbench.tsx",
+    "src/workbenches/ResearchFormulaEditor.tsx"
+  ],
+  "permissions": "仅处理原研发详情接口按实时部门和等级投影后返回的历史；不发新请求、不扩大引用配方或历史可见范围，编辑与启用权限沿用原业务层。",
+  "data": "复用不可变冻结记录的投料实际单价，按既有十进制四舍五入到分比较；原始成本、双成本、冻结payload及签名不改，无数据库迁移或新缓存。新引用、缺价、缺记录、零负投料及重复投料冲突不猜测比较。",
+  "lifecycle": "当前详情收到最新数据后按所选口径逐项追踪历史，同价跳过至最后变价，配方与收率更新不重置有效投料涨跌；历史详情继续仅展示原冻结期内容。",
+  "exits": "沿用共享Drawer、请求取消、旧回包丢弃、busy及dirty退出保护；本轮不新增请求或写操作。",
+  "compatibility": "旧接口、字段、金额精度和箭头样式不变；删除仅用于产品总成本比较的内部helper，更新全部调用和测试。无新增依赖；与并发读取优化经完整门禁后于2026-10-15共同正式发布，见docs/releases/研发读取与投料涨跌正式更新-2026-10-15.md。",
+  "recovery": "保留版本5旧程序与active-before入口；回退程序继续使用当前正式数据，不回滚合法业务增量；备份及实际隔离恢复见docs/releases/研发读取与投料涨跌正式更新-2026-10-15.md。",
+  "verification": {
+    "api": [
+      "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements",
+      "tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle"
+    ],
+    "node": [
+      {
+        "file": "tests_ui/researchAnalytics.test.ts",
+        "id": "投料独立延续上次变价，不被配方收率或产品成本同价覆盖"
+      },
+      {
+        "file": "tests_ui/researchAnalytics.test.ts",
+        "id": "投料变价不跨越缺价断点或猜测新引用，重复投料必须价格一致"
+      },
+      {
+        "file": "tests_ui/researchAnalytics.test.ts",
+        "id": "投料单价比较沿对应成本口径追到最后变化基准，不把同价库存更新当新基准"
+      }
+    ],
+    "browser": [
+      {
+        "file": "scripts/check-workbench-loading.mjs",
+        "id": "research-history-periods-and-material-price-arrows",
+        "apiTest": "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+      }
+    ]
+  }
+}

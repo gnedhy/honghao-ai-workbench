@@ -125,10 +125,15 @@ def _table_names(db) -> list[str]:
     return [row[0] for row in db.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name")]
 
 
-def _table_evidence(db, source_path_map: dict[str, str] | None = None) -> dict:
+def _table_evidence(db, source_path_map: dict[str, str] | None = None, *, include_generated=True) -> dict:
     result = {}
+    columns = {}
+    if not include_generated:
+        for table,column in db.execute("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public' AND is_generated='NEVER' ORDER BY table_name,ordinal_position"):
+            columns.setdefault(table,[]).append(column)
     for table in _table_names(db):
-        cursor = db.execute(sql.SQL('SELECT * FROM public.{} ORDER BY _order').format(sql.Identifier(table)))
+        selected = sql.SQL('*') if include_generated else sql.SQL(',').join(map(sql.Identifier,columns[table]))
+        cursor = db.execute(sql.SQL('SELECT {} FROM public.{} ORDER BY _order').format(selected,sql.Identifier(table)))
         digest = hashlib.sha256()
         count = 0
         for row in cursor:
@@ -458,7 +463,7 @@ def service_marker(settings: Settings) -> Iterator[None]:
                     raise RuntimeError("同一服务目录不能切换数据库")
                 _SERVICE_LEASES[key] = (url, lease, count + 1)
             else:
-                lease = database_lease(settings.database_url)
+                lease = database_lease(settings.database_url, pooled=True)
                 lease.__enter__()
                 _SERVICE_LEASES[key] = (settings.database_url, lease, 1)
         try:

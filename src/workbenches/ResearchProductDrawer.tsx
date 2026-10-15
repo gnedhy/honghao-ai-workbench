@@ -6,7 +6,6 @@ import {DiscardChangesDialog,useUnsavedChanges} from "../components/Interaction"
 import {ResearchFormulaEditor} from "./ResearchFormulaEditor";
 import {Drawer,ReasonFields,FormulaDetails,HistoricalFormula,Money,Movement} from "./ResearchProductView";
 import {type Detail,type Adjustment,type RecordRow,productPath,request,errorText,adjustmentReasons,formulaVersionLabel,recordDate,date} from "./researchModel";
-import {costComparisonRecord} from "./researchAnalytics";
 import p from "../components/WorkbenchSurface.module.css";
 import s from "./ResearchWorkbench.module.css";
 export function ResearchProductDrawer({ id, accessLevel, onClose, onChanged }: { id: string; accessLevel: number; onClose: () => void; onChanged: () => void }) {
@@ -31,9 +30,10 @@ export function ResearchProductDrawer({ id, accessLevel, onClose, onChanged }: {
   const writing=useRef(false);
   const load=useCallback(async (_signal?:AbortSignal,openDraft=false)=>{
    const state=reads.current;if(!state.alive||_signal?.aborted)return;state.controller?.abort();const controller=new AbortController();state.controller=controller;setError("");
-   const signal=_signal?AbortSignal.any([controller.signal,_signal]):controller.signal;
+   const timeout=AbortSignal.timeout(15000);
+   const signal=AbortSignal.any([controller.signal,timeout,...(_signal?[_signal]:[])]);
    try{const result=await fetchJson<Detail>(productPath(current),{signal});if(!signal.aborted&&state.alive){setDetail(result);if(openDraft&&result.product.lifecycle==="draft"&&canEdit)beginEdit(result);}}
-   catch(error){if(!signal.aborted&&state.alive)setError(errorText(error));}
+   catch(error){if(!controller.signal.aborted&&!_signal?.aborted&&state.alive){if(error instanceof Error && "status" in error && (error.status===401||error.status===403))setDetail(null);setError(timeout.aborted ? "详情读取超过15秒，请重试。" : errorText(error));}}
   },[current,canEdit,beginEdit]);
   useEffect(()=>{const state=reads.current;++state.epoch;state.alive=true;setDetail(null);setEditing(false);setDirty(false);setRecord(null);setReasonOpen(false);setDeleteOpen(false);setDeactivateOpen(false);void load(undefined,true);return()=>{++state.epoch;state.alive=false;state.controller?.abort();};},[load]);
   const previousAccess=useRef(accessLevel);
@@ -67,7 +67,7 @@ export function ResearchProductDrawer({ id, accessLevel, onClose, onChanged }: {
       {accessLevel >= 4 && current.startsWith("recipe:") && detail.product.lifecycle === "active" && deactivateOpen && <div className={s.confirmation}><h3>核对停用影响</h3><p>停用后将从在用产品及投料选择中移除，历史记录继续保留。恢复须重新试算后启用。</p>{detail.referenced_by?.length ? <p role="alert">仍被在用产品引用，不能停用：{detail.referenced_by.map(row => row.name).join("、")}。</p> : <p>当前没有在用产品引用此配方。</p>}<div className={s.actions}><button className="secondary-button" onClick={() => setDeactivateOpen(false)} disabled={deactivating}>取消</button><button className={`secondary-button ${s.dangerButton}`} disabled={deactivating || Boolean(detail.referenced_by?.length)} onClick={() => void deactivate()}>确认停用</button></div></div>}
       {(detail.product.status === "updating" || detail.product.status === "failed") && <div className={s.notice}>成本{detail.product.status === "updating" ? "更新中" : "更新失败，等待重试"}。以下为上次完成的有效成本记录。</div>}
       {detail.product.lifecycle === "inactive" && <p className={s.notice}>此配方已停用，不参与当前产品核算。恢复前须重新试算、保存并启用。</p>}
-      <FormulaDetails busy={editorBusy || deleting || deactivating} formula={detail.history[0]?.formula ?? formula} latest={detail.latest} inventory={detail.inventory} comparison={costComparisonRecord(detail.history, 0, policy)} policy={policy} onPolicyChange={setPolicy} onRef={ref => {if(!writing.current&&!editorWorking.current)setPath([...path, ref]);}}/>
+      <FormulaDetails busy={editorBusy || deleting || deactivating} formula={detail.history[0]?.formula ?? formula} latest={detail.latest} inventory={detail.inventory} history={detail.history.slice(1)} policy={policy} onPolicyChange={setPolicy} onRef={ref => {if(!writing.current&&!editorWorking.current)setPath([...path, ref]);}}/>
       <section className={s.historySection}><div className={s.sectionHeading}><h3>成本历史</h3><span>{detail.history.length} 条</span></div>{detail.history.map((item,index) => { const expanded = record?.event_id === item.event_id && record?.recorded_at === item.recorded_at; return <div key={`${item.event_id}-${index}`} className={s.inlineRecord}><button className={s.historyRow} aria-expanded={expanded} onClick={() => setRecord(expanded ? null : item)}><span title={date(item.recorded_at)}>{recordDate(item)}<small>{item.record_type === "backfill" ? "历史回算 · " : ""}{item.reason ?? "成本核算"}{item.purchase_version != null && item.record_type === "formal" && ` · 采购 v${item.purchase_version}`}</small></span><Money value={item.latest_cost}/><Movement change={item.change} comparisonBasis={item.comparison_basis}/><ChevronRight size={15} style={{transform:expanded?"rotate(90deg)":undefined}}/></button>{expanded && <div className={s.expandedRecord}><HistoricalFormula busy={editorBusy || deleting || deactivating} key={`${record!.event_id}-${record!.recorded_at}`} record={record!} initialPolicy={policy}/><button className={s.back} onClick={() => setRecord(null)}>收起本期明细</button></div>}</div>; })}{!detail.history.length && <p>尚未建立成本记录。</p>}</section>
 
 

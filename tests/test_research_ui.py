@@ -19,12 +19,14 @@ from tests.test_research_workbench import ready, records, K, RH
 
 def test_browser_dashboard_history_and_price_movements():
     result = subprocess.run(['node', 'scripts/check-workbench-loading.mjs'], capture_output=True, text=True,
-                            encoding='utf-8', timeout=90)
+                            encoding='utf-8', timeout=150)
     assert result.returncode == 0, result.stderr
     assert 'PASS sales-hot-product-existing-drawer' in result.stdout
     assert 'PASS research-history-periods-and-material-price-arrows' in result.stdout
     assert 'PASS research-material-drilldown-return-history-and-focus' in result.stdout
     assert 'PASS research-reference-back-in-drawer-header' in result.stdout
+    assert 'PASS research-read-timeout-retains-error-and-retries' in result.stdout
+    assert 'PASS research-detail-timeout-and-retry' in result.stdout
 
 
 def test_browser_research_edit_and_read_lifecycle(ready):
@@ -33,7 +35,7 @@ def test_browser_research_edit_and_read_lifecycle(ready):
     frozen = records(store.url)
     with transaction(settings.database_url) as db:
         sales_before = {k: v for k, v in _table_evidence(db).items() if k.startswith('sales_')}
-    IdentityStore(settings.database_url).create_user(username='w7-readonly', display_name='合成只读', department=None,
+    IdentityStore(settings.database_url).create_user(username='w7-readonly', display_name='合成只读', department='研发五部',
         password=TEST_ADMIN_PASSWORD, scope_levels={'research': 2})
     sync = settings.data_dir / 'w7-sync'; sync.mkdir()
     with socket.socket() as listener:
@@ -58,7 +60,7 @@ def test_browser_research_edit_and_read_lifecycle(ready):
             stderr = re.sub(r'(?i)(honghao_session=)[^\s\x27\x22;]+', r'\1[redacted]', (sync/'stderr').read_text(encoding='utf-8'))
             assert process.returncode == 0, stderr
             evidence = json.loads((sync/'stdout').read_text(encoding='utf-8')); print(json.dumps(evidence))
-            assert len({r['name'] for r in evidence}) == len(evidence) == 18
+            assert len({r['name'] for r in evidence}) == len(evidence) == 19
             assert all(r['status'] == 'passed' for r in evidence)
             assert records(store.url)[:len(frozen)] == frozen
             assert store.detail(K)['draft'] is None and store.detail(K)['product']['revision'] == 2

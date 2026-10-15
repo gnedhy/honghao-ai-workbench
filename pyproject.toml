@@ -10,7 +10,7 @@ dependencies = [
   "pypdf==6.19.0",
   "python-multipart==0.0.32",
   "uvicorn[standard]>=0.35,<1",
-  "psycopg[binary]>=3.3,<4",
+  "psycopg[binary,pool]>=3.3,<4",
 ]
 
 [dependency-groups]

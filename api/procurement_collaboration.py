@@ -55,7 +55,7 @@ def admin_event(db, actor_id, action, target_id, detail, scope="procurement"):
                (str(uuid4()), actor_id, action, target_id, json.dumps(detail, ensure_ascii=False), datetime.now(UTC).isoformat()))
 
 
-def grants(url: str, scope="procurement", offset=0, limit=10) -> dict:
+def grants(url: str, scope="procurement", offset=0, limit=10, actor=None) -> dict:
     with transaction(url) as db:
         if scope not in {"procurement", "research"}:
             raise ValueError("无效授权范围")
@@ -63,7 +63,13 @@ def grants(url: str, scope="procurement", offset=0, limit=10) -> dict:
         total = db.execute(f"SELECT COUNT(*) FROM {scope}_admin_events WHERE action LIKE 'grant.%'").fetchone()[0]
         events = db.execute(f"SELECT e.action,e.target_id,e.detail,e.created_at,COALESCE(u.display_name,e.actor_id),e.id,t.display_name FROM {scope}_admin_events e LEFT JOIN identity_users u ON u.id=e.actor_id LEFT JOIN identity_users t ON t.id=e.target_id WHERE action LIKE 'grant.%%' ORDER BY e.created_at DESC,e._order DESC LIMIT %s OFFSET %s", (limit,offset)).fetchall()
         users = []
+        access = None
+        if scope == 'research' and actor is not None:
+            from api.research_access import ResearchAccess
+            access = ResearchAccess(db,actor)
         for user in IdentityStore(url).list_users():
+            if access is not None and not access.allows_account(user):
+                continue
             cap = capabilities(url, user, scope)
             if not user["is_system_admin"] and (user["scope_levels"].get(scope, 0) >= 2 or user["id"] in assigned):
                 grant = assigned.get(user["id"])
@@ -71,6 +77,10 @@ def grants(url: str, scope="procurement", offset=0, limit=10) -> dict:
                               "eligible": cap["can_edit"], "granted": bool(grant), "manager": bool(grant and grant[0]),
                               "role_granted": bool(user["is_active"] and user["scope_levels"].get(scope, 0) >= 4),
                               "granted_by": grant[1] if grant else None, "granted_at": grant[2] if grant else None})
+        if access is not None and not access.admin:
+            ids = [u['id'] for u in users]
+            total = db.execute(f"SELECT count(*) FROM {scope}_admin_events WHERE action LIKE 'grant.%%' AND target_id=ANY(%s)",(ids,)).fetchone()[0]
+            events = db.execute(f"SELECT e.action,e.target_id,e.detail,e.created_at,COALESCE(u.display_name,e.actor_id),e.id,t.display_name FROM {scope}_admin_events e LEFT JOIN identity_users u ON u.id=e.actor_id LEFT JOIN identity_users t ON t.id=e.target_id WHERE action LIKE 'grant.%%' AND target_id=ANY(%s) ORDER BY e.created_at DESC,e._order DESC LIMIT %s OFFSET %s",(ids,limit,offset)).fetchall()
         return {"users": users, "total": total, "has_more": offset + len(events) < total, "events": [{"target_name": json.loads(r[2]).get("name") or r[6] or r[1], "id": r[5], "action": r[0], "target_id": r[1], "detail": json.loads(r[2]), "created_at": r[3], "actor": r[4]} for r in events]}
 
 
@@ -87,6 +97,10 @@ def set_grant(url: str, actor: dict, target_id: str, enabled: bool, manager: boo
     with transaction(url, write=True) as db:
         require_current(url, actor["id"], "can_manage_grants", scope)
         actor = IdentityStore(url).get_user(actor["id"])
+        if scope == 'research':
+            from api.research_access import ResearchAccess
+            if not ResearchAccess(db,actor).allows_account(IdentityStore(url).get_user(target_id) or {}):
+                raise PermissionError('不能调整其他部门的研发启用授权')
         if manager is not None and not actor["is_system_admin"]:
             raise PermissionError("只有管理员可设置授权管理人员")
         target = IdentityStore(url).get_user(target_id)

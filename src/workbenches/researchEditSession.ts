@@ -100,7 +100,7 @@ export function useResearchEditSession({detail,formula:currentFormula,adjustment
  };
  const changeLine=(index:number,value:Partial<InputLine>)=>update({...formula,lines:formula.lines.map((line,i)=>i===index?{...line,...value}:line)});
  const changeAmount=(index:number,field:"ratio"|"quantity",value:string)=>{
-  const valid=value.trim()!==""&&Number.isFinite(Number(value))&&Number(value)>=0;const ratioBase=Number(formula.ratio_base);
+  const valid=value.trim()!==""&&Number.isFinite(Number(value))&&(Number(value)>=0||(formula.lines[index].kind==="material"&&["回收2","回收CF232","CF232D"].includes(formula.lines[index].ref)));const ratioBase=Number(formula.ratio_base);
   const other=field==="ratio"?"quantity":"ratio",converted=field==="ratio"?Number(value)*ratioBase/100:Number(value)/ratioBase*100;
   changeLine(index,{[field]:value,...(formula.ratio_linked?{[other]:valid?String(Number(converted.toFixed(10))):""}:{})});
  };

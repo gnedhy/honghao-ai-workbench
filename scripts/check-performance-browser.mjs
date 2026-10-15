@@ -13,7 +13,7 @@ const directory = path.resolve('.scratch/performance-budget'), source = path.joi
 assert.ok(path.relative(process.cwd(), output).startsWith('.scratch' + path.sep), 'Generated build must stay inside workspace scratch');
 mkdirSync(source, { recursive: true });
 writeFileSync(path.join(source, 'index.html'), '<!doctype html><html><head><title>Workbench performance fixture</title></head><body><div id="root"></div><script type="module" src="/entry.tsx"></script></body></html>');
-writeFileSync(path.join(source, 'entry.tsx'), `import {createElement as h,useState} from 'react';
+writeFileSync(path.join(source, 'entry.tsx'), `import {createElement as h,useEffect,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {ProcurementMaterials} from '../../../src/workbenches/ProcurementMaterials';
 import {ResearchWorkbench} from '../../../src/workbenches/ResearchWorkbench';
@@ -24,7 +24,7 @@ const code=i=>'P'+String(i).padStart(5,'0');
 const materials=Array.from({length:fixture.procurementRows},(_,i)=>({id:'material-'+i,code:code(i),name:'合成原料 '+code(i),unit:'kg',latest_price:'4',published_price:'4',inventory_price:'12',inventory_quantity:'100',price_date:'2026-10-01',updated_at:'2026-10-01T00:00:00Z'}));
 const products=Array.from({length:fixture.salesProducts},(_,i)=>({id:'research:recipe:'+i,code:code(i),name:code(i),source:'research',department:'合成研发',status:'ready',latest_cost:'4',inventory_cost:'12',special_allocation:false,source_version:'fixed-1'}));
 const data={materials,issues:[],batches:[],current_update:null,scheduled_update:null,editors:[],departments:[],metrics:{material_count:materials.length,open_issue_count:0,missing_price_count:0,published_batch_count:0},working_state:{status:'ready',latest_import:null},next_action:'',capabilities:{can_edit:false,can_activate:false,can_manage_grants:false,can_cancel_round:false,can_manage_catalog:false}};
-const noop=()=>{};function Picker(){const [selected,setSelected]=useState(products[0]);return h(SalesProductPicker,{products,selected,basis:'latest',cost:'4',onSelect:product=>{setSelected(product);window.perfSelected=product.code}})};
+const noop=()=>{};function Picker(){const [selected,setSelected]=useState(products[0]);useEffect(()=>{document.querySelector('summary[aria-label="选择产品及成本口径"]')?.click()},[]);return h(SalesProductPicker,{products,selected,basis:'latest',cost:'4',onSelect:product=>{setSelected(product);window.perfSelected=product.code}})};
 const kind=new URLSearchParams(location.search).get('kind');
 createRoot(document.getElementById('root')).render(kind==='procurement'?h(ProcurementMaterials,{data,accessLevel:2,onOpenDepartmentMaterial:noop,startInEdit:false,onEditStarted:noop,onRefresh:async()=>{},onSaved:noop,onCreate:noop,onImport:noop,onPublish:noop,onPageChange:noop,focusPending:false,locateCode:''}):kind==='research'?h(ResearchWorkbench,{accessLevel:2,userId:'performance-fixture',view:'full',page:'products',onPageChange:noop,onEnter:noop}):h(Picker));`);
 
@@ -53,14 +53,12 @@ try {
           requests++;
           const reply = {
             '/api/workbenches/procurement/preferences': { ledger_columns: ['unit','latest_price','inventory_price','change','status'], history_view: 'batches', ledger_view: 'paged', ledger_page_size: 50 },
-            '/api/workbenches/research/products': { products: Array.from({ length: policy.fixture.researchRows }, (_, i) => ({ id: 'recipe:'+i, name: 'P'+String(i).padStart(5,'0'), owner: '合成负责人', kind: 'recipe', yield: '1', lines: [], revision: 1, latest_cost: '4', inventory_cost: '12', status: 'ready', change: { percent: null, reason: '首次' }, has_draft: false })), pending: false },
-            '/api/workbenches/research/history': { versions: [] },
-            '/api/workbenches/research/formulas': { formulas: [], owners: ['合成负责人'] },
+            '/api/workbenches/research/overview': { products: Array.from({ length: policy.fixture.researchRows }, (_, i) => ({ id: 'recipe:'+i, name: 'P'+String(i).padStart(5,'0'), owner: '合成负责人', kind: 'recipe', yield: '1', lines: [], revision: 1, latest_cost: '4', inventory_cost: '12', status: 'ready', change: { percent: null, reason: '首次' }, has_draft: false })), pending: false, versions: [], formulas: [], owners: ['合成负责人'] },
           }[url.pathname];
           if (request.method() !== 'GET' || !reply) { unexpected.push(url.pathname); return route.abort(); }
           return route.fulfill({ json: reply });
         });
-        await page.addInitScript(observeDOMMeasurement, { selector: kind === 'sales' ? '[data-cost-option]' : 'tbody tr', count: kind === 'sales' ? 4000 : 50, property: 'perfReadyMs' });
+        await page.addInitScript(observeDOMMeasurement, { selector: kind === 'sales' ? '[data-cost-option]' : 'tbody tr', count: kind === 'sales' ? 100 : 50, property: 'perfReadyMs' });
         await page.goto(origin + '?kind=' + kind);
         assert.equal(await page.title(), 'Workbench performance fixture');
         assert.equal(new URL(page.url()).searchParams.get('kind'), kind);
@@ -108,10 +106,12 @@ try {
   await scenario('procurement-large-ledger', 'procurement', async (page, ready, filtered, paged) => ledger(page, ready, filtered, paged, '搜索原料', policy.fixture.procurementRows));
   await scenario('research-large-ledger', 'research', async (page, ready, filtered, paged) => ledger(page, ready, filtered, paged, '搜索产品内编', policy.fixture.researchRows));
   await scenario('sales-large-catalog', 'sales', async (page, ready, filtered) => {
-    await page.waitForFunction(() => document.querySelectorAll('[data-cost-option]').length === 4000);
+    await page.waitForFunction(() => document.querySelectorAll('[data-cost-option]').length === 100);
     await page.waitForFunction(() => Number.isFinite(window.perfReadyMs));
     ready.push(await page.evaluate(() => window.perfReadyMs));
-    await page.locator('summary').first().click();
+    assert.ok((await page.getByLabel('台账分页').innerText()).includes('2000 条'));
+    await page.getByRole('button',{name:'下一页',exact:true}).click();
+    await page.getByRole('button',{name:'P00050 最新优先 4.00 元每千克',exact:true}).waitFor();
     const code = 'P' + String(policy.fixture.salesProducts - 1).padStart(5, '0');
     await measureFilter(page, page.getByRole('searchbox'), code, '[data-cost-option]', 2);
     filtered.push(await page.evaluate(() => window.perfFilterMs));

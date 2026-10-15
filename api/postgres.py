@@ -5,7 +5,7 @@ import argparse
 import hashlib
 import json
 import os
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from threading import Lock
@@ -13,6 +13,7 @@ from typing import Iterator
 
 import psycopg
 from psycopg.conninfo import conninfo_to_dict
+from psycopg_pool import ConnectionPool
 
 
 MIGRATIONS = Path(__file__).with_name("migrations") / "postgresql"
@@ -22,6 +23,15 @@ SERVICE_LOCK = WRITE_LOCK + 2
 _TRANSACTION: ContextVar[tuple[str, psycopg.Connection, bool] | None] = ContextVar("postgres_transaction", default=None)
 _LEASES: dict[str, psycopg.Connection] = {}
 _LEASES_LOCK = Lock()
+_POOLS: dict[str, ConnectionPool] = {}
+_CONNECTION_OPTIONS = {
+    "autocommit": True,
+    "connect_timeout": 5,
+    "application_name": "honghao-workbench",
+    "options": "-c timezone=UTC -c search_path=public,pg_catalog "
+               "-c statement_timeout=30000 -c lock_timeout=10000 "
+               "-c idle_in_transaction_session_timeout=60000",
+}
 
 
 def database_url(value: str | None = None) -> str:
@@ -38,19 +48,16 @@ def database_url(value: str | None = None) -> str:
 
 
 def connect(url: str | None = None) -> psycopg.Connection:
-    return psycopg.connect(
-        database_url(url),
-        autocommit=True,
-        connect_timeout=5,
-        application_name="honghao-workbench",
-        options="-c timezone=UTC -c search_path=public,pg_catalog "
-                "-c statement_timeout=30000 -c lock_timeout=10000 "
-                "-c idle_in_transaction_session_timeout=60000",
-    )
+    return psycopg.connect(database_url(url), **_CONNECTION_OPTIONS)
+
+
+def _reset_connection(connection: psycopg.Connection) -> None:
+    # Session settings, temporary objects and advisory locks must not cross requests.
+    connection.execute("DISCARD ALL")
 
 
 @contextmanager
-def database_lease(url: str) -> Iterator[psycopg.Connection]:
+def database_lease(url: str, *, pooled: bool = False) -> Iterator[psycopg.Connection]:
     """One service or restore per database, even with different attachment directories."""
     with connect(url) as connection:
         with _LEASES_LOCK:
@@ -58,7 +65,17 @@ def database_lease(url: str) -> Iterator[psycopg.Connection]:
                 raise RuntimeError("当前数据库已有服务或恢复操作运行")
             _LEASES[url] = connection
         try:
-            yield connection
+            with ExitStack() as stack:
+                if pooled:
+                    _POOLS[url] = stack.enter_context(ConnectionPool(
+                        url, kwargs={**_CONNECTION_OPTIONS, "prepare_threshold": None},
+                        min_size=0, max_size=4, timeout=5, open=False,
+                        reset=_reset_connection,
+                    ))
+                try:
+                    yield connection
+                finally:
+                    _POOLS.pop(url, None)
         finally:
             with _LEASES_LOCK:
                 del _LEASES[url]
@@ -81,7 +98,8 @@ def transaction(url: str, *, write: bool = False) -> Iterator[psycopg.Connection
     if lease is not None:
         # A database restart can drop the session lock; the old service must then fail closed.
         lease.execute("SELECT 1")
-    with connect(url) as connection, connection.transaction():
+    pool = _POOLS.get(url)
+    with (pool.connection() if pool is not None else connect(url)) as connection, connection.transaction():
         if write:
             # ponytail: serialize business writes as SQLite did; split locks only after concurrency tests.
             connection.execute("SELECT pg_advisory_xact_lock(%s)", (WRITE_LOCK,))

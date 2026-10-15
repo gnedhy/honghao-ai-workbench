@@ -185,6 +185,26 @@ def test_catalog_is_whitelisted_and_composite_uses_research(sales):
     assert adopt(sales, batch)['items'][0]['adopted']
 
 
+def test_catalog_reads_latest_frozen_costs_in_one_query(sales,monkeypatch):
+    _,_,store,actor=sales
+    with transaction(store.url) as db:
+        connection_type=type(db)
+        from json import loads
+        expected={key:loads(raw) for key,raw in db.execute('SELECT DISTINCT ON(product_id) product_id,payload FROM research_cost_records ORDER BY product_id,sequence DESC')}
+    execute=connection_type.execute
+    queries=[]
+    def counted(self,query,*args,**kwargs):
+        if isinstance(query,str) and 'FROM research_cost_records' in query:queries.append(query)
+        return execute(self,query,*args,**kwargs)
+    monkeypatch.setattr(connection_type,'execute',counted)
+    catalog=store.products(actor)['products']
+    assert len(queries)==1
+    for product in catalog:
+        if product['source']=='research':
+            frozen=expected[product['id'].removeprefix('research:')]
+            assert (product['latest_cost'],product['inventory_cost'])==(frozen['latest_cost'],frozen['inventory_cost'])
+
+
 def test_frozen_snapshots_revision_void_code_and_copy(sales):
     _, _, store, actor = sales
     batch = adopt(sales, prepared(sales))

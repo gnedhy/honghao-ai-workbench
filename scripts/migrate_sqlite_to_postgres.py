@@ -119,7 +119,7 @@ def _source_paths(source: sqlite3.Connection, staging: Path, target: Path, recor
 
 
 def _legacy_evidence(db, mappings=None):
-    evidence = {key: value for key, value in ops._table_evidence(db, mappings).items() if key not in POST_SQLITE_TABLES}
+    evidence = {key: value for key, value in ops._table_evidence(db, mappings, include_generated=False).items() if key not in POST_SQLITE_TABLES}
     rows = db.execute('SELECT * FROM schema_metadata WHERE key!=%s ORDER BY _order', (POST_SQLITE_VERSION,)).fetchall()
     digest = hashlib.sha256()
     for row in rows:

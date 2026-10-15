@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "研发定时与聚焦刷新先校验数据版本，未变化返回304并跳过完整读取和React列表更新；写操作及手动重试仍强制读取。",
+  "modules": ["research", "procurement", "sales"],
+  "files": ["api/research.py", "src/api.ts", "src/workbenches/researchData.ts"],
+  "consumers": ["src/workbenches/ResearchWorkbench.tsx", "src/workbenches/researchEditSession.ts", "src/screens/WorkbenchScreen.tsx", "src/api.ts"],
+  "permissions": "条件读取前校验实时登录、研发等级及部门；验证器绑定账号和数据范围，撤权不会复用旧内容。",
+  "data": "校验相关表已提交行版本，包括更新和删除；不读取大JSON列，不缓存成本结果；验证器和完整响应共用只读可重复读快照。",
+  "lifecycle": "保留10秒检查、聚焦刷新、取消与旧请求丢弃；304不更换台账状态；写后和手动重试不附条件。",
+  "exits": "卸载取消请求和轮询；401与403清空可见数据和验证器，保留现有失败重试规则。",
+  "compatibility": "原GET不带If-None-Match继续返回原JSON；共享fetchJson仅复用原响应解析，无新依赖或数据库迁移。另一开发分支后续需带入这三处改动及回归。",
+  "recovery": "保留旧固定程序和发布前匹配快照；无数据库迁移，程序回退继续使用同一正式库并保留业务增量。",
+  "verification": {
+    "api": [
+      "tests/test_research_conditional.py::test_unchanged_overview_skips_full_read_and_keeps_exact_payload",
+      "tests/test_research_conditional.py::test_inventory_queue_costs_and_draft_deletion_invalidate",
+      "tests/test_research_conditional.py::test_department_and_scope_revocation_never_reuse_old_validator",
+      "tests/test_research_conditional.py::test_validator_and_payload_share_snapshot_during_concurrent_commit",
+      "tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle"
+    ],
+    "node": [],
+    "browser": [{"file": "scripts/check-research.mjs", "id": "conditional-refresh-keeps-table-and-reloads-after-external-change", "apiTest": "tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle"}]
+  }
+}

@@ -466,7 +466,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         if request.url.path.startswith("/api/") and request.url.path not in PUBLIC_API_PATHS:
             token = request.cookies.get(SESSION_COOKIE_NAME)
             try:
-                user = identities.user_for_session(token) if token else None
+                user = await asyncio.to_thread(identities.user_for_session, token) if token else None
             except psycopg.Error:
                 return JSONResponse(status_code=503, content={"detail": "Service not ready"})
             if user is None:

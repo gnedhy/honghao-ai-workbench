@@ -9,7 +9,7 @@ import { LedgerPagination } from "../components/LedgerPagination";
 import { DashboardPanel, FormFooter, LedgerFrame, LedgerToolbar, WorkbenchLoading } from "../components/WorkbenchLayout";
 import { PriceDateRangeMenu, TrendMaterialMenu, WorkbenchOptionMenu } from "../components/WorkbenchMenus";
 import { SALES_PAGE_LABELS, type CurrentUser, type SalesPage } from "../types";
-import { base, modes, money, productSourceText, quoteListStatus, quoteReference, quoteTrendPoints, type Batch, type Mode, type Product, type Quote, type QuoteListStatus, type Trial } from "./salesModel";
+import { base, modes, money, productSourceText, quoteListStatus, quoteReference, quoteTrendPoints, salesDepartments, type Batch, type Mode, type Product, type Quote, type QuoteListStatus, type Trial } from "./salesModel";
 import p from "../components/WorkbenchSurface.module.css";
 import s from "./SalesWorkbench.module.css";
 import { SalesQuoteEditor } from "./SalesQuoteEditor";
@@ -112,14 +112,14 @@ function CustomerQuotes({batches,records,userId,onOpen}:{batches:Batch[];records
 }
 
 function ProductCatalog({products,selected,onSelect,selecting,onSelecting,onOpen,onStart,accessLevel,userId}:{products:Product[];selected:string[];onSelect:(ids:string[])=>void;selecting:boolean;onSelecting:(value:boolean)=>void;onOpen:(product:Product)=>void;onStart:(rows:Product[])=>void;accessLevel:number;userId:string}) {
- const [search,setSearch]=useState(""),[source,setSource]=useState(""),[department,setDepartment]=useState("");
+ const [search,setSearch]=useState(""),[source,setSource]=useState("research"),[department,setDepartment]=useState("");
  const [columns,setColumns]=useState({department:true,cost:true,quote:true});
  const [display,setDisplay]=useSalesLedgerDisplay(userId,"products"),[page,setPage]=useState(1);
  useEffect(()=>setPage(1),[search,source,department,display]);
  const visible=products.filter(row=>(!source||row.source===source)&&(!department||row.department===department)&&`${row.code} ${row.name} ${row.department}`.toLowerCase().includes(search.trim().toLowerCase()));
  const currentPage=Math.min(page,Math.max(1,Math.ceil(visible.length/display.pageSize)));
  const shown=display.view==="paged"?visible.slice((currentPage-1)*display.pageSize,currentPage*display.pageSize):visible;
- const departments=[...new Set(products.map(row=>row.department))].filter(Boolean);
+ const departments=salesDepartments(products);
  const columnCount=1+Number(selecting)+Number(columns.department)+Number(columns.cost)+Number(columns.quote);
  const footerActions=accessLevel>=3&&<div className={s.catalogFooterActions}>{selecting?<><span>已选 <strong>{selected.length}</strong> 项</span><button className="secondary-button" aria-label="取消批量选择" onClick={()=>{onSelect([]);onSelecting(false);}}>取消</button><button className="primary-button" disabled={!selected.length} onClick={()=>onStart(products.filter(row=>selected.includes(row.id)))}>开始报价</button></>:<button className="primary-button" onClick={()=>onSelecting(true)}>批量报价</button>}</div>;
  return <section className={s.productSection}><LedgerFrame><LedgerToolbar className={s.productToolbar}>

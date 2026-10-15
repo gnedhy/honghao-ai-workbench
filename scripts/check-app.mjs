@@ -45,7 +45,7 @@ try{
   if(red && name!==({search:'search-clears-old-opened-workbench',boundary:'module-failure-switch-and-real-reload',feedback:'feedback-latest-list-wins',identity:'identity-key-clears-draft-and-old-unread'})[red])return;
   const context=await browser.newContext({viewport:{width:1440,height:1000}}),page=await context.newPage();page.setDefaultTimeout(10000);
   if(fault==='unread-slow')await page.addInitScript(()=>{const start=window.setInterval.bind(window),stop=window.clearInterval.bind(window);window.w8Intervals=new Map();window.setInterval=(...args)=>{const id=start(...args);if(new Error().stack.includes("appFeedback"))window.w8Intervals.set(id,args[1]);return id};window.clearInterval=id=>{window.w8Intervals.delete(id);return stop(id)}});
-  const unreadInitial=fault==='unread-failed'?page.waitForResponse(r=>new URL(r.url()).pathname==='/api/feedback/unread'):null;
+  let unreadInitial=null;
   const pending=gate(),held=gate(),errors=[],requests=[],network=[];let closing=false,injected=false,feedbackReads=0,unreadReads=0;
   page.on('pageerror',e=>errors.push(e.message));page.on('response',r=>{if(r.status()>=400)network.push(`${r.status()} ${new URL(r.url()).pathname}`)});
   const send=async(url,data,method='POST',status=200)=>{const r=await context.request.fetch(new URL(url,api).href,{method,data});assert.equal(r.status(),status,await r.text());return status===204?null:r.json()};
@@ -89,6 +89,11 @@ try{
    await route.fulfill({response});
   }catch(error){if(!closing&&!req.failure())errors.push(error.message)}});
   try{
+   if(fault==='unread-failed'){
+    unreadInitial=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/feedback/unread');
+    // Keep navigation/login failures visible instead of masking them with an unhandled close rejection.
+    unreadInitial.catch(()=>{});
+   }
    await page.goto(origin+(fault==='login'? 'w8-login':fault==='demo-none'?'w8-app?denied':'w8-app'));await check({page,context,get,send,login,initial,pending,held,requests,unreadInitial,unreadReads:()=>unreadReads});
    assert.deepEqual(errors,[]);
    await page.screenshot({path:`${output}/${name}.png`,fullPage:true});evidence.push({name,status:'passed',requests:requests.filter(r=>r.method!=='GET'),milliseconds:Math.round(performance.now()-started)});

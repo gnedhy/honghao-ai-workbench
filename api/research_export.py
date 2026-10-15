@@ -13,6 +13,15 @@ from openpyxl.worksheet.page import PageMargins
 
 
 PRICE_BASIS = {
+    'confirmed_manual_inventory_price': '已确认库存核算价',
+    'confirmed_purchase_reference_inventory_price': '采购参考价（库存核算）',
+    'confirmed_historical_inventory_price': '历史库存参考价',
+    'reference_mean': '参考原料有价算术平均',
+    "unpriced_zero_assumption": "未提供价格，按0核算",
+    "erp_inventory_fallback": "BOM缺价，采用ERP库存", "zero_input": "零投料不参与核算",
+    "cf232_latest": "CF232最新价×浓度", "cf232_inventory": "CF232库存价×浓度",
+    "cf232_historical_latest": "CF232当期价×浓度", "cf232_current_latest_fallback": "CF232当前最新价×浓度",
+    "cf232_current_inventory_fallback": "CF232当前库存价×浓度",
     "latest": "最新价格", "historical_latest": "当期最新价格",
     "current_latest_fallback": "当前最新价格补位",
     "current_inventory_fallback": "当前库存价格补位",
@@ -20,11 +29,20 @@ PRICE_BASIS = {
     "composite": "复配计算成本", "missing": "缺少价格",
 }
 STATUS = {
-    "ready": "可核算", "missing": "待补价格",
+    "ready": "可核算", "missing": "成本待完善",
     "updating": "更新中（沿用上次完成记录）",
     "failed": "更新失败（沿用上次完成记录）",
 }
 NUMBER_FORMAT = '0.00'
+
+
+def _price_basis(line):
+    label = PRICE_BASIS.get(line.get('basis'), line.get('basis')) or ''
+    if line.get('price_refs'):
+        values = line.get('price_reference_values', [])
+        count = sum(v['unit_cost'] is not None for v in values)
+        return label + ' · ' + '／'.join(line['price_refs']) + (f'（{count}/{len(values)}有价）' if values else '')
+    return label + (f" · 按{line['price_ref']}取价" if line.get('price_ref') else '')
 CHINA_TIME = timezone(timedelta(hours=8))
 FILL_DARK = PatternFill("solid", fgColor="233842")
 FILL_LIGHT = PatternFill("solid", fgColor="F2F6F7")
@@ -178,7 +196,7 @@ def build_cost_workbook(rows: list[dict], exported_at: datetime | None = None) -
             lines = formula.get("lines", [])
             sheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=10)
             title = sheet.cell(row, 1)
-            _text(title, f"{product.get('name', '')}  ·  配方 v{formula.get('revision', product.get('revision', 0))}")
+            _text(title, f"{product.get('name', '')}  ·  配方 v{formula.get('revision', product.get('revision', 0))}" + (f" · {formula['department']}" if formula.get('department') else ""))
             title.fill = FILL_LIGHT
             title.font = Font(name="Arial", size=12, bold=True, color="233842")
             title.alignment = Alignment(vertical="center", indent=1)
@@ -263,12 +281,12 @@ def build_cost_workbook(rows: list[dict], exported_at: datetime | None = None) -
                 _number(sheet.cell(row, 3), ratio, "0.00%")
                 _number(sheet.cell(row, 4), line.get("quantity"))
                 _number(sheet.cell(row, 5), left.get("unit_cost"))
-                _text(sheet.cell(row, 6), PRICE_BASIS.get(left.get("basis"), left.get("basis")) if left else "")
+                _text(sheet.cell(row, 6), _price_basis(left))
                 if left.get("amount") is not None:
                     sheet.cell(row, 7).value = f"=D{row}*E{row}"
                     sheet.cell(row, 7).number_format = NUMBER_FORMAT
                 _number(sheet.cell(row, 8), right.get("unit_cost"))
-                _text(sheet.cell(row, 9), PRICE_BASIS.get(right.get("basis"), right.get("basis")) if right else "")
+                _text(sheet.cell(row, 9), _price_basis(right))
                 if right.get("amount") is not None:
                     sheet.cell(row, 10).value = f"=D{row}*H{row}"
                     sheet.cell(row, 10).number_format = NUMBER_FORMAT

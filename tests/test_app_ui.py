@@ -22,7 +22,7 @@ def test_browser_app_static_entry_and_feedback(ready, request):
     settings.workbench_modes.update(sales='active', management='off')
     settings.module_modes.update(tasks='active', chat='active', workbench='active', knowledge='off', automation='off')
     identities = IdentityStore(settings.database_url)
-    identities.create_user(username='w8-viewer', display_name='W8 合成查看者', department=None,
+    identities.create_user(username='w8-viewer', display_name='W8 合成查看者', department='研发五部',
                            password=TEST_ADMIN_PASSWORD, scope_levels={'research': 2})
     identities.create_user(username='w8-none', display_name='W8 合成无权限', department=None,
                            password=TEST_ADMIN_PASSWORD)
