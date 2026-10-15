@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { ChevronRight, Trash2 } from "lucide-react";
+import { Package, ChevronRight, Trash2 } from "lucide-react";
 import { Drawer } from "../components/Drawer";
 import { DecimalInput } from "../components/DecimalInput";
-import { FormFooter } from "../components/WorkbenchLayout";
+import { EmptyState, FormFooter } from "../components/WorkbenchLayout";
 import { WorkbenchOptionMenu } from "../components/WorkbenchMenus";
 import type { CurrentUser } from "../types";
 import { canEditQuoteItem, decimalText, modes, money, parameterLabels, productSourceText, quoteValue, reasons, type DraftItem, type Item, type Mode, type Parameters } from "./salesModel";
@@ -48,7 +48,7 @@ export function SalesQuoteEditor(props:SalesQuoteSessionOptions & {currentUser:C
    <label>业务员<input disabled={customerLocked} value={customer.salesperson} onChange={event=>changeCustomer({salesperson:event.target.value})}/></label>
   </div>
  </section>
- <section className={s.drawerSection}><div className={s.sectionHeading}><div><h3>报价参考</h3><p>{modes[mode]}</p></div>{items.length>1&&<button className="secondary-button" onClick={()=>setBulkOpen(value=>!value)}>{bulkOpen?"收起批量调整":"批量报价调整"}</button>}</div>{bulkOpen&&<div className={s.bulkPanel}><div className={s.fieldGrid}>{fields.map(key=><label key={key}>{parameterLabels[key]}<DecimalInput value={bulk[key]??""} placeholder="保持各产品原值" onChange={event=>setBulk({...bulk,[key]:event.target.value})}/></label>)}</div><button className="secondary-button" onClick={()=>{if(applyParameters(bulk)){setBulk({});setBulkOpen(false);}}}>应用到全部产品</button></div>}<div className={s.editorCards}>{items.map(quoteCard)}</div>{!items.length&&<p className={s.empty}>尚未加入产品，请从下方选择。</p>}<SalesProductPicker add products={catalog} excludeIds={[...new Set([...items.map(row=>row.product_id),...(savedBatch?.items.filter(row=>row.adopted).map(row=>row.product_id)??[])])]} onSelect={addProduct}/></section>
+ <section className={s.drawerSection}><div className={s.sectionHeading}><div><h3>报价参考</h3><p>{modes[mode]}</p></div>{items.length>1&&<button className="secondary-button" onClick={()=>setBulkOpen(value=>!value)}>{bulkOpen?"收起批量调整":"批量报价调整"}</button>}</div>{bulkOpen&&<div className={s.bulkPanel}><div className={s.fieldGrid}>{fields.map(key=><label key={key}>{parameterLabels[key]}<DecimalInput value={bulk[key]??""} placeholder="保持各产品原值" onChange={event=>setBulk({...bulk,[key]:event.target.value})}/></label>)}</div><button className="secondary-button" onClick={()=>{if(applyParameters(bulk)){setBulk({});setBulkOpen(false);}}}>应用到全部产品</button></div>}<div className={s.editorCards}>{items.map(quoteCard)}</div>{!items.length&&<EmptyState icon={Package} className={s.empty} title="从下方选择产品加入报价"/>}<SalesProductPicker add products={catalog} excludeIds={[...new Set([...items.map(row=>row.product_id),...(savedBatch?.items.filter(row=>row.adopted).map(row=>row.product_id)??[])])]} onSelect={addProduct}/></section>
  {error&&<p className={s.error} role="alert">{error}</p>}{savedBatch&&!dirty&&accessLevel>=4&&(exceptions.stale.length>0||exceptions.belowBreakEven.length>0)&&<section className={s.adoptChecks} aria-label="采用前确认">
   {exceptions.stale.length>0&&<label><input type="checkbox" checked={keepCost} onChange={event=>confirmStaleCost(event.target.checked)}/><span><strong>保留本次成本依据</strong><small>{productNames(exceptions.stale)}的产品成本或状态已更新；确认后沿用保存时的依据并留痕。</small></span></label>}
   {exceptions.belowBreakEven.length>0&&<label><input type="checkbox" checked={confirmLow} onChange={event=>confirmLowPrice(event.target.checked)}/><span><strong>确认低于盈亏平衡参考价</strong><small>{productNames(exceptions.belowBreakEven)}的最终报价低于参考价；请核对定价依据后确认。</small></span></label>}

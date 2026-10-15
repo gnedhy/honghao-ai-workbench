@@ -8,7 +8,7 @@ const api=new URL(process.env.H04_TEST_API ?? '');
 assert.equal(api.hostname,'127.0.0.1');
 assert.ok(api.port && !['8000','8080'].includes(api.port) && process.env.H04_TEST_PASSWORD);
 const output='.scratch/h04-ui';mkdirSync(output,{recursive:true});
-const server=await createServer({configFile:false,logLevel:'silent',plugins:[react()],
+const server=await createServer({configFile:false,logLevel:'silent',optimizeDeps:{entries:['index.html']},plugins:[react()],
   cacheDir:output+'/vite-cache',server:{host:'127.0.0.1',port:0,hmr:false,proxy:{'/api':api.origin}}});
 let browser;const evidence=[];
 try {
@@ -24,6 +24,8 @@ try {
       await page.goto(origin);await page.locator('.sidebar__brand').waitFor();
       if(width<600)await page.getByRole('button',{name:'打开导航',exact:true}).click();
       await page.getByRole('button',{name:'新聊天',exact:true}).click();
+      assert.equal(await page.getByRole('tab',{name:'聊天',exact:true}).getAttribute('aria-selected'),'true');
+      await page.getByRole('tab',{name:'工作',exact:true}).click();
       await check({page,context,get});
       assert.deepEqual(errors,[]);
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
@@ -50,12 +52,13 @@ try {
     await page.getByRole('alert').filter({hasText:'AI 执行配置读取失败'}).waitFor();
     failConfig=false;
     await page.getByRole('button',{name:'重新读取执行状态',exact:true}).click();
-    await page.getByRole('button',{name:'开始执行',exact:true}).waitFor();
-    await page.locator('.conversation-entry').filter({hasText:'H04 synthetic first'}).getByRole('button',{name:'查看本次执行',exact:true}).click();
+    await page.getByRole('button',{name:'重试',exact:true}).waitFor();
+    await page.getByLabel('选择待执行消息',{exact:true}).click();
+    await page.getByRole('button',{name:'H04 synthetic first',exact:true}).last().click();
     let failRefresh=true;
     await page.route('**/api/tasks',route=>failRefresh && route.request().method()==='GET'
       ? route.fulfill({status:503,json:{detail:'Synthetic read failure'}}) : route.continue());
-    await page.getByRole('button',{name:'开始执行',exact:true}).click();
+    await page.getByRole('button',{name:'重试',exact:true}).click();
     await page.locator('.conversation-state').filter({hasText:'已完成'}).waitFor();
     await page.getByRole('alert').filter({hasText:'正文与任务读取失败'}).waitFor();
     failRefresh=false;
@@ -63,7 +66,8 @@ try {
     await page.getByRole('alert').filter({hasText:'正文与任务读取失败'}).waitFor({state:'hidden'});
     await page.locator('.chat-turn--assistant').filter({hasText:'synthetic runtime reply'}).waitFor();
     assert.equal(await page.locator('.chat-turn--assistant').filter({hasText:'synthetic runtime reply'}).count(),1);
-    await page.locator('.conversation-entry').filter({hasText:'H04 synthetic supplement'}).getByRole('button',{name:'查看本次执行',exact:true}).click();
+    await page.getByLabel('选择待执行消息',{exact:true}).click();
+    await page.getByRole('button',{name:'H04 synthetic supplement',exact:true}).click();
     let releaseTasks;
     const heldTasks=new Promise(resolve=>{releaseTasks=resolve;});
     let oldSnapshot;
@@ -71,27 +75,31 @@ try {
     await page.route('**/api/tasks',async route=>{
       if(route.request().method()!=='GET')return route.continue();
       const response=await route.fetch();const rows=await response.json();
-      if(rows.some(task=>task.status==='completed')){
+      if(rows.some(task=>task.status==='review')){
         oldSnapshot(rows);await heldTasks;
       }
       await route.fulfill({response,json:rows});
     });
-    await page.getByRole('button',{name:'开始执行',exact:true}).click();
+    await page.getByRole('button',{name:'重试',exact:true}).click();
     await page.locator('.conversation-state').filter({hasText:'已完成'}).waitFor();
     const oldRows=await captured;
     await send(page,'LONG H04 next accepted while old refresh pending');
-    await page.locator('.conversation-state').filter({hasText:'执行中'}).waitFor();
+    await page.locator('.composer').getByRole('button',{name:'停止执行',exact:true}).waitFor();
+    assert.equal(await page.getByRole('button',{name:'停止执行',exact:true}).count(),1);
+    assert.ok(await page.locator('.conversation-state').evaluate(node=>node.classList.contains('sr-only')));
     releaseTasks();
     await page.waitForTimeout(300);
     await page.locator('.conversation-entry').filter({hasText:'LONG H04 next accepted while old refresh pending'}).waitFor();
     const tasks=await get('api/tasks');assert.equal(tasks.length,1);assert.equal(tasks[0].status,'running');
     assert.ok(tasks[0].revision>oldRows[0].revision);
-    await page.getByRole('button',{name:'任务看板',exact:true}).click();
+    await page.getByRole('button',{name:'任务面板',exact:true}).click();
+    await page.getByRole('tab',{name:'列表',exact:true}).click();
     await page.locator('.task-board').waitFor();
     await page.locator('.task-table .task-status').filter({hasText:'执行中'}).waitFor();
-    await page.locator('.task-table').getByRole('button',{name:'H04 synthetic first',exact:true}).click();
+    await page.locator('.task-table').getByRole('button',{name:'查看任务：H04 synthetic first',exact:true}).click();
+    await page.getByRole('button',{name:'查看对话',exact:true}).click();
     await page.getByRole('button',{name:'停止执行',exact:true}).click();
-    await page.locator('.conversation-state').filter({hasText:'已停止'}).waitFor();
+    await page.locator('p.conversation-state').filter({hasText:'已停止'}).waitFor();
     const runs=await get(`api/tasks/${tasks[0].id}/runs`);assert.equal(runs.length,3);
     assert.deepEqual(runs.map(run=>run.status),['completed','completed','stopped']);
     assert.ok(!await page.locator('.conversation-screen').textContent().then(text=>text.includes('synthetic-thread')));
@@ -108,10 +116,14 @@ try {
     assert.ok(current);
     const before=await get(`api/tasks/${current.id}/runs`);assert.equal(before.length,1);
     await page.getByLabel('输入工作要求',{exact:true}).fill('H04 next draft');
-    assert.equal(await page.getByRole('button',{name:'交给智能体执行',exact:true}).isDisabled(),true);
+    assert.equal(await page.getByRole('button',{name:'交给智能体执行',exact:true}).count(),0);
+    await page.getByLabel('输入工作要求',{exact:true}).press('Enter');
+    assert.equal(await page.locator('.composer').getByRole('button',{name:'停止执行',exact:true}).count(),1);
     await page.getByRole('button',{name:'停止执行',exact:true}).click();
-    await page.locator('.conversation-state').filter({hasText:'已停止'}).waitFor();
+    await page.locator('p.conversation-state').filter({hasText:'已停止'}).waitFor();
     assert.equal(await page.getByLabel('输入工作要求',{exact:true}).inputValue(),'H04 next draft');
+    assert.equal(await page.locator('.composer').getByRole('button',{name:'停止执行',exact:true}).count(),0);
+    assert.equal(await page.getByRole('button',{name:'交给智能体执行',exact:true}).isEnabled(),true);
     const after=await get(`api/tasks/${current.id}/runs`);assert.equal(after.length,1);assert.equal(after[0].id,before[0].id);assert.equal(after[0].status,'stopped');
     assert.equal(disconnected,true);
     await page.getByLabel('输入工作要求',{exact:true}).fill('');

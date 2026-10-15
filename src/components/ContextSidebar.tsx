@@ -1,5 +1,4 @@
 import {
-  ArrowLeft,
   CheckCircle2,
   Database,
   Download,
@@ -16,8 +15,9 @@ import {
   TestTube2,
   WandSparkles,
 } from "lucide-react";
-import { useState } from "react";
-import { taskStatusLabel } from "../taskPresentation";
+import { useRef, useState } from "react";
+import {useFadingScrollbars} from './Interaction';
+import { taskStatusLabel, taskTitle } from "../taskPresentation";
 import type { KnowledgeItem, Section, SkillItem, TaskItem, WorkflowItem } from "../types";
 
 type ContextSidebarProps = {
@@ -31,7 +31,7 @@ type ContextSidebarProps = {
   open: boolean;
   closing: boolean;
   onClose: () => void;
-  onReturnChat: () => void;
+  taskContentRef: React.Ref<HTMLDivElement>;
   knowledgeItem: KnowledgeItem;
   skill: SkillItem;
   workflow: WorkflowItem;
@@ -52,7 +52,7 @@ export function ContextSidebar({
   open,
   closing,
   onClose,
-  onReturnChat,
+  taskContentRef,
   knowledgeItem,
   skill,
   workflow,
@@ -60,27 +60,28 @@ export function ContextSidebar({
   conversationTask,
 }: ContextSidebarProps) {
   const [feedback, setFeedback] = useState<Feedback>(null);
+  const scrolling=useRef<HTMLElement>(null);useFadingScrollbars(scrolling);
 
   const panelTitle = section === "chat" ? (conversationMode === "聊天" ? "对话上下文" : "执行控制") : section === "knowledge" ? "文档工具" : section === "automation" ? (automationTab === "技能" ? "技能工具" : "工作流工具") : "任务详情";
-  const panelSubtitle = section === "chat" ? conversationTitle : section === "knowledge" ? knowledgeItem.title : section === "automation" ? (automationTab === "技能" ? skill.title : workflow.title) : task?.objective ?? "未选择任务";
+  const panelSubtitle = section === "chat" ? conversationTitle : section === "knowledge" ? knowledgeItem.title : section === "automation" ? (automationTab === "技能" ? skill.title : workflow.title) : task ? taskTitle(task) : "未选择任务";
   const showFeedback = (message: string) => setFeedback({ section, message });
 
   return (
     <>
       {open && <button className={closing ? "context-backdrop is-closing" : "context-backdrop"} type="button" aria-label="关闭右侧工具栏" onClick={onClose} />}
-      <aside className={`context-sidebar${open ? " is-open" : ""}${closing ? " is-closing" : ""}`} aria-hidden={!open}>
+      <aside ref={scrolling} className={`context-sidebar${section==='tasks' ? " task-context" : ""}${open ? " is-open" : ""}${closing ? " is-closing" : ""}`} aria-label={panelTitle} aria-hidden={!open} inert={!open||closing}>
         <header className="context-sidebar__header">
-          <div><span>{panelTitle}</span><strong>{panelSubtitle}</strong></div>
+          <div><span>{panelTitle}</span><strong title={section==='tasks'&&task?task.title??task.objective:panelSubtitle}>{panelSubtitle}</strong></div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="收起右侧工具栏"><PanelRightClose size={18} /></button>
         </header>
 
-        <div className="context-sidebar__body">
+        <div className="context-sidebar__body fading-scrollbar">
           {section === "chat" && <>
             <ToolSection title="当前会话">
-              <PropertyRow icon={<FolderClosed size={16}/>} label="会话项目" value={projectTitle??"未关联项目"}/>
+              {conversationMode === "工作" && <PropertyRow icon={<FolderClosed size={16}/>} label="会话项目" value={projectTitle??"未关联项目"}/>}
               <PropertyRow icon={<FileText size={16}/>} label="提交模式" value={conversationMode}/>
             </ToolSection>
-            {conversationTask&&<ToolSection title="当前任务">
+            {conversationMode === "工作" && conversationTask&&<ToolSection title="当前任务">
               <PropertyRow icon={<FileText size={16}/>} label="目标" value={conversationTask.objective}/>
               <PropertyRow icon={<CheckCircle2 size={16}/>} label="状态" value={taskStatusLabel(conversationTask.status)}/>
               <PropertyRow icon={<FolderClosed size={16}/>} label="任务归属" value={taskProjectTitle??"未关联项目"}/>
@@ -99,7 +100,7 @@ export function ContextSidebar({
           )}
 
           {section === "tasks" && (task
-            ? <TaskStatusTools task={task} projectTitle={taskProjectTitle} onReturnChat={onReturnChat} />
+            ? <div ref={taskContentRef}/>
             : <div className="tool-safety-note"><History size={16} /><p>选择一个任务后，这里会显示它的来源与项目快照。</p></div>
           )}
 
@@ -145,19 +146,6 @@ function KnowledgeStatusTools({ item, onFeedback }: { item: KnowledgeItem; onFee
     { icon: <History size={16} />, label: "最后更新", value: item.updated },
     { icon: <Tags size={16} />, label: "标签", value: item.tags.join("、") },
   ]} note="个人知识只对本人可见。提交公共候选后仍需来源、内容和权限审查，原文不会被自动覆盖。" onFeedback={onFeedback} />;
-}
-
-function TaskStatusTools({ task, projectTitle, onReturnChat }: { task: TaskItem; projectTitle:string|null; onReturnChat: () => void }) {
-  return <>
-    <ToolSection title="任务操作">
-      <button className="tool-action" type="button" onClick={onReturnChat}><ArrowLeft size={16} /><span><strong>返回来源会话</strong><small>继续查看或补充这项工作</small></span></button>
-    </ToolSection>
-    <ToolSection title="任务快照">
-      <PropertyRow icon={<CheckCircle2 size={16} />} label="状态" value={taskStatusLabel(task.status)} />
-      <PropertyRow icon={<FolderClosed size={16} />} label="项目关联" value={projectTitle??"未关联项目"} />
-      <PropertyRow icon={<History size={16} />} label="最近运行" value={task.latest_run ? "已有运行记录" : "尚未运行"} />
-    </ToolSection>
-  </>;
 }
 
 function SkillStatusTools({ skill, onFeedback }: { skill: SkillItem; onFeedback: (message: string) => void }) {

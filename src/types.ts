@@ -32,6 +32,12 @@ export type PersonalProfile = CurrentUser & {
   research_capabilities: { can_edit: boolean; can_activate: boolean; can_manage_grants: boolean };
   procurement_capabilities: { can_edit: boolean; can_activate: boolean; can_manage_grants: boolean };
 };
+export type AIUsage = {
+  cost_cny?:string;pending_cny?:string;accounting_since?:string|null;
+  executions:number;chats:number;work:number;tokens:number;active_days:number;accepted_tasks:number;
+  successful:number;failed:number;stopped:number;today:string;
+  activity:{date:string;runs:number;tokens:number}[];
+};
 
 export type AdminModuleSetting = {
   can_change?: boolean;
@@ -315,14 +321,22 @@ export type ConversationView = "new" | "existing";
 
 export type WorkApproval = "pending" | "approved" | "rejected";
 
+export type ProjectIcon = 'folder'|'briefcase'|'flask'|'chart'|'code'|'book'|'lightbulb'|'palette';
+export type ProjectColor = 'blue'|'green'|'amber'|'violet'|'rose'|'slate';
 export type Project = {
+  removed?: boolean;
   owner_id?: string | null;
   revision: number;
   id: string;
   title: string;
+  icon?: ProjectIcon;
+  color?: ProjectColor;
 };
 
 export type Conversation = {
+  pinned?: boolean;
+  archived?: boolean;
+  mode?: "chat" | "work" | null;
   owner_id?: string | null;
   revision: number;
   id: string;
@@ -330,10 +344,15 @@ export type Conversation = {
   project_id: string | null;
 };
 
-export type TaskStatus = "created" | "running" | "waiting" | "completed" | "stopped" | "failed" | "blocked";
+export type ConversationUpdate = {title?:string;pinned?:boolean;archived?:boolean;project_id?:string|null};
+
+export type TaskStatus = "created" | "queued" | "running" | "waiting" | "review" | "completed" | "stopped" | "failed" | "blocked";
 
 export type ConversationMessage = {
   run_id?: string | null;
+  execution_status?: Exclude<TaskStatus,'created'|'review'> | null;
+  execution_started_at?: string | null;
+  execution_ended_at?: string | null;
   owner_id?: string | null;
   role?: "user" | "assistant" | "tool";
   id: string;
@@ -378,6 +397,7 @@ export type TaskItem = {
   id: string;
   conversation_id: string;
   objective: string;
+  title?: string | null;
   project_id: string | null;
   status: TaskStatus;
   created_at: string;
@@ -401,3 +421,6 @@ export type SalesPage = "dashboard" | "calculate" | "estimator" | "quotes";
 export const SALES_PAGE_LABELS: Record<SalesPage,string> = {dashboard:"销售看板",calculate:"产品报价",estimator:"测算工具",quotes:"报价历史"};
 export type NewsItem = { title: string; source: string; url: string; published_at: string };
 export type NewsData = { items: NewsItem[]; total: number; page: number; page_size: number; updated_at: string | null; delayed: boolean; sources: { name: string; status: 'ok' | 'pending' | 'delayed'; last_success: string | null }[] };
+export type PersonalizationSettings = {revision:number; memory_enabled:boolean; instructions:string; updated_at:string|null; memory_count:number; legacy_memory_count:number};
+export type ProjectInstructions = {revision:number; content:string|null; updated_at:string|null; source:'project'|'personal'; effective_content:string};
+export type PersonalMemory = {id:string; content:string; revision:number; updated_at:string; source_conversation_id:string|null; source_title:string|null};

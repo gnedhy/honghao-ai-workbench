@@ -1,8 +1,11 @@
+import {PersonalizationSettingsPanel} from '../personalization/Personalization';
+import {AIConfigSettings} from './AIConfigSettings';
 import { sectionNavigation, workbenchSettings } from "../workbenchRegistry";
-import { PageState } from "./WorkbenchLayout";
+import {EmptyState,  PageState } from "./WorkbenchLayout";
+import { positionWorkbenchDisplayMenu } from "./WorkbenchMenus";
 import { Switch } from "./Switch";
 import { DiscardChangesDialog, SettingsGroup, useFadingScrollbars, useExitTransition, useMeasuredContent } from "./Interaction";
-import { Check, ChevronRight, ChevronLeft, Columns3, CircleUserRound, ClipboardList, Info, PanelsTopLeft, PenLine, Plus, ShieldCheck, Server, X,  } from "lucide-react";
+import { Archive, Check, ChevronRight, ChevronLeft, Columns3, CircleUserRound, ClipboardList, Info, PanelsTopLeft, PenLine, Plus, ShieldCheck, Server, X,  } from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   createUser,
@@ -13,6 +16,8 @@ import {
   fetchAuditEvents,
   fetchUsers,
   fetchDepartments,
+  fetchJson,
+  workspaceHeaders,
   deleteDepartment,
   updateAdminModuleSetting,
   updateAdminWorkbenchSetting,
@@ -39,8 +44,9 @@ import { ProcurementActivationGrants } from "./ActivationGrants";
 import procurementStyles from "./WorkbenchSurface.module.css";
 import { DepartmentEditor, MembershipFields, OrganizationDirectory, departmentPath } from './OrganizationControls';
 import type { OrganizationDepartment, DepartmentMembership } from '../types';
+import {ConversationManagement,type ConversationManagementProps} from '../chat/ConversationManagement';
 
-type SettingsTab = "general" | "accounts" | "audit" | "about";
+type SettingsTab = "general" | "ai-config" | "personalization" | "accounts" | "audit" | "about" | "conversations";
 export type UiFontSize = 1 | 2 | 3 | 4 | 5;
 
 const UI_FONT_SIZES: { id: UiFontSize; label: string }[] = [
@@ -105,22 +111,31 @@ type SettingsDialogProps = {
   onUiFontSizeChange: (size: UiFontSize) => void;
   onClose: () => void;
   onOpenProfile: () => void;
+  initialTab?: 'general'|'conversations';
+  conversationManagement?: Omit<ConversationManagementProps,'ownerId'|'onBusy'>;
 };
 
 
-export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, moduleStatuses, moduleRegistryState, workbenchStatuses, workbenchRegistryState, uiFontSize, onUiFontSizeChange, onClose, onOpenProfile }: SettingsDialogProps) {
+export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, moduleStatuses, moduleRegistryState, workbenchStatuses, workbenchRegistryState, uiFontSize, onUiFontSizeChange, onClose, onOpenProfile, initialTab='general',conversationManagement }: SettingsDialogProps) {
   const exit = useExitTransition(onClose);
   const modal = useRef<HTMLDialogElement>(null);
   const previousFocus = useRef(document.activeElement as HTMLElement | null);
   useEffect(() => {
     const element = modal.current;
+    const previous = previousFocus.current;
     element?.showModal();
-    return () => { element?.close(); if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true }); };
+    return () => {
+      element?.close();
+      let target=previous;
+      if(!target?.isConnected||target.closest('[inert]')||!target.getClientRects().length)target=document.querySelector<HTMLElement>('.profile-trigger');
+      if(target?.closest('[inert]'))target=document.querySelector<HTMLElement>('.mobile-nav-trigger');
+      target?.focus({preventScroll:true});
+    };
   }, []);
   const scrollBody = useRef<HTMLDivElement>(null);
   useFadingScrollbars(scrollBody);
   const isAdmin = currentUser.is_system_admin;
-  const [tab, setTab] = useState<SettingsTab>("general");
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
   const [loadState, setLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
@@ -155,6 +170,7 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
   const [profileRevision, setProfileRevision] = useState(0);
   const [saving, setSaving] = useState(false);
   const busy = useRef(false);
+  const aiLeaveGuard = useRef<(() => Promise<boolean>) | null>(null);
   const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
   const [userAdminDraft, setUserAdminDraft] = useState(false);
   const [userAiDraft, setUserAiDraft] = useState(false);
@@ -163,13 +179,15 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
   useEffect(() => {
     if (!isAdmin) return;
     setLoadState("loading");
-    Promise.all([fetchUsers(), fetchAuditEvents(), fetchAdminModuleSettings(), fetchDepartments()])
-      .then(([loadedUsers, loadedEvents, loadedModuleSettings, loadedDepartments]) => {
+    const loadUsers = fetchUsers().then(loadedUsers => {
+      setUsers(loadedUsers);
+      setSelectedUserId(loadedUsers[0]?.id ?? "");
+    });
+    Promise.all([loadUsers, fetchAuditEvents(), fetchAdminModuleSettings(), fetchDepartments()])
+      .then(([, loadedEvents, loadedModuleSettings, loadedDepartments]) => {
         setDepartments(loadedDepartments);
-        setUsers(loadedUsers);
         setAuditEvents(loadedEvents);
         setAdminModuleSettings(loadedModuleSettings);
-        setSelectedUserId(loadedUsers[0]?.id ?? "");
         setLoadState("ready");
       })
       .catch(() => setLoadState("error"));
@@ -218,8 +236,9 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
     setDepartmentEdit(null);
     setNewUserOpen(false);
   };
-  const requestLeave = (action: () => void, changed = dirty, discard = resetDrafts) => {
+  const requestLeave = async (action: () => void, changed = dirty, discard = resetDrafts) => {
     if (busy.current) return;
+    if (aiLeaveGuard.current && !(await aiLeaveGuard.current())) return;
     if (changed) setPendingLeave(() => () => { discard(); action(); });
     else action();
   };
@@ -300,6 +319,9 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
 
   const navItems: { id: SettingsTab; label: string; icon: typeof CircleUserRound }[] = [
     { id: "general", label: "常规设置", icon: PanelsTopLeft },
+    ...(isAdmin ? [{id: 'ai-config' as const, label: 'AI 配置', icon: Server}] : []),
+    ...((isAdmin||currentUser.ai_enabled)?[{id:"personalization" as const,label:"个性化",icon:PenLine}]:[]),
+    ...(conversationManagement?[{id:'conversations' as const,label:'会话管理',icon:Archive}]:[]),
     ...(isAdmin ? [
       { id: "accounts" as const, label: "用户管理", icon: CircleUserRound },
       { id: "audit" as const, label: "审计日志", icon: ClipboardList },
@@ -315,11 +337,14 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
         <header><div><h1 id="settings-title">系统设置</h1><p>{isAdmin ? "管理账号、访问边界和安全记录。" : "查看当前系统运行状态。"}</p></div><button className="icon-button" type="button" aria-label="关闭设置" disabled={saving} onClick={() => requestLeave(exit.close)}><X size={18} /></button></header>
         <div className="settings-dialog__body" ref={scrollBody}>
           <nav aria-label="设置分类">{navItems.map(({ id, label, icon: Icon }) => <button className={tab === id ? "is-active" : ""} key={id} type="button" disabled={saving} onClick={() => { if (id !== tab) requestLeave(() => { resetDrafts(); setTab(id); }); }}><span><Icon size={15} />{label}</span><ChevronRight size={15} /></button>)}</nav>
-          <article className={tab === "accounts" ? "settings-accounts-content" : tab === "audit" || tab === "about" ? "settings-log-content" : undefined}>
+          <article className={tab === "ai-config" ? "settings-ai-content" : tab === "accounts" ? "settings-accounts-content" : tab === "audit" || tab === "about" || tab === "conversations" ? "settings-log-content" : undefined}>
             {departmentToDelete && <DiscardChangesDialog title="删除部门？" description={<>将删除“{departments.find(d => d.id === departmentToDelete)?.name}”。仅可删除没有人员或子部门的空部门。{departmentError && <span role="alert" className="login-error">{departmentError}</span>}</>} cancelLabel="取消" confirmLabel="删除部门" disabled={saving} onCancel={() => { if (!busy.current) { setDepartmentToDelete(null); setDepartmentError(""); } }} onDiscard={async () => { if (busy.current) return; busy.current = true; setSaving(true); setDepartmentError(""); try { await deleteDepartment(departmentToDelete); setDepartmentToDelete(null); showNotice("部门已删除"); try { await refreshOrganization(); } catch { showNotice("部门已删除，列表刷新失败，请重新打开设置"); } } catch (error) { setDepartmentError(error instanceof Error ? error.message : "删除失败，请重试"); } finally { busy.current = false; setSaving(false); } }} />}
             {pendingLeave && <DiscardChangesDialog onCancel={() => setPendingLeave(null)} onDiscard={() => { const action = pendingLeave; setPendingLeave(null); action(); }} />}
             {notice && <div className="settings-notice" role="status"><Check size={14} />{notice}</div>}
             {tab === "general" && <><FontSizeSetting value={uiFontSize} onChange={onUiFontSizeChange} /><GeneralSettings serviceCopy={serviceCopy} environment={runtimeEnvironment} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} workbenchStatuses={workbenchStatuses} workbenchRegistryState={workbenchRegistryState} isAdmin={isAdmin} adminModuleSettings={adminModuleSettings} onModeChange={saveModuleMode} onWorkbenchModeChange={saveWorkbenchMode} canManageGrants={canManageGrants} canManageResearchGrants={canManageResearchGrants} onGrantsChanged={() => showNotice("授权已更新")} /></>}
+            {tab === 'personalization' && (isAdmin||currentUser.ai_enabled)&&<PersonalizationSettingsPanel key={currentUser.id} ownerId={currentUser.id} onBusy={value=>{busy.current=value;setSaving(value);}}/>}
+            {tab === 'ai-config' && isAdmin && <AIConfigSettings key={currentUser.id} users={users} onBusy={value => {busy.current=value;setSaving(value);}} onGuardChange={guard => {aiLeaveGuard.current=guard;}}/>}
+            {tab === 'conversations' && (conversationManagement?<ConversationManagement {...conversationManagement} ownerId={currentUser.id} onBusy={value=>{busy.current=value;setSaving(value);}}/>:<PageState>会话模块当前不可用。</PageState>)}
             {(tab === "accounts" || tab === "audit") && loadState === "loading" && <SettingsState copy="正在读取管理数据…" />}
             {(tab === "accounts" || tab === "audit") && loadState === "error" && <SettingsState copy="管理数据暂时无法读取，请稍后重试。" error />}
             {tab === "accounts" && loadState === "ready" && <section className="admin-settings-section">
@@ -343,11 +368,11 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
                   </fieldset>
                   <h3 className="settings-section-label" id="account-status-title">账号状态</h3><section aria-labelledby="account-status-title" className="admin-account-status"><div><p>{selectedUser.id === currentUser.id ? "当前登录账号不可停用或修改自身授权。" : selectedUser.is_active ? "停用后无法登录，已有会话立即失效。" : "启用后可使用原有工作台与功能权限。"}</p></div><button className={selectedUser.is_active ? "secondary-button account-disable-button" : "secondary-button"} type="button" disabled={saving || selectedUser.id === currentUser.id} onClick={toggleUserActive}>{selectedUser.is_active ? "停用账号" : "启用账号"}</button></section></>}
                   </div>
-                </> : <SettingsState copy="请选择一个账号。" />}</div>
+                </> : <EmptyState icon={CircleUserRound} className="settings-state" title="选择账号查看详情"/>}</div>
               </div>}
             </section>}
             {tab === "audit" && loadState === "ready" && <AuditLog events={auditEvents} />}
-            {tab === "about" && <AboutSystem connection={serviceConnection} />}
+            {tab === "about" && <AboutSystem key={currentUser.id} ownerId={currentUser.id} connection={serviceConnection} />}
           </article>
         </div>
     </dialog>
@@ -358,7 +383,15 @@ const AUDIT_TYPES = [
   ["all", "全部类型"], ["security", "登录与安全"], ["accounts", "账号管理"],
   ["permissions", "权限配置"], ["modules", "模块与工作台"], ["other", "其他"],
 ] as const;
-function AboutSystem({ connection }: { connection: ServiceConnection }) {
+function AboutSystem({ connection, ownerId }: { connection: ServiceConnection; ownerId: string }) {
+  const [harnessVersion, setHarnessVersion] = useState('正在读取…');
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchJson<{status: string; version?: string; reason: string | null}>('/api/conversations/runtime-status', {signal: controller.signal, headers: workspaceHeaders(ownerId)})
+      .then(value => {if (!controller.signal.aborted) setHarnessVersion(value.status === 'configured' && typeof value.version === 'string' ? `Codex ${value.version}` : value.reason === 'runtime_not_configured' ? '未配置' : '版本暂不可用');})
+      .catch(() => {if (!controller.signal.aborted) setHarnessVersion('版本暂不可用');});
+    return () => controller.abort();
+  }, [ownerId]);
   const health = connection.state === "online" ? connection.health : null;
   const local = ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
   const environment = !health ? "环境未知" : health.environment === "test" ? "测试" : local ? "本地" : "服务器";
@@ -366,7 +399,8 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
     <h2>关于系统</h2>
     <div className="settings-about-info">
       <div><strong>宏昊化工 · 工作台</strong></div>
-      <div><strong>当前版本</strong><span>{health?.api_version ?? "版本暂不可用"} · {environment}</span></div>
+      <div><strong>系统版本</strong><span>{health?.api_version ?? "版本暂不可用"} · {environment}</span></div>
+      <div><strong>AI Harness</strong><span>{harnessVersion}</span></div>
     </div>
     <h3 className="settings-section-label">更新日志</h3>
     <ol className="settings-timeline" tabIndex={0} aria-label="更新日志"><li>
@@ -497,13 +531,13 @@ function AuditLog({ events }: { events: AuditEvent[] }) {
         {AUDIT_TYPES.map(([value, label]) => <button type="button" key={value} aria-pressed={category === value} onClick={event => { setCategory(value); setPage(1); const menu = event.currentTarget.closest("details"); menu?.removeAttribute("open"); menu?.querySelector("summary")?.focus(); }}>{label}{category === value && <Check size={14} />}</button>)}
       </div></details>
       <span className="audit-filter-count">{filtered.length} 条记录</span>
-      <details className={`${procurementStyles.columnMenu} ${procurementStyles.displayMenu}`}><summary><Columns3 size={14} />显示</summary><div>
+      <details className={`${procurementStyles.columnMenu} ${procurementStyles.displayMenu}`} onToggle={event=>positionWorkbenchDisplayMenu(event.currentTarget)}><summary><Columns3 size={14} />显示</summary><div>
         <span className={procurementStyles.menuLabel}>浏览方式</span>
         <div className={procurementStyles.ledgerMode} role="group" aria-label="日志查看模式">{[["scroll", "连续"], ["paged", "分页"]].map(([value, label]) => <button type="button" key={value} aria-pressed={view === value} onClick={() => { setView(value); setPage(1); }}>{label}</button>)}</div>
         {view === "paged" && <><span className={procurementStyles.menuLabel}>每页条数</span><div className={procurementStyles.ledgerMode} role="group" aria-label="日志每页条数">{[25, 50, 100].map(size => <button type="button" key={size} aria-pressed={pageSize === size} onClick={() => { setPageSize(size); setPage(1); }}>{size}</button>)}</div></>}
       </div></details>
     </div>
-    <div className="audit-list" tabIndex={0} role="region" aria-label="审计日志记录">{filtered.length === 0 ? <SettingsState copy="该类型暂无日志。" /> : visible.map((event) => <div className="audit-row" key={event.id}><span className="audit-row__icon"><ClipboardList size={14} /></span><div><strong>{AUDIT_LABELS[event.action] ?? event.action}</strong><p>{event.actor_name ?? "未知账号"}</p><small className="audit-target">{({ user: "账号", account: "账号", field: "历史字段策略", session: "登录会话", module: "功能模块", workbench: "职能工作台" } as Record<string, string>)[event.target_type] ?? event.target_type} · {event.target_id}</small></div><time dateTime={event.created_at}><span>{formatDate(event.created_at)}</span><small>{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(new Date(event.created_at))}</small></time></div>)}</div>
+    <div className="audit-list" tabIndex={0} role="region" aria-label="审计日志记录">{filtered.length === 0 ? <EmptyState icon={ClipboardList} className="settings-state" title="暂无该类型日志"/> : visible.map((event) => <div className="audit-row" key={event.id}><span className="audit-row__icon"><ClipboardList size={14} /></span><div><strong>{AUDIT_LABELS[event.action] ?? event.action}</strong><p>{event.actor_name ?? "未知账号"}</p><small className="audit-target">{({ user: "账号", account: "账号", field: "历史字段策略", session: "登录会话", module: "功能模块", workbench: "职能工作台" } as Record<string, string>)[event.target_type] ?? event.target_type} · {event.target_id}</small></div><time dateTime={event.created_at}><span>{formatDate(event.created_at)}</span><small>{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(new Date(event.created_at))}</small></time></div>)}</div>
     <footer className="audit-footer"><span>仅查看最近 200 条日志</span>{view === "paged" && filtered.length > 0 && <div className="audit-pagination" role="group" aria-label="日志分页"><button type="button" className="icon-button" aria-label="日志上一页" disabled={currentPage === 1} onClick={() => goToPage(currentPage - 1)}><ChevronLeft size={16} /></button><span aria-live="polite">{currentPage} / {pages}</span><button type="button" className="icon-button" aria-label="日志下一页" disabled={currentPage === pages} onClick={() => goToPage(currentPage + 1)}><ChevronRight size={16} /></button></div>}</footer>
   </section>;
 }

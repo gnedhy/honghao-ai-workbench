@@ -32,7 +32,7 @@ export function useSalesQuoteSession({products,catalog,existing,accessLevel,onCh
   void fetchJson<{products:Product[]}>(base+"/products").then(result=>{if(active)setLiveProducts(result.products);}).catch(()=>{});
   return ()=>{active=false;};
  },[savedBatch,dirty,accessLevel]);
- const guard=useUnsavedChanges(dirty,busy,"放弃尚未保存的报价修改？","sales-before-leave");
+ const guard=useUnsavedChanges(dirty,busy,"放弃本次未保存的报价填写？已保存内容和现行报价保持不变。","sales-before-leave");
  const updateItem=(id:string,patch:Partial<DraftItem>)=>{if(!writing.current)setItems(rows=>patchItems(rows,[id],patch));};
  const updateParameter=(id:string,key:keyof Parameters,value:string)=>{if(!writing.current)setItems(rows=>patchItems(rows,[id],{},{[key]:value}));};
  const customerLocked=!!savedBatch?.items.some(row=>row.adopted);

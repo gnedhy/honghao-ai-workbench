@@ -21,13 +21,13 @@ from api.postgres import database_lease, transaction
 from api.settings import Settings
 
 # The frozen SQLite baseline predates sales. New PostgreSQL tables stay empty.
-POST_SQLITE_TABLES = {'sales_batches', 'sales_trials', 'sales_records', 'sales_events', 'sales_calculator_saved', 'task_runs', 'ai_contexts', 'ai_run_events'}
+POST_SQLITE_TABLES = {'sales_batches', 'sales_trials', 'sales_records', 'sales_events', 'sales_calculator_saved', 'task_runs', 'ai_contexts', 'ai_run_events', 'personalizations', 'project_instructions', 'personal_memories', 'memory_extractions', 'memory_suppressions', 'ai_control_settings', 'ai_credentials', 'ai_request_usage'}
 POST_SQLITE_VERSION = 'workbench_sales_schema_version'
 
 POST_SQLITE_COLUMNS = {
     'identity_users': {'ai_enabled'},
-    'projects': {'owner_id','revision','creation_key','creation_title'},
-    'conversations': {'owner_id','revision'},
+    'projects': {'owner_id','revision','creation_key','creation_title','icon','color','creation_icon','creation_color','removed'},
+    'conversations': {'owner_id','revision','pinned','archived'},
     'conversation_messages': {'owner_id','role','task_id','submission_request','submission_receipt','run_id'},
     'tasks': {'owner_id','revision'},
 }

@@ -13,27 +13,6 @@
       "line": 39
     },
     {
-      "file": "src/components/Interaction.tsx",
-      "rule": "react-hooks(exhaustive-deps)",
-      "message": "React Hook useEffect has a missing dependency: 'request'",
-      "anchor": "f6acec2a70cb209ee2870cd0f03c1f12171f78ca22d275c702b4a73a4e744dec",
-      "line": 107
-    },
-    {
-      "file": "src/components/SettingsDialog.tsx",
-      "rule": "react-hooks(exhaustive-deps)",
-      "message": "The ref's value `.current` is accessed directly in the effect cleanup function.",
-      "anchor": "fc5f801f7a4ca2f1ec747b5bfa445e7d8cdcb560ad38861db28719eea6969cc4",
-      "line": 146
-    },
-    {
-      "file": "src/components/SettingsDialog.tsx",
-      "rule": "react-hooks(exhaustive-deps)",
-      "message": "The ref's value `.current` is accessed directly in the effect cleanup function.",
-      "anchor": "fc5f801f7a4ca2f1ec747b5bfa445e7d8cdcb560ad38861db28719eea6969cc4",
-      "line": 146
-    },
-    {
       "file": "src/workbenches/ProcurementNews.tsx",
       "rule": "react-hooks(exhaustive-deps)",
       "message": "React Hook useEffect has a missing dependency: 'key'",
@@ -67,13 +46,6 @@
       "message": "React Hook useEffect has a complex expression in the dependency array.",
       "anchor": "0b10f993272535d951ea6870b27d49e39dc3d64e87109245bda862a18bcb057c",
       "line": 214
-    },
-    {
-      "file": "src/workbenches/ProcurementWorkbench.tsx",
-      "rule": "react-hooks(exhaustive-deps)",
-      "message": "React Hook useEffect has missing dependencies: 'cache', 'batches', 'cache.current.key', 'setPreviousPage', 'setInstant', and 'setPage'",
-      "anchor": "a05ac9d747d360ad33870e316718660b25e6391ea7b832788e175dd9802cab12",
-      "line": 249
     }
   ]
 }

@@ -1,3 +1,4 @@
+import {EmptyState} from "../components/WorkbenchLayout";
 import { useProcurementEditSession } from "./procurementEditSession";
 import { useProcurementMaterialQuery } from "./procurementMaterialQuery";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -5,6 +6,7 @@ import { ArrowDown, ArrowUp, Check, ChevronRight, Clock3, Columns3, Ellipsis, Fi
 import { fetchProcurementPreferences, saveProcurementPreferences } from "../api";
 import type { ProcurementMaterial, ProcurementOverview, ProcurementPage, ProcurementPreferences } from "../types";
 import { DecimalInput } from "../components/DecimalInput";
+import { positionWorkbenchDisplayMenu } from "../components/WorkbenchMenus";
 import { PriceMovement as Movement } from "../components/PriceMovement";
 import { Drawer } from "../components/Drawer";
 import { LedgerPagination } from "../components/LedgerPagination";
@@ -15,7 +17,7 @@ import { PriceReview, ReasonSelect} from "./procurementPriceEditing";
 import { ProcurementMaterialDrawer } from "./ProcurementMaterialDrawer";
 import { ledgerCell, LedgerOperationRecords, price, formatPriceDate, formatShanghaiDateTime, updateStatusLabel } from "./ProcurementMaterialView";
 import styles from "../components/WorkbenchSurface.module.css";
-function Empty({title,detail}:{title:string;detail:string}) {return <div className={styles.empty}><PackageCheck size={21}/><strong>{title}</strong><p>{detail}</p></div>;}
+function Empty({title,detail}:{title:string;detail?:string}) {return <EmptyState icon={PackageCheck} className={styles.empty} title={title}>{detail}</EmptyState>;}
 
 const LEDGER_COLUMNS = [
   ["inventory_quantity", "库存量"], ["unit", "单位"], ["latest_price", "最新价格"], ["inventory_price", "库存价格"], ["change", "价格变化"],
@@ -174,7 +176,7 @@ export function ProcurementMaterials({ department, onOpenDepartmentMaterial, dat
       <details className={`${styles.columnMenu} ${styles.filterMenu}`}><summary><SlidersHorizontal size={14} />筛选{activeFilterCount > 0 && <em>{activeFilterCount}</em>}</summary><div>
         {[{title: "价格", value: movement, labels: movementLabels, select: setMovement}, ...(current ? [{title: "待发布更新", value: scope, labels: scopeLabels, select: setScope}] : [])].map(group => <section className={styles.filterGroup} key={group.title} aria-label={group.title}><span>{group.title}</span>{Object.entries(group.labels).map(([value, label]) => <button type="button" key={value} aria-pressed={group.value === value} onClick={event => { group.select(value); const menu = event.currentTarget.closest("details"); menu?.removeAttribute("open"); menu?.querySelector("summary")?.focus(); }}>{label}{group.value === value && <Check size={14} />}</button>)}</section>)}
       </div></details>
-      <details className={`${styles.columnMenu} ${styles.displayMenu}`}><summary><Columns3 size={14} />显示</summary><div>
+      <details className={`${styles.columnMenu} ${styles.displayMenu}`} onToggle={event=>positionWorkbenchDisplayMenu(event.currentTarget)}><summary><Columns3 size={14} />显示</summary><div>
         <span className={styles.menuLabel}>显示列{current ? " · 本轮临时设置" : ""}</span>
         <div className={styles.columnGrid}>{columnOptions.map(([id, label]) => <label key={id}><input type="checkbox" checked={columns.includes(id)} disabled={Boolean(edit) || Boolean(current && ["latest_price", "status"].includes(id))} onChange={() => { const next = columns.includes(id) ? columns.filter(item => item !== id) : [...columns, id]; if (next.length) { if (current) setWorkColumns({ id: current.id, columns: next }); else void savePreferences({ ledger_columns: next }); } }} />{label}</label>)}</div>
         <span className={styles.menuLabel}>浏览方式</span>
@@ -191,7 +193,7 @@ export function ProcurementMaterials({ department, onOpenDepartmentMaterial, dat
       <button className={styles.clearFilters} type="button" onClick={() => { setEditor(""); setMovement("all"); setScope("all"); }}>清除筛选</button>
     </div>}
     {filterNotice && <div role="status" className={styles.comparisonHelp}>{filterNotice}<button type="button" aria-label="关闭筛选提示" onClick={() => setFilterNotice("")}><X size={13} /></button></div>}
-    {!rows.length ? <Empty title={editor && current && scope !== "all" ? "该人员暂无符合条件的待发布修改" : "没有符合条件的原料"} detail="可调整筛选条件或清除筛选。" /> : <div className={`${styles.tableWrap} ${styles.ledgerTableWrap}`}><table className={`${styles.table} ${styles.stickyTable} ${styles.decisionTable}`} style={{ minWidth: `${tableWidth}px` }}><colgroup>{department?.selection && <col style={{ width: 56 }} />}<col style={{ width: MATERIAL_COLUMN_WIDTH }} />{columns.map(id => <col key={id} style={{ width: columnWidth(id) }} />)}</colgroup><thead><tr>{department?.selection && <th data-column="selection">选择</th>}{sortHeader("code", "原料编号")}{columns.map(id => sortHeader(id, columnOptions.find(([column]) => column === id)?.[1] ?? id))}</tr></thead><tbody>{visibleRows.map(row => {
+    {!rows.length ? <Empty title={editor && current && scope !== "all" ? "该人员暂无符合条件的待发布修改" : data.materials.length ? "没有符合条件的原料" : "暂无原料"} detail={data.materials.length ? "可调整筛选条件或清除筛选。" : undefined} /> : <div className={`${styles.tableWrap} ${styles.ledgerTableWrap}`}><table className={`${styles.table} ${styles.stickyTable} ${styles.decisionTable}`} style={{ minWidth: `${tableWidth}px` }}><colgroup>{department?.selection && <col style={{ width: 56 }} />}<col style={{ width: MATERIAL_COLUMN_WIDTH }} />{columns.map(id => <col key={id} style={{ width: columnWidth(id) }} />)}</colgroup><thead><tr>{department?.selection && <th data-column="selection">选择</th>}{sortHeader("code", "原料编号")}{columns.map(id => sortHeader(id, columnOptions.find(([column]) => column === id)?.[1] ?? id))}</tr></thead><tbody>{visibleRows.map(row => {
       const { material: item, input, risk } = row;
       const change = edit ? draftLedgerChange(item, values[item.id] ?? edit.originals[item.id] ?? "", formalComparison) : input ? draftLedgerChange(item, input.draft_price ?? "", formalComparison) : formalChange(item);
       const comparison = formalComparison?.items[item.id];

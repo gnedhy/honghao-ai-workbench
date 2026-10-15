@@ -1,4 +1,4 @@
-import { WorkbenchLoading } from "../components/WorkbenchLayout";
+import { EmptyState, WorkbenchLoading } from "../components/WorkbenchLayout";
 import { CheckCircle2, ChevronRight, Database, FlaskConical, ShieldCheck,  } from "lucide-react";
 import { useEffect } from "react";
 import { TopBar, type ScreenChromeProps } from "../components/TopBar";
@@ -61,7 +61,7 @@ export function WorkbenchScreen({ currentUser, statuses, dataState, selectedId, 
           <div className="workbench-list" role="list" aria-label="职能工作台">
             {dataState === "loading" && <WorkbenchState title="正在载入工作台" detail="正在确认各职能模块的运行状态。" />}
             {dataState === "error" && <div><WorkbenchState title="模块状态不可用" detail="未能读取工作台状态，请重新加载页面后重试。" /><button className="secondary-button" onClick={() => window.location.reload()}>重新加载页面</button></div>}
-            {dataState === "ready" && visibleWorkbenches.length === 0 && <WorkbenchState title="暂无已启用模块" detail="可在服务端配置中恢复需要的职能工作台。" />}
+            {dataState === "ready" && visibleWorkbenches.length === 0 && <EmptyState icon={ShieldCheck} className="workspace-empty" title="暂无可用工作台">请联系管理员确认启用状态与访问范围。</EmptyState>}
             {dataState === "ready" && visibleWorkbenches.map((item) => {
               const Icon = item.icon;
               return (

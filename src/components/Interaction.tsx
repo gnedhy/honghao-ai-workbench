@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useId, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useId, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 
 export function useFadingScrollbars(container: { current: HTMLElement | null }) {
@@ -29,14 +29,16 @@ export function useFadingScrollbars(container: { current: HTMLElement | null }) 
     body.addEventListener("scroll", updateEdges, true);
     const reveal = (event: Event) => {
       let element = event.target instanceof HTMLElement ? event.target : null;
-      while (element && element !== body) {
-        if (element.scrollHeight > element.clientHeight && /auto|scroll/.test(getComputedStyle(element).overflowY)) {
+      while (element) {
+        const style=getComputedStyle(element);
+        if (element.scrollHeight > element.clientHeight && /auto|scroll/.test(style.overflowY) || element.scrollWidth > element.clientWidth && /auto|scroll/.test(style.overflowX)) {
           clearTimeout(timers.get(element));
           element.dataset.scrolling = "true";
           const target = element;
           timers.set(target, setTimeout(() => { delete target.dataset.scrolling; timers.delete(target); }, 3000));
           break;
         }
+        if (element === body) break;
         element = element.parentElement;
       }
     };
@@ -91,12 +93,12 @@ export function SettingsGroup({ id, title, description, summary, children, defau
 export function useUnsavedChanges(dirty: boolean, busy: boolean, description: string, eventName?: string) {
   const [pending, setPending] = useState(false);
   const resolver = useRef<((value: boolean) => void) | null>(null);
-  const request = () => {
+  const request = useCallback(() => {
     if (busy || resolver.current) return Promise.resolve(false);
     if (!dirty) return Promise.resolve(true);
     setPending(true);
     return new Promise<boolean>(resolve => { resolver.current = resolve; });
-  };
+  }, [busy, dirty]);
   const finish = (value: boolean) => { const resolve = resolver.current; resolver.current = null; setPending(false); resolve?.(value); };
   useEffect(() => () => { resolver.current?.(false); resolver.current = null; }, []);
   useEffect(() => {
@@ -110,7 +112,7 @@ export function useUnsavedChanges(dirty: boolean, busy: boolean, description: st
     window.addEventListener(eventName, leave);
     window.addEventListener("beforeunload", unload);
     return () => { window.removeEventListener(eventName, leave); window.removeEventListener("beforeunload", unload); };
-  }, [dirty, busy, eventName]);
+  }, [dirty, busy, eventName, request]);
   return { request, confirmation: pending && <DiscardChangesDialog description={description} disabled={busy} onCancel={() => finish(false)} onDiscard={() => finish(true)}/> };
 }
 

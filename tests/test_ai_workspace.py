@@ -84,6 +84,25 @@ def test_continuation_and_request_receipts_survive_reassociation_and_retries(wor
     assert independent['task']['id'] != task['id']
 
 
+def test_recent_mode_uses_submissions_not_project_or_task_visibility(workspace):
+    settings,client,_=workspace
+    login(client,'alice')
+    project=client.post('/api/projects',json={'title':'mode filter project'}).json()
+    chat=submit(client,mode='chat',project_id=project['id'])['conversation']['id']
+    work=submit(client,project_id=None)['conversation']['id']
+    empty=client.post('/api/conversations',json={'title':'empty mode filter','project_id':project['id']}).json()['id']
+    modes=lambda:{row['id']:row['mode'] for row in client.get('/api/conversations').json()}
+    assert modes()=={chat:'chat',work:'work',empty:'chat'}
+    response=client.post(f'/api/conversations/{chat}/submissions',json={'mode':'work','content':'explicit work transition','submission_key':str(uuid4())})
+    assert response.status_code==201 and modes()[chat]=='work'
+    response=client.post(f'/api/conversations/{chat}/submissions',json={'mode':'chat','content':'chat supplement','submission_key':str(uuid4())})
+    assert response.status_code==201 and modes()[chat]=='work'
+    settings.module_modes['tasks']='off'
+    assert client.get('/api/tasks').status_code==404 and modes()[work]=='work'
+    login(client,'bob')
+    assert modes()=={}
+
+
 def test_required_revision_serializes_competing_updates_without_blind_overwrite(workspace):
     _, client, _ = workspace
     login(client,'alice')
@@ -189,12 +208,18 @@ def test_workspace_snapshot_restores_owners_links_receipts_and_runs(workspace, t
     from api.settings import Settings
     settings, client, users = workspace
     login(client,'alice')
-    project_request={'title':'snapshot creation receipt','submission_key':str(uuid4())}
+    project_request={'title':'snapshot creation receipt','submission_key':str(uuid4()),'icon':'flask','color':'violet'}
     project=client.post('/api/projects',json=project_request).json()
     renamed=client.patch('/api/projects/'+project['id'],json={'title':'snapshot renamed','revision':project['revision']}).json()
+    renamed=client.patch('/api/projects/'+project['id'],json={'title':renamed['title'],'revision':renamed['revision'],'removed':True}).json()
+    assert renamed['removed']
     first = submit(client)
     Database(settings.database_url).create_run(first['task']['id'], first['message']['id'],
         'synthetic-controller', actor_id=users[0]['id'])
+    with transaction(settings.database_url,write=True) as db:
+        db.execute("UPDATE task_runs SET status='completed',phase='ended',ended_at='2026-10-08T00:00:00Z',accepted_at='2026-10-08T00:01:00Z',accepted_by=%s WHERE task_id=%s",(users[0]['id'],first['task']['id']))
+        db.execute("UPDATE tasks SET status='completed' WHERE id=%s",(first['task']['id'],))
+    Database(settings.database_url).update_conversation(first['conversation']['id'],{'archived':True,'pinned':True},1,actor_id=users[0]['id'])
     names = {'projects','conversations','conversation_messages','tasks','task_runs','identity_users'}
     with transaction(settings.database_url) as db:
         before = {k:v for k,v in _table_evidence(db).items() if k in names}
@@ -205,5 +230,36 @@ def test_workspace_snapshot_restores_owners_links_receipts_and_runs(workspace, t
     restore_snapshot(target,snapshot)
     with transaction(second_pg['url']) as db:
         assert {k:v for k,v in _table_evidence(db).items() if k in names} == before
-    restored=Database(second_pg['url']).create_project(project_request['title'],actor_id=users[0]['id'],submission_key=project_request['submission_key'])
+    restored=Database(second_pg['url']).create_project(project_request['title'],actor_id=users[0]['id'],submission_key=project_request['submission_key'],icon='flask',color='violet')
     assert restored['id']==renamed['id'] and restored['title']==renamed['title']
+    assert restored['icon']=='flask' and restored['color']=='violet' and restored['removed']
+
+
+def test_conversation_menu_is_revision_checked_private_and_preserves_task(workspace):
+    settings,client,_=workspace
+    login(client,'alice')
+    project=client.post('/api/projects',json={'title':'menu synthetic project'}).json()
+    first=submit(client,content='complete original objective',project_id=project['id'])
+    row=first['conversation'];path='/api/conversations/'+row['id']
+    for invalid in ({'revision':1},{'revision':1,'title':''},{'revision':1,'title':None},{'revision':1,'pinned':'true'},{'revision':1,'archived':None}):
+        assert client.patch(path,json=invalid).status_code==422
+    assert client.patch(path,json={'title':'changed'}).status_code==428
+    for change in ({'title':'short manual title'},{'pinned':True},{'archived':True},{'archived':False},{'pinned':False}):
+        response=client.patch(path,json={**change,'revision':row['revision']})
+        assert response.status_code==200,response.json()
+        row=response.json()
+    assert row['revision']==6 and row['title']=='short manual title'
+    assert row['project_id']==project['id'] and not row['archived'] and not row['pinned']
+    assert client.patch(path,json={'title':'stale','revision':1}).status_code==409
+    assert client.get('/api/tasks').json()[0]['objective']=='complete original objective'
+    assert client.get('/api/tasks').json()[0]['project_id']==project['id']
+    assert len(client.get(path+'/messages').json())==1
+    for actor in ('bob','test-admin'):
+        login(client,actor)
+        assert client.patch(path,json={'archived':True,'revision':row['revision']}).status_code==404
+        assert client.get('/api/conversations').json()==[]
+    login(client,'alice')
+    # Archived state remains owner-scoped and reversible after a fresh read.
+    row=client.get('/api/conversations').json()[0]
+    assert client.patch(path,json={'archived':True,'revision':row['revision']}).status_code==200
+    assert client.get('/api/conversations').json()[0]['archived'] is True

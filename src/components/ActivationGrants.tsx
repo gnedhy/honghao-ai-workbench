@@ -1,6 +1,7 @@
+import {EmptyState} from "./WorkbenchLayout";
 import { Switch } from "./Switch";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, Info } from "lucide-react";
+import {History,  ArrowLeft, Info } from "lucide-react";
 import { DiscardChangesDialog, SettingsGroup } from "./Interaction";
 import { fetchActivationGrants, saveActivationGrant, type ActivationGrants } from "../api";
 import styles from "./WorkbenchSurface.module.css";
@@ -26,7 +27,7 @@ function grantEventText(event:GrantEvent) {
   return `${event.actor} · ${change}`;
 }
 function GrantEvents({events,timeOnly=false}:{events:GrantEvent[];timeOnly?:boolean}) {
-  return events.length ? <div className={styles.grantEvents}>{events.map(event=><div key={event.id}><span>{grantEventText(event)}</span><time dateTime={event.created_at}>{new Intl.DateTimeFormat("zh-CN",{timeZone:"Asia/Shanghai",...(timeOnly ? {} : {dateStyle:"short" as const}),timeStyle:"short"}).format(new Date(event.created_at))}</time></div>)}</div> : <p>暂无授权记录</p>;
+  return events.length ? <div className={styles.grantEvents}>{events.map(event=><div key={event.id}><span>{grantEventText(event)}</span><time dateTime={event.created_at}>{new Intl.DateTimeFormat("zh-CN",{timeZone:"Asia/Shanghai",...(timeOnly ? {} : {dateStyle:"short" as const}),timeStyle:"short"}).format(new Date(event.created_at))}</time></div>)}</div> : <EmptyState icon={History} title="暂无授权记录"/>;
 }
 function GrantHistory({scope,onBack}:{scope:"procurement"|"research";onBack:()=>void}) {
   const section=useRef<HTMLElement>(null);
@@ -41,7 +42,7 @@ function GrantHistory({scope,onBack}:{scope:"procurement"|"research";onBack:()=>
   for(const event of events){const date=new Intl.DateTimeFormat("zh-CN",{timeZone:"Asia/Shanghai",dateStyle:"long"}).format(new Date(event.created_at));groups.set(date,[...(groups.get(date)??[]),event]);}
   return <section ref={section} aria-label="全部授权记录"><button type="button" className="secondary-button" onClick={onBack}><ArrowLeft size={14}/>返回授权设置</button><h3>全部授权记录</h3>
     {error && <p role="alert">{error}<button className="secondary-button" onClick={()=>void load(events.length)}>重试</button></p>}
-    {!busy && !error && !events.length && <p>暂无授权记录</p>}
+    {!busy && !error && !events.length && <EmptyState icon={History} title="暂无授权记录"/>}
     <ol className="settings-timeline">{[...groups].map(([date,rows])=><li key={date}><div className="changelog-date">{date}</div><div className="settings-timeline-content"><GrantEvents events={rows} timeOnly/></div></li>)}</ol>
     {busy ? <p role="status">正在读取授权记录…</p> : more && !error && <button type="button" className="secondary-button" onClick={()=>void load(events.length)}>加载更早记录</button>}
   </section>;

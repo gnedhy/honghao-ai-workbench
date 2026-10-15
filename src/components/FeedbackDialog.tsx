@@ -1,5 +1,6 @@
+import {EmptyState} from "./WorkbenchLayout";
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { ArrowLeft, X, ImagePlus, LockKeyhole, UserRound, Check, ChevronDown } from "lucide-react";
+import {MessageCircle,  ArrowLeft, X, ImagePlus, LockKeyhole, UserRound, Check, ChevronDown } from "lucide-react";
 import type { CurrentUser } from "../types";
 import { DiscardChangesDialog, useExitTransition } from "./Interaction";
 import "./FeedbackDialog.css";
@@ -161,7 +162,7 @@ export function FeedbackDialog({ currentUser, context, version, onClose, onUnrea
         {notice && <p className="feedback-notice" role="status">{notice}</p>}
         {view === "list" && <>
           <div className="feedback-toolbar"><span>{loading ? "正在加载…" : `${rows.length} 条反馈`}</span><div>{admin && <button type="button" className="feedback-mine" aria-pressed={onlyMine} onClick={() => setOnlyMine(!onlyMine)}><UserRound size={14} />仅看我提交的{onlyMine && <Check size={14} />}</button>}<details className={`${procurementStyles.columnMenu} ${procurementStyles.personMenu} feedback-filter`} onKeyDown={event => { if (event.key === "Escape" && event.currentTarget.open) { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}><summary aria-label="筛选处理状态">{filter}<ChevronDown size={14} /></summary><div>{["全部", ...statuses].map(value => <button type="button" key={value} aria-pressed={filter === value} onClick={event => { setFilter(value); const menu = event.currentTarget.closest("details"); menu?.removeAttribute("open"); menu?.querySelector("summary")?.focus(); }}>{value}{filter === value && <Check size={14} />}</button>)}</div></details></div></div>
-          {!loading && !rows.length && <div className="feedback-empty"><strong>暂无反馈</strong><p>{filter !== "全部" || onlyMine ? "当前筛选下没有反馈。" : "你的问题和建议，会显示在这里。"}</p></div>}
+          {!loading && !error && !rows.length && <EmptyState icon={MessageCircle} className="feedback-empty" title={filter !== "全部" || onlyMine ? "没有匹配的反馈" : "暂无反馈"}/>}
           {rows.map(row => <button className="feedback-item" key={row.id} onClick={() => void open(row)}><span className="feedback-item-copy"><small>{row.kind}</small><strong>{row.text.split("\n")[0]}</strong><small>{admin ? `${row.owner_id === currentUser.id ? "我提交的" : row.owner_name} · ` : ""}{date(row.created_at)}</small></span><span className="feedback-item-right">{row.unread && <span className="feedback-dot" aria-label="未读" />}<span className="feedback-status" data-state={row.status}>{row.status}</span></span></button>)}
         </>}
         {view === "new" && <form id="feedback-compose" onSubmit={e => { e.preventDefault(); void save(); }}>

@@ -1,4 +1,4 @@
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle, type LucideIcon } from "lucide-react";
 import type { HTMLAttributes, ReactNode } from "react";
 import styles from "./WorkbenchSurface.module.css";
 
@@ -16,6 +16,10 @@ export function FormFooter({ status, children, className = "" }: { status: React
 }
 export function PageState({ children, error = false, className = "", onRetry }: { children: ReactNode; error?: boolean; className?: string; onRetry?: () => void }) {
   return <div role={error ? "alert" : "status"} className={className}>{children}{onRetry && <button type="button" className="secondary-button" onClick={onRetry}>重试</button>}</div>;
+}
+
+export function EmptyState({ icon: Icon, title, children, compact = false, className = "" }: { icon: LucideIcon; title: string; children?: ReactNode; compact?: boolean; className?: string }) {
+  return <PageState className={`ui-empty-state ${styles.emptyState} ${compact ? styles.compactEmptyState : ""} ${className}`}><span className={styles.emptyStateIcon} aria-hidden="true"><Icon strokeWidth={1.5}/></span><p>{title}</p>{children && <div className={styles.emptyStateDetail}>{children}</div>}</PageState>;
 }
 
 export function WorkbenchLoading({ title = "正在加载工作台", local = false }: { title?: string; local?: boolean }) {

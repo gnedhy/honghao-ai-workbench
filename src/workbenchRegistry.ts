@@ -5,7 +5,7 @@ export const sectionNavigation=[
  {id:"knowledge",label:"知识库",description:"个人与公共知识内容",icon:LibraryBig},
  {id:"automation",label:"自动化",description:"技能与工作流管理",icon:WandSparkles},
  {id:"workbench",label:"工作台",description:"企业职能业务工具",icon:PanelsTopLeft},
- {id:"tasks",label:"任务看板",description:"任务管理与运行记录",icon:FolderKanban},
+ {id:"tasks",label:"任务面板",description:"任务状态与运行记录",icon:FolderKanban},
 ] as const;
 export const workbenches = [
   {

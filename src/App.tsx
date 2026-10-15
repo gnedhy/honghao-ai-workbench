@@ -1,14 +1,13 @@
 import { confirmWorkbenchLeave } from "./components/interactionNavigation";
-import { FolderClosed, FolderKanban, LibraryBig, MessageCircle, PanelsTopLeft, Search, WandSparkles, Workflow, X } from "lucide-react";
+import { FolderClosed, FolderKanban, LibraryBig, MessageCircle, PanelsTopLeft, ShieldCheck, Search, WandSparkles, Workflow, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { fetchModules, fetchServiceHealth, fetchWorkbenches, type ServiceConnection } from "./api";
+import { fetchModules, fetchServiceHealth, fetchWorkbenches, type ServiceConnection, type ConversationUpdate } from "./api";
 import { ContextSidebar } from "./components/ContextSidebar";
 import { SettingsDialog, type UiFontSize } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { ProfileDialog } from "./components/ProfileDialog";
 import { knowledgeItems, skills, workflows } from "./data";
-import { AutomationScreen } from "./screens/AutomationScreen";
 import { ConversationScreen } from "./screens/ConversationScreen";
 import { KnowledgeScreen } from "./screens/KnowledgeScreen";
 import { TaskBoardScreen } from "./screens/TaskBoardScreen";
@@ -18,7 +17,8 @@ import {sectionNavigation,workbenches,workbenchContext} from "./workbenchRegistr
 import {useChatWorkspace} from "./chat/useChatWorkspace";
 import {ProjectDrawer} from "./chat/ProjectDrawer";
 import {useAppFeedback} from "./appFeedback";
-import { PageState } from "./components/WorkbenchLayout";
+import {taskTitle} from "./taskPresentation";
+import { EmptyState, PageState } from "./components/WorkbenchLayout";
 
 type AppProps = {
   currentUser: CurrentUser;
@@ -73,11 +73,11 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged, onS
   const contextCloseTimer = useRef<number | null>(null);
   const selectedConversationIdRef = useRef<string | null>(null);
   const conversationViewRef = useRef<ConversationView>("new");
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState<'general'|'conversations'|null>(null);
   const [uiFontSize, setUiFontSize] = useState<UiFontSize>(loadUiFontSize);
   const [conversationView, setConversationView] = useState<ConversationView>("new");
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
-  const [conversationMode, setConversationMode] = useState<"聊天" | "工作">("工作");
+  const [conversationMode, setConversationMode] = useState<"聊天" | "工作">("聊天");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [workbenchStatuses, setWorkbenchStatuses] = useState<WorkbenchStatus[]>([]);
   const [workbenchRegistryState, setWorkbenchRegistryState] = useState<"loading" | "ready" | "error">("loading");
@@ -88,10 +88,12 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged, onS
   const [procurementPage, setProcurementPage] = useState<ProcurementPage>("dashboard");
   const [knowledgeScope, setKnowledgeScope] = useState<"个人" | "公共">("个人");
   const [selectedKnowledgeTitle, setSelectedKnowledgeTitle] = useState(knowledgeItems[0].title);
-  const [automationTab, setAutomationTab] = useState<"技能" | "工作流">("技能");
-  const [selectedSkill, setSelectedSkill] = useState(skills[0]);
-  const [selectedWorkflow, setSelectedWorkflow] = useState(workflows[0]);
+  const automationTab = "技能";
+  const selectedSkill = skills[0];
+  const selectedWorkflow = workflows[0];
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedTaskRunId, setSelectedTaskRunId] = useState<string | null>(null);
+  const [taskDetailsContainer, setTaskDetailsContainer] = useState<HTMLDivElement | null>(null);
   const [projectDialog, setProjectDialog] = useState<string | null | undefined>(undefined);
   const [serviceConnection, setServiceConnection] = useState<ServiceConnection>({ state: "checking" });
   const workspace = useChatWorkspace(currentUser.id,enabledModules.chat,enabledModules.tasks,serviceConnection.state==='online',conversationView,selectedConversationId,value=>{
@@ -108,7 +110,7 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged, onS
   const activeWorkbenchId = section === "workbench" && openedWorkbenchId === selectedWorkbenchId && workbenchViewState === "ready" && visibleWorkbenchStatuses.some(item => item.id === openedWorkbenchId && item.mode === "active") ? openedWorkbenchId : null;
 
   const selectedConversation = conversations.find((conversation) => conversation.id === selectedConversationId) ?? null;
-  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? (section==='tasks'&&tasks.length===1?tasks[0]:null);
   const conversationTasks=tasks.filter(task=>task.conversation_id===selectedConversationId);
   const conversationTask=conversationTasks.find(task=>task.id===selectedTaskId)??(conversationTasks.length===1?conversationTasks[0]:null);
   const conversationTitle = selectedConversation?.title ?? "新聊天";
@@ -179,7 +181,7 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged, onS
   useEffect(() => {
     if (!enabledModules.workbench) {
       setWorkbenchStatuses([]);
-      setWorkbenchRegistryState("ready");
+      setWorkbenchRegistryState("loading");
       return;
     }
     if (serviceConnection.state !== "online") {
@@ -196,8 +198,9 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged, onS
     return () => controller.abort();
   }, [enabledModules.workbench, serviceConnection.state, permissions, registryRetry]);
 
-  const closeContext = useCallback(() => {
+  const closeContext = useCallback(async () => {
     if (!contextOpen) return;
+    if (section === 'tasks' && !await confirmWorkbenchLeave()) return;
     if (contextCloseTimer.current !== null) window.clearTimeout(contextCloseTimer.current);
     setContextClosing(true);
     setContextLayoutOpen(false);
@@ -206,7 +209,7 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged, onS
       setContextClosing(false);
       contextCloseTimer.current = null;
     }, 220);
-  }, [contextOpen]);
+  }, [contextOpen, section]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -230,17 +233,14 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged, onS
     setMobileOpen(true);
   };
 
-  const toggleContext = () => {
+  const openContext = () => {
     setMobileOpen(false);
-    if (contextOpen) {
-      closeContext();
-      return;
-    }
     if (contextCloseTimer.current !== null) window.clearTimeout(contextCloseTimer.current);
     setContextClosing(false);
     setContextLayoutOpen(true);
     setContextOpen(true);
   };
+  const toggleContext = () => { if (contextOpen) void closeContext(); else openContext(); };
 
   const runtimeEnvironment = serviceConnection.state === "online" ? serviceConnection.health.environment : null;
   const screenChrome = {
@@ -251,9 +251,21 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged, onS
     environment: runtimeEnvironment,
   };
 
-  const openConversation=(id:string,taskId?:string)=>{showSection('chat');setConversationView('existing');setSelectedConversationId(id);setSelectedTaskId(taskId??null);if(taskId)setConversationMode('工作');};
-  const newConversation=(projectId=currentProjectId)=>{workspace.discardDraft();showSection('chat');setConversationView('new');setSelectedConversationId(null);setSelectedTaskId(null);setCurrentProjectId(projectId);setConversationMode('工作');};
+  const openConversation=(id:string,taskId?:string)=>{showSection('chat');setConversationView('existing');setSelectedConversationId(id);setSelectedTaskId(taskId??null);setConversationMode(taskId||conversations.find(row=>row.id===id)?.mode==='work'?'工作':'聊天');};
+  const newConversation=(projectId:string|null=null)=>{workspace.discardDraft();showSection('chat');setConversationView('new');setSelectedConversationId(null);setSelectedTaskId(null);setCurrentProjectId(projectId);setConversationMode(projectId?'工作':'聊天');};
   const openTask=(task:TaskItem)=>openConversation(task.conversation_id,task.id);
+  const changeConversation=async(row:Conversation,changes:ConversationUpdate)=>{
+    if(changes.archived&&(row.id===selectedConversationId||section==='tasks'&&contextOpen&&row.id===selectedTask?.conversation_id)&&!await confirmWorkbenchLeave())return false;
+    const saved=await workspace.changeConversation(row,changes);
+    if(changes.archived&&saved.archived&&saved.id===selectedConversationId)newConversation();
+    return true;
+  };
+  const removeConversation=async(row:Conversation)=>{
+    await workspace.removeConversation(row);
+    if(row.id===selectedConversationId)newConversation();
+    if(selectedTask?.conversation_id===row.id){setSelectedTaskId(null);void closeContext();}
+    return true;
+  };
 
   const showSection = (next: Section) => {
     setSection(next);
@@ -271,9 +283,10 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged, onS
         activeSection={section}
         selectedConversationId={conversationView === "existing" ? selectedConversationId : null}
         currentProjectId={currentProjectId}
-        projects={projects}
+        projects={projects.filter(project=>!project.removed)}
         conversations={conversations}
         dataState={workbenchDataState}
+        projectSummaries={workspace.projectSummaries}
         enabledModules={enabledModules}
         environment={runtimeEnvironment}
         openedWorkbenchId={activeWorkbenchId}
@@ -286,6 +299,7 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged, onS
         onSectionChange={async (nextSection) => { if (!await confirmWorkbenchLeave()) return; showSection(nextSection); }}
         onNewConversation={async () => { if (await confirmWorkbenchLeave()) newConversation(); }}
         onConversationOpen={async (id) => { if (await confirmWorkbenchLeave()) openConversation(id); }}
+        onConversationUpdate={changeConversation}
         onProjectCreate={async()=>{if(await confirmWorkbenchLeave()){workspace.discardDraft();setProjectDialog(null);}}}
         onProjectOpen={async id=>{if(await confirmWorkbenchLeave()){workspace.discardDraft();setProjectDialog(id);}}}
         onProjectNewConversation={async id=>{if(await confirmWorkbenchLeave())newConversation(id);}}
@@ -297,28 +311,31 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged, onS
         onProfileToggle={() => setProfileOpen((open) => !open)}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
-        onOpenSettings={() => { setProfileOpen(false); setSettingsOpen(true); }}
+        onOpenSettings={() => { setProfileOpen(false); setSettingsOpen('general'); }}
+        onOpenArchived={() => { setProfileOpen(false); setMobileOpen(false); setSettingsOpen('conversations'); }}
         onOpenProfile={() => { setProfileOpen(false); setPersonalProfileOpen(true); }}
         onLogout={async () => { if (await confirmWorkbenchLeave()) await onLogout(); }}
       />
       {(moduleRegistryState === "loading" || moduleRegistryState === "error" && !moduleStatuses.length) && <main className="app-main"><PageState error={moduleRegistryState === "error"} className="workspace-detail-empty"><strong>{moduleRegistryState === "error" ? "模块状态不可用" : "正在读取模块状态"}</strong><p>{moduleRegistryState === "error" ? "请重新加载页面后重试。" : "正在确认可用入口。"}</p>{moduleRegistryState === "error" && <button className="secondary-button" onClick={() => window.location.reload()}>重新加载页面</button>}</PageState></main>}
       {(moduleRegistryState === "error" && moduleStatuses.length > 0 || workbenchRegistryState === "error" && visibleWorkbenchStatuses.length > 0) && <PageState error className="app-registry-status" onRetry={() => setRegistryRetry(value => value + 1)}>状态刷新失败，当前保留上次确认的入口和未保存输入。</PageState>}
-      {(moduleRegistryState === "ready" || moduleRegistryState === "error" && moduleStatuses.length > 0) && !MODULE_IDS.some(id => enabledModules[id]) && <main className="app-main"><PageState className="workspace-detail-empty"><strong>暂无可用模块</strong><p>当前账号没有已启用且可访问的模块，请联系管理员。</p></PageState></main>}
+      {(moduleRegistryState === "ready" || moduleRegistryState === "error" && moduleStatuses.length > 0) && !MODULE_IDS.some(id => enabledModules[id]) && <main className="app-main"><EmptyState icon={ShieldCheck} className="workspace-detail-empty" title="暂无可用模块">请联系管理员确认访问范围。</EmptyState></main>}
       {section === 'chat' && enabledModules.chat && !workspace.denied && <ConversationScreen {...screenChrome}
         ownerId={currentUser.id} view={conversationView} conversationId={selectedConversationId} conversationTitle={conversationTitle} mode={conversationMode}
-        onModeChange={async mode=>{if(await confirmWorkbenchLeave()){workspace.discardDraft();setConversationMode(mode);}}}
+        onModeChange={async mode=>{if(conversationView==='new'&&await confirmWorkbenchLeave()){workspace.discardDraft();if(conversationView==='new'&&mode==='聊天')setCurrentProjectId(null);setConversationMode(mode);}}}
         onEntryMode={setConversationMode}
         projects={projects} projectId={conversationProjectId} task={conversationTask} tasks={conversationTasks} tasksEnabled={workspace.tasksAvailable}
         onTaskChange={async id=>{if(await confirmWorkbenchLeave()){workspace.discardDraft();setSelectedTaskId(id);}}}
         workspace={workspace} onProjectChange={async id=>{if(!await confirmWorkbenchLeave())return;workspace.discardDraft();if(conversationView==='existing'&&selectedConversation)projectAssociation.change(selectedConversation,id);else setCurrentProjectId(id);}}
         onAccessLost={()=>{workspace.handleLost({status:401});}} />}
       {section === "knowledge" && enabledModules.knowledge && <KnowledgeScreen {...screenChrome} scopeTab={knowledgeScope} onScopeTabChange={setKnowledgeScope} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
-      {section === "automation" && enabledModules.automation && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
       {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} currentUser={currentUser} statuses={visibleWorkbenchStatuses} dataState={workbenchViewState} selectedId={selectedWorkbenchId} onSelectedIdChange={async (id) => { if (!await confirmWorkbenchLeave()) return; setSelectedWorkbenchId(id); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); }} openedWorkbenchId={openedWorkbenchId} onOpenedWorkbenchIdChange={async (next) => { if (await confirmWorkbenchLeave()) setOpenedWorkbenchId(next); }} salesPage={salesPage} onSalesPageChange={async (next) => { if (await confirmWorkbenchLeave()) setSalesPage(next); }} researchPage={researchPage} onResearchPageChange={async (next) => { if (await confirmWorkbenchLeave()) setResearchPage(next); }} procurementPage={procurementPage} onProcurementPageChange={setProcurementPage} />}
       {section === 'tasks' && enabledModules.tasks && !workspace.denied && <TaskBoardScreen {...screenChrome} ownerId={currentUser.id} tasks={tasks} projects={projects} conversations={conversations} dataState={workspace.taskState} selectedTask={selectedTask}
-        chatEnabled={enabledModules.chat} onDataRetry={()=>void workspace.reload().catch(()=>{})} onSelectedTaskChange={task=>setSelectedTaskId(task.id)} onTaskOpen={async task=>{if(await confirmWorkbenchLeave())openTask(task);}} onAccessLost={workspace.handleTaskLost} />}
+        detailContainer={taskDetailsContainer} runId={selectedTaskRunId} onRunChange={async id=>{if(await confirmWorkbenchLeave())setSelectedTaskRunId(id);}} onTaskSaved={workspace.taskSaved}
+        chatEnabled={enabledModules.chat} onNewTask={async projectId=>{if(await confirmWorkbenchLeave()){newConversation(projectId);setConversationMode('工作');}}} onDataRetry={()=>void workspace.reload().catch(()=>{})} onSelectedTaskChange={async task=>{if(await confirmWorkbenchLeave()){setSelectedTaskId(task.id);setSelectedTaskRunId(null);}}}
+        onTaskInspect={async(task,runId)=>{if(!await confirmWorkbenchLeave())return false;setSelectedTaskId(task.id);setSelectedTaskRunId(runId??null);openContext();return true;}}
+        onTaskOpen={async task=>{if(await confirmWorkbenchLeave())openTask(task);}} onAccessLost={workspace.handleTaskLost} />}
       {workspace.denied && <PageState error>授权已失效，正在清理当前工作区。</PageState>}
-      {projectDialog!==undefined && enabledModules.chat && !workspace.denied && <ProjectDrawer project={projects.find(row=>row.id===projectDialog)??null} owner={currentUser.id} conversations={conversations} tasks={tasks} onSaved={project=>{workspace.projectSaved(project);if(projectDialog===null)setCurrentProjectId(project.id);}} onClose={()=>setProjectDialog(undefined)} onNewConversation={newConversation} onConversation={openConversation} onTask={openTask} onAccessLost={()=>workspace.handleLost({status:401})} /> }
+      {projectDialog!==undefined && enabledModules.chat && !workspace.denied && <ProjectDrawer project={projects.find(row=>row.id===projectDialog)??null} owner={currentUser.id} conversations={conversations} tasks={tasks} tasksReady={workspace.tasksAvailable&&workspace.taskState==='ready'} onSaved={project=>{workspace.projectSaved(project);if(projectDialog===null)setCurrentProjectId(project.id);}} onClose={()=>setProjectDialog(undefined)} onNewConversation={newConversation} onConversation={openConversation} onTask={openTask} onAccessLost={()=>workspace.handleLost({status:401})} /> }
       <ContextSidebar
         section={section}
         conversationTitle={conversationView === "new" ? (conversationMode === "聊天" ? "新聊天" : "新工作") : conversationTitle}
@@ -330,7 +347,7 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged, onS
         open={contextOpen}
         closing={contextClosing}
         onClose={closeContext}
-        onReturnChat={async () => { if (selectedTask && await confirmWorkbenchLeave()) openTask(selectedTask); }}
+        taskContentRef={setTaskDetailsContainer}
         knowledgeItem={knowledgeItems.find((item) => item.title === selectedKnowledgeTitle) ?? knowledgeItems[0]}
         skill={selectedSkill}
         workflow={selectedWorkflow}
@@ -364,7 +381,7 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged, onS
           }
         }}
       />
-      {settingsOpen && <SettingsDialog currentUser={currentUser} onUserChanged={onUserChanged} serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} workbenchStatuses={workbenchStatuses} workbenchRegistryState={workbenchRegistryState} uiFontSize={uiFontSize} onUiFontSizeChange={setUiFontSize} onClose={() => setSettingsOpen(false)} onOpenProfile={() => { setSettingsOpen(false); setPersonalProfileOpen(true); }} />}
+      {settingsOpen && <SettingsDialog initialTab={settingsOpen} conversationManagement={enabledModules.chat&&!workspace.denied?{conversations,projects,state:workbenchDataState,onUpdate:changeConversation,onDelete:removeConversation,onRetry:workspace.reload,onAccessLost:workspace.handleLost}:undefined} currentUser={currentUser} onUserChanged={onUserChanged} serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} workbenchStatuses={workbenchStatuses} workbenchRegistryState={workbenchRegistryState} uiFontSize={uiFontSize} onUiFontSizeChange={setUiFontSize} onClose={() => setSettingsOpen(null)} onOpenProfile={() => { setSettingsOpen(null); setPersonalProfileOpen(true); }} />}
       {feedbackOpen && <FeedbackDialog draft={feedbackDraft} onDraftChange={setFeedbackDraft} currentUser={currentUser} context={activeWorkbenchId ? workbenchContext(activeWorkbenchId,{procurement:procurementPage,research:researchPage,sales:salesPage}) : sectionNavigation.find(item=>item.id===section)?.label??"工作台"} version={serviceConnection.state === "online" ? serviceConnection.health.api_version : "未知"} onClose={closeFeedback} onUnreadChanged={refreshUnread} />}
       {personalProfileOpen && <ProfileDialog onClose={() => setPersonalProfileOpen(false)} onUserChanged={onUserChanged} onPasswordChanged={onPasswordChanged} beforePasswordChange={confirmWorkbenchLeave} />}
     </div>
@@ -411,11 +428,11 @@ function GlobalSearchDialog({
   const projectTitle = (projectId: string | null) => projects.find((project) => project.id === projectId)?.title;
   const conversationTitleById = (conversationId: string) => conversations.find((conversation) => conversation.id === conversationId)?.title;
   const results: GlobalSearchResult[] = [
-    ...[...conversations].reverse().map((conversation) => ({ id: `conversation:${conversation.id}`, sourceId: conversation.id, kind: "conversation" as const, scope: "会话" as const, title: conversation.title, meta: projectTitle(conversation.project_id) ? `会话 · ${projectTitle(conversation.project_id)}` : "会话 · 未关联项目", keywords: `${conversation.title} ${projectTitle(conversation.project_id) ?? ""}` })),
-    ...projects.map((project) => ({ id: `project:${project.id}`, sourceId: project.id, kind: "project" as const, scope: "项目" as const, title: project.title, meta: `项目 · ${conversations.filter((conversation) => conversation.project_id === project.id).length} 个会话`, keywords: project.title })),
+    ...[...conversations].reverse().filter(row=>!row.archived).map((conversation) => ({ id: `conversation:${conversation.id}`, sourceId: conversation.id, kind: "conversation" as const, scope: "会话" as const, title: conversation.title, meta: projectTitle(conversation.project_id) ? `会话 · ${projectTitle(conversation.project_id)}` : "会话 · 未关联项目", keywords: `${conversation.title} ${projectTitle(conversation.project_id) ?? ""}` })),
+    ...projects.filter(project=>!project.removed).map((project) => ({ id: `project:${project.id}`, sourceId: project.id, kind: "project" as const, scope: "项目" as const, title: project.title, meta: `项目 · ${conversations.filter((conversation) => conversation.project_id === project.id&&!conversation.archived).length} 个会话`, keywords: project.title })),
     ...knowledgeItems.map((item) => ({ id: `knowledge:${item.title}`, sourceId: item.title, kind: "knowledge" as const, scope: "知识" as const, title: item.title, meta: `${item.scope} · ${item.updated}`, keywords: `${item.title} ${item.scope} ${item.tags.join(" ")} ${item.project ?? ""}` })),
     ...workbenches.filter((item) => workbenchStatuses.some((status) => status.id === item.id && status.mode !== "off")).map((item) => ({ id: `workbench:${item.id}`, sourceId: item.id, kind: "workbench" as const, scope: "工作台" as const, title: item.title, meta: `${item.department} · 职能工作台`, keywords: `${item.department} ${item.title} ${item.summary} ${item.modules.join(" ")} ${item.source} ${item.output}` })),
-    ...[...tasks].reverse().map((task) => ({ id: `task:${task.id}`, sourceId: task.id, kind: "task" as const, scope: "任务" as const, title: task.objective, meta: `任务 · ${projectTitle(task.project_id) ?? conversationTitleById(task.conversation_id) ?? "未关联项目"}`, keywords: `${task.objective} ${projectTitle(task.project_id) ?? ""} ${conversationTitleById(task.conversation_id) ?? ""}` })),
+    ...[...tasks].reverse().map((task) => ({ id: `task:${task.id}`, sourceId: task.id, kind: "task" as const, scope: "任务" as const, title: taskTitle(task), meta: `任务 · ${projectTitle(task.project_id) ?? conversationTitleById(task.conversation_id) ?? "未关联项目"}`, keywords: `${task.objective} ${projectTitle(task.project_id) ?? ""} ${conversationTitleById(task.conversation_id) ?? ""}` })),
   ];
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleResults = results.filter((result) => {

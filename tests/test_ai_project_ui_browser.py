@@ -3,6 +3,7 @@ import json
 import os
 import socket
 import subprocess
+from pathlib import Path
 from threading import Thread
 from time import monotonic, sleep
 
@@ -28,14 +29,18 @@ def test_browser_ai_project_ui_actual_consumers(controlled):
             deadline = monotonic() + 10
             while not server.started and thread.is_alive() and monotonic() < deadline: sleep(.02)
             assert server.started
-            reply = subprocess.run(['node', 'scripts/check-ai-project-ui.mjs'], capture_output=True,
-                text=True, encoding='utf-8', timeout=150, env={**os.environ,
-                    'H05_TEST_API': f'http://127.0.0.1:{listener.getsockname()[1]}',
-                    'H05_TEST_PASSWORD': TEST_ADMIN_PASSWORD})
-            assert reply.returncode == 0, reply.stderr
-            evidence = json.loads(reply.stdout)
-            assert len(evidence) == 5 and all(row['status'] == 'passed' for row in evidence)
-            print(reply.stdout)
+            output = Path(os.environ.get('H05_UI_OUTPUT', '.scratch/h05-ui'))
+            output.mkdir(parents=True, exist_ok=True)
+            with (output / 'driver-stdout.log').open('w', encoding='utf-8') as stdout, (output / 'driver-stderr.log').open('w', encoding='utf-8') as stderr:
+                reply = subprocess.run(['node', 'scripts/check-ai-project-ui.mjs'], stdout=stdout, stderr=stderr,
+                    timeout=150, env={**os.environ,
+                        'H05_TEST_API': f'http://127.0.0.1:{listener.getsockname()[1]}',
+                        'H05_TEST_PASSWORD': TEST_ADMIN_PASSWORD})
+            assert reply.returncode == 0, (output / 'driver-stderr.log').read_text(encoding='utf-8')
+            result = (output / 'driver-stdout.log').read_text(encoding='utf-8')
+            evidence = json.loads(result)
+            assert len(evidence) == 8 and all(row['status'] == 'passed' for row in evidence)
+            print(result)
         finally:
             server.should_exit = True; thread.join(timeout=10)
             assert not thread.is_alive()

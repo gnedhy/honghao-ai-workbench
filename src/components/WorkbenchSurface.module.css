@@ -1,5 +1,15 @@
 .root { position: relative; --price-stable: #587694; --price-stable-bg: #eaf0f6; }
+.emptyState.emptyState { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px 16px; color: var(--muted); text-align: center; font-size: calc(12px + var(--ui-font-offset)); line-height: 1.6; }
+.emptyState.emptyState > p { margin: 0; padding: 0; max-width: 40ch; overflow-wrap: anywhere; }
+.emptyState > .emptyStateIcon { display: grid; flex: none; place-items: center; width: 64px; height: 64px; margin: 0; }
+.emptyStateIcon > svg { width: 48px; height: 48px; opacity: .4; }
+.emptyStateDetail { max-width: 40ch; font-size: inherit; text-wrap: balance; }
+.compactEmptyState.compactEmptyState { min-height: 0; flex-direction: row; gap: 8px; padding: 12px 0; justify-content: flex-start; text-align: left; }
+.compactEmptyState > .emptyStateIcon { width: 20px; height: 20px; }
+.compactEmptyState > .emptyStateIcon > svg { width: 20px; height: 20px; }
 .full { width: 100%; height: 100%; overflow: auto; }
+.full:has(.ledgerTableFrame > .emptyState) { display: flex; flex-direction: column; overflow: hidden; }
+.full:has(.ledgerTableFrame > .emptyState) > .header { flex: none; }
 .ledgerPage { display: flex; overflow: hidden; flex-direction: column; }
 .ledgerPage > .header, .ledgerPage > .notice { flex: none; }
 .summaryPage:global(.workbench-detail) { display: flex; min-height: 100%; flex-direction: column; padding-bottom: 30px; }
@@ -47,6 +57,7 @@
 .rangeCheckbox { accent-color: var(--enabled-color); width: 14px; height: 14px; }
 @media (max-width: 700px) { .rangeActions { flex-basis: 100%; } .rangeSelectTarget { min-height: 44px; } }
 .ledgerSection { display: flex; min-height: 0; flex: 1; flex-direction: column; padding-top: 20px; }
+.ledgerSection:has(> .ledgerTableFrame > .emptyState) { flex: 1; }
 .distributionLedger { padding-top: 0; }
 .sectionHeading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 13px; }
 .sectionHeading span, .sectionHeading small { color: #92999f; font-size: calc(11px + var(--ui-font-offset)); }
@@ -227,6 +238,9 @@
 .ledgerUpdate .cancelArmed { color: #fff; background: #b42318; border-color: #b42318; }
 .ledgerUpdate .cancelArmed:hover { color: #fff; background: #912018; border-color: #912018; }
 .ledgerTableFrame { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid var(--border); border-radius: 9px; }
+.ledgerTableFrame:has(> .emptyState) { flex: 1; }
+.ledgerTableFrame > .emptyState { flex: 1; }
+.ledgerTableFrame > .ledgerTableWrap:has(+ .emptyState) { flex: none; min-height: 0; max-height: none; }
 .ledgerTableFrame > .toolbar { flex-wrap: wrap; margin: 0; padding: 12px; border-bottom: 1px solid var(--border); }
 .ledgerTableFrame > .ledgerTableWrap { border: 0; border-radius: 0 0 9px 9px; }
 .ledgerTableFrame > .ledgerTableWrap:has(+ .paginationBar) { border-radius: 0; }
@@ -423,12 +437,16 @@ dialog.materialCreate > header { display: flex; align-items: center; justify-con
 .columnMenu > summary { list-style: none; cursor: pointer; }
 .columnMenu > summary::-webkit-details-marker { display: none; }
 .columnMenu > div { position: absolute; top: 40px; right: 0; z-index: 3; display: grid; width: 170px; padding: 7px; border: 1px solid var(--border); border-radius: 9px; background: #fff; box-shadow: var(--shadow-soft); }
+.columnMenu > div[popover] { position: fixed; inset: auto; margin: 0; }
+.columnMenu > div[popover]:not(:popover-open) { display: none; }
 .columnMenu[data-open-up="true"] > div { top: auto; bottom: calc(100% + 4px); }
 .columnMenu > div label { display: flex; min-height: 31px; align-items: center; gap: 8px; padding: 0 7px; border-radius: 6px; color: #535b62; font-size: calc(11.5px + var(--ui-font-offset)); }
 .columnMenu > div label:hover { background: var(--surface); }
 .columnMenu summary em { display: inline-flex; min-width: 17px; height: 17px; align-items: center; justify-content: center; border-radius: 9px; color: #fff; background: #4f5961; font-size: calc(10px + var(--ui-font-offset)); font-style: normal; }
 .personMenu > div, .filterMenu > div { width: 148px; padding: 5px; gap: 0; border-radius: 7px; box-shadow: 0 4px 12px rgba(30,38,44,.08); max-height: min(480px, 65dvh); overflow-y: auto; }
-.displayMenu > div { width: 288px; gap: 4px; overflow: visible; }
+.displayMenu > div { display: flex; flex-direction: column; width: 288px; gap: 4px; overflow: visible; overscroll-behavior: contain; }
+.displayMenu > div > * { flex: none; }
+.displayMenu > div > .columnGrid { flex: 0 1 auto; min-height: 0; padding-block: 4px; overflow-y: auto; overscroll-behavior: contain; scroll-padding-block: 4px; }
 .filterMenu .menuSelect { display: grid; height: auto; min-height: 55px; align-items: stretch; gap: 4px; padding-block: 6px; }
 .menuSelect > span, .menuLabel { color: #7a8289; font-size: calc(10.5px + var(--ui-font-offset)); }
 .menuSelect select { width: 100%; height: 29px; padding: 0 7px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
@@ -570,6 +588,8 @@ dialog.drawer:not([open]) { display: none; }
 @media (max-width: 560px) {
   .drawerHeader { flex-wrap: wrap; gap: 10px; }
   .drawerHeader > div:first-child { flex-basis: 100%; }
+  .drawerHeader:has(> :global(.icon-button)) { flex-wrap: nowrap; }
+  .drawerHeader:has(> :global(.icon-button)) > div:first-child { flex: 1; }
   .drawerHeaderActions { width: 100%; }
   .drawerHeaderActions > :global(.icon-button) { margin-left: auto; }
 }

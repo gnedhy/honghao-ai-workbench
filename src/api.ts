@@ -1,4 +1,4 @@
-import type { AccessLevel, AccessScope, ActivationReview, AdminModuleSetting, AdminModuleSettings, AdminWorkbenchSetting, AuditEvent, Conversation, ConversationMessage, CurrentUser, ManagedUser, ModuleMode, ModuleStatus, ProcurementBatch, ProcurementBatchDetail, ProcurementHistoryBatch, ProcurementHistoryBatchDetail, ProcurementImportPreview, ProcurementIssue, ProcurementMaterialDetail, ProcurementOverview, ProcurementPreferences, ProcurementPriceHistory, ProcurementUpdate, Project, RuntimeEnvironment, Section, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
+import type { AccessLevel, AccessScope, ActivationReview, AdminModuleSetting, AdminModuleSettings, AdminWorkbenchSetting, AuditEvent, Conversation, ConversationMessage, CurrentUser, ConversationUpdate, ManagedUser, ModuleMode, ModuleStatus, ProcurementBatch, ProcurementBatchDetail, ProcurementHistoryBatch, ProcurementHistoryBatchDetail, ProcurementImportPreview, ProcurementIssue, ProcurementMaterialDetail, ProcurementOverview, ProcurementPreferences, ProcurementPriceHistory, ProcurementUpdate, Project, RuntimeEnvironment, Section, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
 
 export type ServiceHealth = {
   status: "ok";
@@ -6,6 +6,29 @@ export type ServiceHealth = {
   api_version: string;
   environment: RuntimeEnvironment | null;
 };
+
+export type AIModelSettings = {
+  default_model: string; default_effort: string; enabled_models: string[]; allowed_efforts: string[];
+  validated_models?: string[];
+  prices: Record<string, {input: number | string; cache: number | string; output: number | string}>;
+};
+export type AIBudgetSettings = {company_monthly_cny: number | string | null; user_monthly_cny: number | string | null; user_overrides: Record<string, number | string | null>};
+export type AIConcurrencySettings = {max_running: number; queue_limit: number; user_queue_limit: number; queue_timeout_seconds: number; verified_capacity?: number};
+export type AIConfigValues = {models: AIModelSettings; budget: AIBudgetSettings; concurrency: AIConcurrencySettings};
+export type AIConfigSection = keyof AIConfigValues;
+export type AIConfig = {[K in AIConfigSection]: {revision: number; value: AIConfigValues[K]; updated_at?: string; pricing_source?: string}} & {
+  credential: {configured: boolean; last_four?: string | null}; runtime: {status: string; version: string};
+  model_capabilities: {id: string; name: string; validated: boolean; supports_images?: boolean; context_window: number; provider_max_output_tokens: number; output_tokens: number; auto_compact_tokens: number; efforts: string[]}[];
+};
+export type AIUsageTotals = {cost_cny: number | string; input_tokens: number; cached_tokens: number; output_tokens: number; total_tokens: number; pending_cny: number | string; requests: number};
+export type AIAdminUsage = {month: string; totals: AIUsageTotals; users: (AIUsageTotals & {owner_id: string; display_name: string; department: string; monthly_cny: number | string | null})[]; departments: (AIUsageTotals & {department: string})[]};
+export type AIQueueState = {running: number; queued: number; max_running: number; verified_capacity: number; items: {id: string; owner_name: string; status: string; queued_at: string | null; started_at: string | null}[]};
+export const fetchAdminAIConfig = (signal?: AbortSignal) => fetchJson<AIConfig>("/api/admin/ai-config", {signal});
+export const saveAdminAIConfig = <K extends AIConfigSection>(section: K, revision: number, value: AIConfigValues[K]) => fetchJson<AIConfig[K]>(`/api/admin/ai-config/${section}`, {method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify({revision, value})});
+export const saveAICredential = (key: string) => fetchJson<AIConfig['credential']>("/api/admin/ai-config/credential", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({key})});
+export const testAIConnection = (model: string) => fetchJson<{ok: boolean; model: string}>("/api/admin/ai-config/test", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({model})});
+export const fetchAdminAIUsage = (signal?: AbortSignal) => fetchJson<AIAdminUsage>("/api/admin/ai-usage", {signal});
+export const fetchAdminAIQueue = (signal?: AbortSignal) => fetchJson<AIQueueState>("/api/admin/ai-queue", {signal});
 
 export function createProcurementMaterial(payload: { code: string; name: string; department_ids: string[]; price: string | null; effective_date: string | null; reason: string; update_id: string | null; updated_at: string | null; baseline_id: string | null }): Promise<{ id: string }> {
   return fetchJson("/api/workbenches/procurement/materials", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)});
@@ -18,17 +41,25 @@ export type ServiceConnection =
 
 export type ConversationExecution = {
   id: string; conversation_id: string; input_message_id: string; task_id: string | null;
-  status: "running" | "waiting" | "completed" | "stopped" | "failed" | "blocked";
-  phase: "starting" | "generating" | "ended"; output: string; event_seq: number;
+  status: "queued" | "running" | "waiting" | "completed" | "stopped" | "failed" | "blocked";
+  phase: "queued" | "starting" | "generating" | "ended"; output: string; event_seq: number;
   stop_requested: number; stop_reason: string | null; runtime_version: string;
+  started_at:string|null; queued_at?:string|null; model?:string;effort?:string; ended_at:string|null;
+  conversation?:Conversation;
+  task_title?:string|null;
+  thinking_summary?:string; thinking_started?:boolean;
+  context_usage?:{used_tokens:number;window_tokens:number;auto_compact_tokens:number}|null;
+  configured_auto_compact_tokens?:number;
+  context_compacting?:boolean|null;
+  activity?:{seq:number;at:string|null;status:ConversationExecution['status'];phase:ConversationExecution['phase'];thinking?:boolean;model_stream_started?:boolean}[];
 };
 export const workspaceHeaders=(actor?:string|null):Record<string,string> => actor?{'X-Workspace-Actor':actor}:{};
-export const fetchExecution = (conversation: string, message: string, signal?: AbortSignal) =>
-  fetchJson<ConversationExecution | null>(`/api/conversations/${encodeURIComponent(conversation)}/messages/${encodeURIComponent(message)}/execution`, {signal});
-export const startExecution = (conversation: string, message: string) =>
-  fetchJson<ConversationExecution>(`/api/conversations/${encodeURIComponent(conversation)}/messages/${encodeURIComponent(message)}/execution`, {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"});
-export const stopExecution = (conversation: string, run: string) =>
-  fetchJson<ConversationExecution>(`/api/conversations/${encodeURIComponent(conversation)}/executions/${encodeURIComponent(run)}/stop`, {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"});
+export const fetchExecution = (conversation: string, message: string, signal?: AbortSignal, actor?:string) =>
+  fetchJson<ConversationExecution | null>(`/api/conversations/${encodeURIComponent(conversation)}/messages/${encodeURIComponent(message)}/execution`, {signal,headers:workspaceHeaders(actor)});
+export const startExecution = (conversation: string, message: string, actor?:string, selection?:{model:string;effort:string}) =>
+  fetchJson<ConversationExecution>(`/api/conversations/${encodeURIComponent(conversation)}/messages/${encodeURIComponent(message)}/execution`, {method: "POST", headers: {"Content-Type": "application/json",...workspaceHeaders(actor)}, body: JSON.stringify(selection??{})});
+export const stopExecution = (conversation: string, run: string, actor?:string) =>
+  fetchJson<ConversationExecution>(`/api/conversations/${encodeURIComponent(conversation)}/executions/${encodeURIComponent(run)}/stop`, {method: "POST", headers: {"Content-Type": "application/json",...workspaceHeaders(actor)}, body: "{}"});
 
 export async function fetchServiceHealth(signal?: AbortSignal): Promise<ServiceHealth> {
   const response = await fetch("/api/health", { signal });
@@ -322,11 +353,11 @@ export function fetchMessages(conversationId: string, signal?: AbortSignal, acto
   return fetchJson<ConversationMessage[]>(`/api/conversations/${conversationId}/messages`, {signal,headers:workspaceHeaders(actor)});
 }
 
-export function createProject(title: string, submissionKey?: string, actor?:string): Promise<Project> {
+export function createProject(title: string, submissionKey?: string, actor?:string, appearance:Pick<Project,'icon'|'color'>={}): Promise<Project> {
   return fetchJson<Project>("/api/projects", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...workspaceHeaders(actor) },
-    body: JSON.stringify({ title, submission_key: submissionKey }),
+    body: JSON.stringify({ title, submission_key: submissionKey, ...appearance }),
   });
 }
 
@@ -341,20 +372,35 @@ export function createConversation(
   });
 }
 
-export function renameProject(project: Project, title: string): Promise<Project> {
-  return fetchJson(`/api/projects/${project.id}`, {method:'PATCH', headers:{'Content-Type':'application/json',...workspaceHeaders(project.owner_id)}, body:JSON.stringify({title,revision:project.revision})});
+export function renameProject(project: Project, title: string, appearance:Pick<Project,'icon'|'color'|'removed'>={}): Promise<Project> {
+  return fetchJson(`/api/projects/${project.id}`, {method:'PATCH', headers:{'Content-Type':'application/json',...workspaceHeaders(project.owner_id)}, body:JSON.stringify({title,revision:project.revision,...appearance})});
+}
+export function fetchAIUsage(period:'7'|'30'|'all',actor:string,signal?:AbortSignal):Promise<import('./types').AIUsage> {
+  return fetchJson(`/api/me/ai-usage?period=${period}`,{signal,headers:workspaceHeaders(actor)});
 }
 export type TaskRun = {
   id:string; task_id:string; owner_id:string|null; input_message_id:string;
-  status:Exclude<TaskItem['status'],'created'>; phase:'starting'|'generating'|'ended';
-  started_at:string; ended_at:string|null; stop_reason:string|null; waiting_reason:string|null;
+  status:Exclude<TaskItem['status'],'created'|'review'>; phase:'queued'|'starting'|'generating'|'ended';
+  started_at:string|null; queued_at?:string|null; model?:string;effort?:string; ended_at:string|null; stop_reason:string|null; waiting_reason:string|null;
   runtime_version:string; output:string; model_requests:number; reported_model_tokens:number; model_network_ms:number;
+  accepted_at?:string|null;accepted_by?:string|null;
 };
+export function acceptTask(task:TaskItem,runId:string,actor:string):Promise<TaskItem> {
+  return fetchJson(`/api/tasks/${task.id}/acceptance`,{method:'POST',headers:{'Content-Type':'application/json',...workspaceHeaders(actor)},body:JSON.stringify({revision:task.revision,run_id:runId})});
+}
 export function fetchTaskRuns(taskId:string, signal?:AbortSignal,actor?:string):Promise<TaskRun[]> {
   return fetchJson(`/api/tasks/${taskId}/runs`, {signal,headers:workspaceHeaders(actor)});
 }
 export function fetchActiveExecution(conversationId:string, signal?:AbortSignal,actor?:string):Promise<ConversationExecution|null> {
   return fetchJson(`/api/conversations/${conversationId}/active-execution`, {signal,headers:workspaceHeaders(actor)});
+}
+
+export type {ConversationUpdate} from './types';
+export function deleteConversation(conversation:Conversation,actor:string):Promise<void> {
+  return fetchJson(`/api/conversations/${conversation.id}`,{method:'DELETE',headers:{'Content-Type':'application/json',...workspaceHeaders(actor)},body:JSON.stringify({revision:conversation.revision})});
+}
+export function updateConversation(conversation:Conversation,changes:ConversationUpdate,actor:string):Promise<Conversation> {
+  return fetchJson(`/api/conversations/${conversation.id}`,{method:"PATCH",headers:{"Content-Type":"application/json",...workspaceHeaders(actor)},body:JSON.stringify({...changes,revision:conversation.revision})});
 }
 
 export function setConversationProject(
@@ -399,3 +445,10 @@ export function createConversationSubmission(
     body: JSON.stringify({ title, project_id: projectId, mode, content, submission_key: submissionKey }),
   });
 }
+
+export const fetchPersonalization = (signal?:AbortSignal,actor?:string) => fetchJson<import('./types').PersonalizationSettings>('/api/personalization',{signal,headers:workspaceHeaders(actor)});
+export const updatePersonalization = (payload:{revision:number;memory_enabled?:boolean;instructions?:string},actor?:string) => fetchJson<import('./types').PersonalizationSettings>('/api/personalization',{method:'PATCH',headers:{'Content-Type':'application/json',...workspaceHeaders(actor)},body:JSON.stringify(payload)});
+export const fetchProjectInstructions = (id:string,signal?:AbortSignal,actor?:string) => fetchJson<import('./types').ProjectInstructions>(`/api/projects/${encodeURIComponent(id)}/instructions`,{signal,headers:workspaceHeaders(actor)});
+export const updateProjectInstructions = (id:string,payload:{revision:number;content:string|null},actor?:string) => fetchJson<import('./types').ProjectInstructions>(`/api/projects/${encodeURIComponent(id)}/instructions`,{method:'PUT',headers:{'Content-Type':'application/json',...workspaceHeaders(actor)},body:JSON.stringify(payload)});
+export const fetchPersonalMemories = (signal?:AbortSignal,actor?:string) => fetchJson<{items:import('./types').PersonalMemory[]}>('/api/personalization/memories',{signal,headers:workspaceHeaders(actor)});
+export const clearPersonalMemories = (actor?:string) => fetchJson<void>('/api/personalization/memories',{method:'DELETE',headers:workspaceHeaders(actor)});

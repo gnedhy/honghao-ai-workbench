@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 
 from api.authorization import AuthorizationStore
 from api.feedback import FeedbackStore, create_feedback_router
+from api.personalization import create_personalization_router
 from api.procurement_news import NewsStore
 from api.database import Database, SubmissionConflictError, WorkspaceAccessError, WorkspaceNotFoundError, WorkspaceConflictError
 from api.identity import DuplicateIdentityError, IdentityStore, SESSION_COOKIE_NAME, INITIAL_ACCOUNT_PASSWORD
@@ -35,6 +36,7 @@ from api.modules import (
 )
 from api.settings import Settings
 from api.codex_runtime import CodexRuntime, RuntimeBlocked
+from api.ai_control import AIBudgetExceeded
 from api.workbenches import (
     WORKBENCH_IDS,
     WorkbenchId,
@@ -216,6 +218,10 @@ class AuditEventResponse(BaseModel):
     actor_name: str | None
 
 
+ProjectIcon = Literal['folder','briefcase','flask','chart','code','book','lightbulb','palette']
+ProjectColor = Literal['blue','green','amber','violet','rose','slate']
+
+
 class ProjectCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
@@ -226,28 +232,51 @@ class ProjectResponse(BaseModel):
     title: str
     owner_id: str | None
     revision: int
+    icon: ProjectIcon
+    color: ProjectColor
+    removed: bool = False
 
 
 class ProjectSubmission(ProjectCreate):
     submission_key: UUID | None = None
+    icon: ProjectIcon = 'folder'
+    color: ProjectColor = 'blue'
 
 
 class ProjectUpdate(ProjectCreate):
     revision: int | None = Field(default=None, gt=0, strict=True)
+    icon: ProjectIcon | None = None
+    color: ProjectColor | None = None
+    removed: Literal[True] | None = None
 
 
 class ConversationCreate(ProjectCreate):
     project_id: str | None = None
 
 
-class ConversationResponse(ProjectResponse):
+class ConversationResponse(BaseModel):
+    pinned: bool = False
+    archived: bool = False
+    id: str
+    title: str
+    owner_id: str | None
+    revision: int
     project_id: str | None
+    mode: Literal["chat", "work"] | None = None
 
 
 class ConversationProjectUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     revision: int | None = Field(default=None, gt=0, strict=True)
-    project_id: str | None
+    project_id: str | None = None
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)] | None = None
+    pinned: bool | None = Field(default=None, strict=True)
+    archived: bool | None = Field(default=None, strict=True)
+
+
+class ConversationDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int | None = Field(default=None, gt=0, strict=True)
 
 
 class ConversationSubmission(BaseModel):
@@ -264,11 +293,14 @@ class InitialConversationSubmission(ConversationSubmission):
     project_id: str | None = None
 
 
-TaskStatus = Literal["created", "running", "waiting", "completed", "stopped", "failed", "blocked"]
+TaskStatus = Literal["created", "queued", "running", "waiting", "review", "completed", "stopped", "failed", "blocked"]
 
 
 class MessageResponse(BaseModel):
     run_id: str | None = None
+    execution_status: Literal['queued','running','waiting','completed','stopped','failed','blocked'] | None = None
+    execution_started_at: str | None = None
+    execution_ended_at: str | None = None
     owner_id: str | None
     role: Literal["user", "assistant", "tool"]
     id: str
@@ -286,6 +318,7 @@ class TaskResponse(BaseModel):
     id: str
     conversation_id: str
     objective: str
+    title: str | None = None
     project_id: str | None
     status: TaskStatus
     created_at: str
@@ -297,17 +330,29 @@ class TaskRunResponse(BaseModel):
     task_id: str
     owner_id: str | None
     input_message_id: str
-    status: Literal["running", "waiting", "completed", "stopped", "failed", "blocked"]
-    started_at: str
+    status: Literal["queued", "running", "waiting", "completed", "stopped", "failed", "blocked"]
+    started_at: str | None
+    queued_at: str | None = None
     ended_at: str | None
     waiting_reason: str | None
     stop_reason: str | None
     runtime_version: str
-    phase: Literal['starting', 'generating', 'ended']
+    model: str | None = None
+    effort: str | None = None
+    model_config_revision: int | None = None
+    phase: Literal['queued', 'starting', 'generating', 'ended']
     output: str
     model_requests: int
     reported_model_tokens: int = Field(validation_alias='model_tokens')
     model_network_ms: int
+    accepted_at: str | None = None
+    accepted_by: str | None = None
+
+
+class TaskAcceptance(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    revision: int = Field(gt=0, strict=True)
+    run_id: str = Field(min_length=1, max_length=100)
 
 
 class SubmissionResponse(BaseModel):
@@ -321,6 +366,27 @@ class InitialSubmissionResponse(SubmissionResponse):
 
 class ExecutionAction(BaseModel):
     model_config = ConfigDict(extra='forbid')
+
+
+class ExecutionSelection(ExecutionAction):
+    model: Literal['deepseek-flash','deepseek-v4-pro'] | None = None
+    effort: Literal['low','high','max'] | None = None
+
+
+class AIConfigUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    revision: int = Field(gt=0, strict=True)
+    value: dict
+
+
+class AICredentialUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    key: str = Field(min_length=8,max_length=512)
+
+
+class AIConnectionTest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    model: Literal['deepseek-flash','deepseek-v4-pro'] = 'deepseek-flash'
 
 
 class KnowledgeSourceResponse(BaseModel):
@@ -402,6 +468,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                 app.state.database = database
                 app.state.identities = identities
                 app.state.authorization = authorization
+                app.state.ai_runtime = ai_runtime
                 ai_runtime.recover()
                 app.state.knowledge = knowledge
                 app.state.procurement = procurement
@@ -444,7 +511,13 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
 
     @app.exception_handler(RuntimeBlocked)
     async def ai_execution_error(request: Request, error: RuntimeBlocked):
+        if str(error)=='queue_full':
+            return JSONResponse(status_code=429,content={'detail':'等待队列已满，请取消已有等待或稍后再试。'})
         return JSONResponse(status_code=503, content={'detail': 'AI 执行暂时不可用，请核对运行配置或稍后重试'})
+
+    @app.exception_handler(AIBudgetExceeded)
+    async def ai_budget_error(request: Request,error: AIBudgetExceeded):
+        return JSONResponse(status_code=402,content={'detail':'本月 AI 预算已用完，请联系管理员调整额度。'})
 
     @app.exception_handler(psycopg.Error)
     async def database_error(request: Request, error: psycopg.Error):
@@ -460,7 +533,9 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             return JSONResponse(status_code=422, content={"detail": "请填写当前密码及两次新密码，新密码不可为空且不能超过 1000 个字符，且不能包含其他字段"})
         return await request_validation_exception_handler(request, error)
 
-    def current_user(request: Request) -> dict:
+    def current_user(request: Request, *, revalidate: bool = False) -> dict:
+        if request.method in {'GET','HEAD','OPTIONS'} and not revalidate and getattr(request.state,'current_user',None) is not None:
+            return request.state.current_user
         token = request.cookies.get(SESSION_COOKIE_NAME)
         user = identities.user_for_session(token) if token else None
         if user is None:
@@ -501,7 +576,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     async def guard_disabled_modules(request: Request, call_next):
         module_id = module_for_api_path(request.url.path)
         expected_actor = request.headers.get('X-Workspace-Actor')
-        if module_id in {'chat', 'tasks'} and expected_actor:
+        if (module_id in {'chat', 'tasks'} or request.url.path=='/api/me/ai-usage') and expected_actor:
             actor = getattr(request.state, 'current_user', None)
             if actor is None or actor['id'] != expected_actor:
                 return JSONResponse(status_code=401, content={'detail':'Workspace identity changed; reload the session'})
@@ -522,7 +597,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
         if request.url.path.startswith("/api/") and request.url.path not in PUBLIC_API_PATHS:
             token = request.cookies.get(SESSION_COOKIE_NAME)
             try:
-                user = identities.user_for_session(token) if token else None
+                user = await asyncio.to_thread(identities.user_for_session,token) if token else None
             except psycopg.Error:
                 return JSONResponse(status_code=503, content={"detail": "Service not ready"})
             if user is None:
@@ -608,6 +683,10 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     def me_profile(request: Request) -> ProfileResponse:
         user = current_user(request)
         return ProfileResponse(**user, procurement_capabilities=capabilities(runtime_settings.database_url, user), research_capabilities=capabilities(runtime_settings.database_url, user, "research"))
+
+    @app.get('/api/me/ai-usage')
+    def me_ai_usage(request: Request, period: Literal['7','30','all']='30'):
+        return request.app.state.database.ai_usage(actor_id=current_user(request)['id'], days=None if period=='all' else int(period))
 
     @app.patch("/api/me/profile", response_model=UserResponse)
     def update_me_profile(update: ProfileUpdate, request: Request) -> UserResponse:
@@ -1079,7 +1158,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             module_id = module_for_api_path(request.url.path)
             if module_id and not authorization.has_module_access(actor["is_system_admin"], actor["scope_levels"], module_id, request.method, ai_enabled=actor["ai_enabled"]):
                 raise HTTPException(status_code=403, detail="Permission denied")
-            return ProjectResponse(**request.app.state.database.create_project(project.title, actor_id=actor["id"], submission_key=str(project.submission_key) if project.submission_key else None))
+            return ProjectResponse(**request.app.state.database.create_project(project.title, actor_id=actor["id"], submission_key=str(project.submission_key) if project.submission_key else None, icon=project.icon, color=project.color))
 
     @app.get("/api/projects", response_model=list[ProjectResponse])
     def list_projects(request: Request) -> list[ProjectResponse]:
@@ -1094,7 +1173,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                 raise HTTPException(status_code=403, detail="Permission denied")
             if update.revision is None:
                 raise HTTPException(status_code=428, detail="Revision required; refresh the client")
-            project = request.app.state.database.rename_project(project_id, update.title, update.revision, actor_id=actor["id"])
+            project = request.app.state.database.rename_project(project_id, update.title, update.revision, actor_id=actor["id"], icon=update.icon, color=update.color, removed=update.removed)
             if project is None:
                 raise HTTPException(status_code=404, detail="Project not found")
             return ProjectResponse(**project)
@@ -1131,28 +1210,88 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                 raise HTTPException(status_code=403, detail="Permission denied")
             if update.revision is None:
                 raise HTTPException(status_code=428, detail="Revision required; refresh the client")
-            conversation = request.app.state.database.set_conversation_project(
-                conversation_id,
-                update.project_id,
-                update.revision,
-                actor_id=actor["id"],
+            changes = update.model_dump(exclude_unset=True, exclude={'revision'})
+            if not changes or any(value is None and name != 'project_id' for name,value in changes.items()):
+                raise HTTPException(status_code=422, detail="A valid conversation update is required")
+            conversation = request.app.state.database.update_conversation(
+                conversation_id, changes, update.revision, actor_id=actor["id"],
             )
             if conversation is None:
                 raise HTTPException(status_code=404, detail="Conversation or project not found")
             return ConversationResponse(**conversation)
+
+    @app.delete('/api/conversations/{conversation_id}', status_code=204)
+    def delete_conversation(conversation_id: str, action: ConversationDelete, request: Request):
+        actor = current_user(request)
+        if action.revision is None:
+            raise HTTPException(status_code=428, detail='Revision required; refresh the client')
+        ai_runtime.delete_conversation(request.app.state.database,conversation_id,action.revision,actor['id'])
+        return Response(status_code=204)
 
     @app.get('/api/conversations/runtime-status')
     def execution_runtime_status(request: Request):
         current_user(request)
         return ai_runtime.status()
 
+    @app.get('/api/me/ai-models')
+    def ai_model_choices(request: Request):
+        return ai_runtime.control.catalog(current_user(request)['id'])
+
+    @app.get('/api/admin/ai-config')
+    def ai_configuration(request: Request):
+        require_system_admin(request)
+        from api.ai_control import MODELS, EFFORTS
+        state = ai_runtime.control.config()
+        try:
+            config = ai_runtime._config()
+        except (RuntimeBlocked, OSError, ValueError):
+            config = {}
+        state.update(credential=ai_runtime.control.key_status(config.get('key_file')),runtime=ai_runtime.status(),model_capabilities=[
+            {'id':model,'name':'DeepSeek Flash' if model==MODELS[0] else 'DeepSeek Pro',
+             'validated':model in state['models']['value']['validated_models'], 'context_window':1048576,
+             'provider_max_output_tokens':393216,'output_tokens':config.get('output_tokens',4096),
+             'auto_compact_tokens':943718,'supports_images':model==MODELS[0],'efforts':list(EFFORTS)} for model in MODELS])
+        return state
+
+    @app.put('/api/admin/ai-config/{section}')
+    def save_ai_configuration(section: str, action: AIConfigUpdate, request: Request):
+        actor = require_system_admin(request)
+        saved = ai_runtime.control.save(section,action.revision,action.value,actor['id'])
+        authorization.audit('ai.config.saved',actor_user_id=actor['id'],target_type='ai_config',target_id=section)
+        ai_runtime.queue_wakeup.set()
+        return saved
+
+    @app.post('/api/admin/ai-config/credential')
+    def save_ai_credential(action: AICredentialUpdate, request: Request):
+        actor = require_system_admin(request)
+        ai_runtime.control.replace_key(action.key,actor['id'])
+        authorization.audit('ai.credential.changed',actor_user_id=actor['id'],target_type='ai_config',target_id='deepseek')
+        return ai_runtime.control.key_status()
+
+    @app.post('/api/admin/ai-config/test')
+    def test_ai_connection(action: AIConnectionTest, request: Request):
+        actor = require_system_admin(request)
+        result = ai_runtime.test_connection(actor['id'], action.model)
+        authorization.audit('ai.connection.tested',actor_user_id=actor['id'],target_type='ai_config',target_id=action.model)
+        return result
+
+    @app.get('/api/admin/ai-usage')
+    def admin_ai_usage(request: Request):
+        require_system_admin(request)
+        return ai_runtime.control.usage()
+
+    @app.get('/api/admin/ai-queue')
+    def admin_ai_queue(request: Request):
+        require_system_admin(request)
+        return ai_runtime.queue_status()
+
     @app.get('/api/conversations/{conversation_id}/active-execution')
     def active_execution(conversation_id: str, request: Request):
         return ai_runtime.active(conversation_id, current_user(request)['id'])
 
     @app.post('/api/conversations/{conversation_id}/messages/{message_id}/execution')
-    def start_execution(conversation_id: str, message_id: str, action: ExecutionAction, request: Request):
-        return ai_runtime.start(conversation_id, message_id, current_user(request)['id'])
+    def start_execution(conversation_id: str, message_id: str, action: ExecutionSelection, request: Request):
+        return ai_runtime.start(conversation_id, message_id, current_user(request)['id'], action.model, action.effort)
 
     @app.get('/api/conversations/{conversation_id}/messages/{message_id}/execution')
     def get_execution(conversation_id: str, message_id: str, request: Request):
@@ -1177,7 +1316,7 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
             while not await request.is_disconnected():
                 try:
                     def read():
-                        actor = current_user(request)
+                        actor = current_user(request,revalidate=True)
                         return ai_runtime.events(conversation_id, run_id, actor['id'], cursor)
                     row, events = await asyncio.to_thread(read)
                 except (HTTPException, WorkspaceAccessError, WorkspaceNotFoundError, psycopg.Error):
@@ -1186,10 +1325,10 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
                     cursor = event['seq']
                     payload = {'runId': run_id, 'seq': cursor, **event['payload']}
                     yield f'id: {cursor}\nevent: {event["kind"]}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n'
-                if row['status'] not in ('running', 'waiting') and cursor >= row['event_seq']:
+                if row['status'] not in ('queued', 'running', 'waiting') and cursor >= row['event_seq']:
                     return
                 yield ': keepalive\n\n'
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.1)
 
         return StreamingResponse(stream(), media_type='text/event-stream', headers={'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no'})
 
@@ -1281,10 +1420,19 @@ def create_app(settings: Settings | None = None, *, static_dir: Path | None = No
     def list_task_runs(task_id: str, request: Request):
         return request.app.state.database.list_runs(task_id, actor_id=current_user(request)["id"])
 
+    @app.post('/api/tasks/{task_id}/acceptance', response_model=TaskResponse)
+    def accept_task(task_id: str, action: TaskAcceptance, request: Request):
+        with transaction(runtime_settings.database_url, write=True):
+            actor = current_user(request)
+            if runtime_settings.module_modes['tasks'] == 'off' or not authorization.has_module_access(actor['is_system_admin'], actor['scope_levels'], 'tasks', 'POST', ai_enabled=actor['ai_enabled']):
+                raise HTTPException(status_code=403, detail='Permission denied')
+            return TaskResponse(**request.app.state.database.accept_task(task_id, action.revision, action.run_id, actor_id=actor['id']))
+
     app.include_router(create_procurement_router(procurement, authorization, runtime_settings))
     app.include_router(create_research_router(research, runtime_settings))
     app.include_router(create_sales_router(sales, runtime_settings))
     app.include_router(create_feedback_router(feedback, current_user))
+    app.include_router(create_personalization_router(ai_runtime.personalization, current_user, ai_runtime.reset_memory))
 
     if static_root is not None:
         _mount_static_frontend(app, static_root)
