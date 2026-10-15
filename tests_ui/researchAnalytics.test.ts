@@ -99,6 +99,12 @@ test("只读数字两位小数，收率完整精度换算不经浮点数", () =>
   assert.equal(numberText("-1.005"), "-1.01");
   assert.equal(numberText("1234.56789"), "1,234.57");
   assert.equal(numberText(null), "—");
+  assert.deepEqual([undefined,"","NaN","1e3","0","-0.004","1.005","999999.995"].map(numberText), ["—","—","—","—","0.00","-0.00","1.01","1,000,000.00"]);
+  for (const value of ["7.18","16.6","-1.005","1234.56789","999999.995"]) {
+    const expected = (priceCents(value)! / 100).toLocaleString("zh-CN", {minimumFractionDigits:2,maximumFractionDigits:2});
+    assert.equal(numberText(value), expected);
+    assert.equal(numberText(value), expected, "重复渲染保持同一舍入口径");
+  }
 });
 
 import {basisLabel} from "../src/workbenches/researchAnalytics.ts";

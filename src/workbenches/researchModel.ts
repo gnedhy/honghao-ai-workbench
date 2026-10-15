@@ -1,5 +1,5 @@
 import {fetchJson} from "../api";
-import {priceCents} from "./researchAnalytics";
+import {numberText} from "./researchAnalytics";
 export type InputLine = { code: string; kind: "material" | "recipe" | "composite"; ref: string; restricted_reference?: boolean; price_ref?: string; price_refs?: string[]; quantity: string; ratio?: string; source_row?: number | null };
 export type Adjustment = { adjustment_reason?: string; adjustment_note?: string };
 export type Formula = Adjustment & { manual_costs?: Partial<Record<"latest" | "inventory", string | null>>; edited_by?: string; activated_by?: string; editor_name?: string; activator_name?: string; ratio_linked?: boolean; ratio_base?: string; id?: string; name?: string; owner?: string; department?: string; source_kind?: string; yield_source?: {kind:string; count?:number; source_rows?:number[]}; kind?: string; yield: string; lines: InputLine[]; sheet?: string; source_row?: number | null };
@@ -15,7 +15,7 @@ export const base = "/api/workbenches/research";
 export const productPath = (id: string) => `${base}/products/${encodeURIComponent(id)}`;
 export const request = <T,>(url: string, method: string, body: unknown) => fetchJson<T>(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
-export const cost = (value: string | null | undefined) => priceCents(value) == null ? "—" : `¥${(priceCents(value)! / 100).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const cost = (value: string | null | undefined) => { const text = numberText(value); return text === "—" ? text : `¥${text}`; };
 export {numberText, yieldValue, yieldText} from "./researchAnalytics";
 export const yieldBasis: Record<string,string> = {user_confirmed:"业务确认指定",manual_edit:"编辑时调整",bom_ratio_sum:"BOM明细比例合计"};
 export const date = (value?: string) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "—";

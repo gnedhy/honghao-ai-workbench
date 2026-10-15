@@ -58,9 +58,10 @@ export function yieldNeedsReview(row: {yield: string; source_kind?: string; yiel
   return Number(row.yield) > 1 && !(row.source_kind === "erp_bom" && ["mes_mean", "bom_ratio_sum", "user_confirmed"].includes(row.yield_source?.kind ?? ""));
 }
 
+const numberFormatter = new Intl.NumberFormat("zh-CN", {minimumFractionDigits:2,maximumFractionDigits:2});
 export function numberText(value: string | null | undefined) {
   const cents = priceCents(value);
-  return cents == null ? "—" : (cents / 100).toLocaleString("zh-CN", {minimumFractionDigits:2,maximumFractionDigits:2});
+  return cents == null ? "—" : numberFormatter.format(cents / 100);
 }
 
 export function yieldValue(value: string) {
