@@ -459,11 +459,11 @@ def test_large_utf8_history_and_compaction_share_a_token_only_budget(controlled,
 def test_title_is_bounded_once_revision_safe_and_does_not_block_reply(controlled,monkeypatch):
     settings,client,users,config=controlled
     monkeypatch.setattr(runtime.CodexRuntime,'_execute',lambda *args:None)
-    sent=[];rename=None;failed=False;hold=None
+    sent=[];rename=None;failed=False;hold=None;body_sent=threading.Event()
     class Provider:
         sock=None
         def __init__(self,*args,**kwargs):pass
-        def request(self,method,path,body,headers):self.body=json.loads(body);sent.append(self.body)
+        def request(self,method,path,body,headers):self.body=json.loads(body);sent.append(self.body);body_sent.set()
         def getresponse(self):
             if not self.body['stream']:
                 assert self.body.get('reasoning')=={'effort':'none'},'Short title budget was consumed by hidden reasoning'
@@ -562,7 +562,7 @@ def test_title_is_bounded_once_revision_safe_and_does_not_block_reply(controlled
         assert len(sent)==before+1,'Continuation generated another task title'
     finally:server.shutdown();server.server_close()
     with transaction(settings.database_url,write=True) as db:runtime._finish(db,run['id'],'completed')
-    failed=False;rename=None;hold=threading.Event();config.update(requests=8,tokens=runtime.MODEL_CONTEXT_WINDOW+1024)
+    failed=False;rename=None;hold=threading.Event();body_sent.clear();config.update(requests=8,tokens=runtime.MODEL_CONTEXT_WINDOW+1024)
     first=submit(client,mode='chat',content='x'*3000,title='x'*28+'…')
     run=client.post(endpoint(first),json={}).json();run['owner_id']=users[0]['id'];run['proxy_failure']=None
     server=ORIGINAL_PROXY(controller,run,config,'private-token','synthetic-provider-key');before=len(sent)
@@ -570,6 +570,8 @@ def test_title_is_bounded_once_revision_safe_and_does_not_block_reply(controlled
         with ThreadPoolExecutor(max_workers=1) as pool:
             body=pool.submit(request,'/responses',{'model':'deepseek-flash','input':[{'role':'user','content':'x'*3000}]})
             assert server.body_started.wait(5)
+            # Budget reservation precedes request-slot acquisition and provider dispatch.
+            assert body_sent.wait(5), "Provider has not received the foreground request"
             assert request('/title')==204 and len(sent)==before+1
             hold.set();assert body.result(timeout=5)==200
         assert run['proxy_failure'] is None and server.reserved_tokens==0
