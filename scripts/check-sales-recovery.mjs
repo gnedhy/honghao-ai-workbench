@@ -399,7 +399,7 @@ try {
     await page.getByRole('button').filter({ hasText: batch.customer_name }).first().click();
     await page.getByRole('button', { name: '调整有效报价', exact: true }).click();
     await page.getByLabel('调整原因', { exact: true }).fill('W4 客户重新议价');
-    await page.getByRole('button', { name: '确认', exact: true }).click();
+    await page.getByRole('button', { name: '建立调整草稿', exact: true }).click();
     await page.getByRole('dialog', { name: '报价明细', exact: true }).waitFor();
     assert.equal(await page.getByLabel('客户名称', { exact: true }).inputValue(), batch.customer_name);
     assert.equal(await page.getByLabel('客户名称', { exact: true }).isDisabled(), true);
@@ -413,7 +413,7 @@ try {
     await page.getByRole('button').filter({ hasText: batch.customer_name }).first().click();
     await page.getByRole('button', { name: '调整有效报价', exact: true }).click();
     await page.getByLabel('调整原因', { exact: true }).fill('W4 第三版议价');
-    await page.getByRole('button', { name: '确认', exact: true }).click();
+    await page.getByRole('button', { name: '建立调整草稿', exact: true }).click();
     await page.getByRole('dialog', { name: '报价明细', exact: true }).waitFor();
     await page.getByRole('button', { name: '报价调整', exact: true }).click();
     assert.equal(await page.getByLabel('最终报价（元/kg）', { exact: true }).isDisabled(), false);
@@ -437,7 +437,7 @@ try {
     await page.getByRole('button').filter({ hasText: batch.customer_name }).first().click();
     await page.getByRole('button', { name: '作废有效报价', exact: true }).click();
     await page.getByLabel('作废原因', { exact: true }).fill('W4 合成作废');
-    await page.getByRole('button', { name: '确认', exact: true }).click();
+    await page.getByRole('button', { name: '确认作废', exact: true }).click();
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
     const final = (await get(base + '/records')).records.filter(row => row.batch_id === batch.id);
     assert.ok(final.every(row => row.status !== 'active'));

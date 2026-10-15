@@ -26,7 +26,7 @@
 
 所有者为非空时由外键和同所有者关联约束保证图一致；旧 ID、顺序、正文和任务数量保留。任务消息反向关系仅新增明确映射；新增运行表初始为空，不能给历史任务补虚假运行。
 
-任务状态枚举为 `created/running/waiting/completed/stopped/failed/blocked`；运行状态为 `running/waiting/completed/stopped/failed/blocked`。等待原因与停止原因独立记录，`状态确认中`仅为页面状态，不持久化。实际状态转换由 H04 实现。
+任务状态枚举为 `created/running/waiting/review/completed/stopped/failed/blocked`；运行状态为 `running/waiting/completed/stopped/failed/blocked`。等待原因与停止原因独立记录，`状态确认中`仅为页面状态，不持久化。实际状态转换由 H04 实现。
 
 本项不预建尚未使用的文件目录或通用资产注册器。H06 文件／成果版本和 H07 规则／技能版本应遵守 owner、不可变版本、项目／任务来源与当前授权合同；实际表、文件处理及调用消费者在对应阶段实现。普通附件不能被自动发现为 AGENTS/SKILL 配置。
 
@@ -70,3 +70,13 @@ HTTP 数据仍由 api/database.py 内集中管理；api/main.py 处理身份、�
 当前原生快照只在匹配 schema／迁移摘要的代码恢复；升级前快照使用对应旧版恢复后显式迁移，不隐式升级或用旧快照覆盖后续合法写入。候选回退优先关闭 AI 入口并保留新记录；H11 内核回退不回退产品数据，正式发布与恢复由 H12/H13 实测。
 
 H03 完整依赖审计发现已有开发依赖 source-map-js 1.2.1 的公告；仅锁文件更新至修复版 1.2.2，未新增依赖。184 个包重新审计完成，0 项漏洞。PDF 能力仍归 H06，不能把此审计当作文件解析及正式启用验收。
+
+H05兼容补充：message DTO可选execution_status／execution_started_at／execution_ended_at用于历史处理入口，通过本人消息关联已有input_message_id运行，无新表或迁移。旧字段和历史正文不改写；无主只读不提供运行详情动作。
+
+最近筛选兼容补充：ConversationResponse可选mode，只读列表根据实际user消息是否有work计算，工作归属不依赖项目或任务模块可读性；空会话／纯聊天为chat。非列表回执可不携带该值；客户端保留已确认工作分类并在工作接受后即时更新，标题／关联回执不改分类。仍按会话所有权过滤，不增加写入字段、表或迁移。
+
+2026-10-07 H05菜单补充：0010/core10只为conversations添加默认false的pinned／archived；会话PATCH沿用revision及本人写权限，按明确提交字段更新title／project_id／pinned／archived，未提交字段不重置。空更新、空标题、非法boolean及null状态拒绝；外部本人资源拒绝404，冻结任务来源不变。TaskDTO可选只读title来自已有运行元数据；execution可选task_title用于实时对账。SQLite冻结列投影排除菜单新增列。
+
+H05最终数据合同：TaskRun.completed是运行成功，Task.review是最新结果待本人验收，Task.completed只由本人验收最新成功结果产生；每轮accepted_at／accepted_by保留，旧成功记录迁移不伪造验收。本人归档会话的DELETE使用strict revision、无活跃运行检查及同事务产品图删除；项目和其它会话保留。归档集合仍供设置只读管理，日常入口／任务集合隐藏，恢复原ID。相关迁移0009–0013及完整恢复见[H05现役合同](项目AI工作区-H05项目与任务界面.md)。
+
+2026-10-09 项目移除：0014/core14 新增 projects.removed 默认 false，PATCH 仅接受 true 与 strict revision，保留关联图及历史元数据。新会话／新关联拒绝 removed 项目，已有关联可保持及继续；任务冻结来源不变。原生快照保存标记，冻结 SQLite 投影排除新列。

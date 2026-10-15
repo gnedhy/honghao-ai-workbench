@@ -34,7 +34,10 @@ const gate = () => { let release; const promise = new Promise(resolve => { relea
 let browser;
 const evidence = [];
 try {
-  await server.listen(); browser = await chromium.launch({ headless: true });
+  await server.listen();
+  // Compile the dev harness before timing functional browser navigation.
+  await server.warmupRequest('/w5-calculator.tsx'); await server.waitForRequestsIdle();
+  browser = await chromium.launch({ headless: true });
   const origin = server.resolvedUrls.local[0];
   async function run(name, fault, check) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });

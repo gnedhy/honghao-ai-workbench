@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, ChevronRight, X } from "lucide-react";
+import {ChartNoAxesCombined,  ArrowRight, ChevronRight, X } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PriceMovement as Movement } from "../components/PriceMovement";
-import { WorkbenchLoading } from "../components/WorkbenchLayout";
+import {PageState, EmptyState,  WorkbenchLoading } from "../components/WorkbenchLayout";
 import { useExitTransition } from "../components/Interaction";
 import type { ProcurementBatchDetail, ProcurementMaterial, ProcurementUpdate, ResearchMaterialDetail } from "../types";
 import styles from "../components/WorkbenchSurface.module.css";
 
-export function ChartEmpty({ title, detail }: { title: string; detail: string }) {
-  return <div className={styles.chartEmpty}><strong>{title}</strong><span>{detail}</span></div>;
+export function ChartEmpty({ title, detail, error = false }: { title: string; detail: string; error?: boolean }) {
+  return error ? <PageState error className={styles.chartEmpty}><strong>{title}</strong><span>{detail}</span></PageState> : <EmptyState icon={ChartNoAxesCombined} className={styles.chartEmpty} title={title}>{detail}</EmptyState>;
 }
 
 export function ledgerCell(item: ProcurementMaterial, column: string, pending: boolean) {

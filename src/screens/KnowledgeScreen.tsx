@@ -2,6 +2,7 @@ import { BookOpen, CheckCircle2, Clock3, FileText, Plus, Search, ShieldCheck, Ta
 import { useState } from "react";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { TopBar, type ScreenChromeProps } from "../components/TopBar";
+import {EmptyState} from '../components/WorkbenchLayout';
 import { knowledgeItems } from "../data";
 
 const scopeByTab = { "个人": "个人知识", "公共": "公共知识" } as const;
@@ -62,7 +63,7 @@ export function KnowledgeScreen({ contextOpen, onOpenNavigation, onToggleContext
           <div className="workspace-list-summary"><span>{visibleItems.length} 条结果</span><span>按更新时间排序</span></div>
           <div className="item-list knowledge-item-list">
             {visibleItems.map((item) => <button className={activeItem?.title === item.title ? "list-item knowledge-list-item is-active" : "list-item knowledge-list-item"} type="button" key={item.title} onClick={() => onSelectedTitleChange(item.title)}><FileText className="knowledge-list-item__icon" size={17} /><span className="knowledge-list-item__copy"><strong>{item.title}</strong><small><time>{item.updated}</time><span>{item.tags[0]}</span></small></span></button>)}
-            {visibleItems.length === 0 && <div className="workspace-empty"><Search size={18} /><strong>没有匹配内容</strong><p>换一个标题或标签试试。</p></div>}
+            {visibleItems.length === 0 && <EmptyState icon={Search} className="workspace-empty" title="没有匹配内容"/>}
           </div>
         </aside>
         {activeItem && activeContent ? <article className="document-editor knowledge-reader" key={activeItem.title}>
@@ -75,7 +76,7 @@ export function KnowledgeScreen({ contextOpen, onOpenNavigation, onToggleContext
               <section id="knowledge-source" className="knowledge-source"><div><ShieldCheck size={17} /><span><strong>来源说明</strong><p>{activeContent.source}</p></span></div><div className="knowledge-tags"><Tags size={15} />{activeItem.tags.map((tag) => <span key={tag}>{tag}</span>)}</div></section>
             </div>
           </div>
-        </article> : <div className="workspace-detail-empty"><BookOpen size={22} /><strong>选择一条知识开始阅读</strong></div>}
+        </article> : <EmptyState icon={BookOpen} className="workspace-detail-empty" title="选择知识开始阅读"/>}
       </section>
     </main>
   );

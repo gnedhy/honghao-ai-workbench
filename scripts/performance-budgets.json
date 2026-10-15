@@ -13,7 +13,7 @@
   "limits": {
     "bundle.initialJsKiB": 160,
     "bundle.initialCssKiB": 50,
-    "bundle.totalJsKiB": 380,
+    "bundle.totalJsKiB": 400,
     "bundle.totalCssKiB": 60,
     "bundle.procurement.incrementalJsKiB": 180,
     "bundle.research.incrementalJsKiB": 170,

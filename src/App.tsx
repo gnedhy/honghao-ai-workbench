@@ -1,29 +1,31 @@
 import { confirmWorkbenchLeave } from "./components/interactionNavigation";
-import { FolderClosed, FolderKanban, LibraryBig, MessageCircle, PanelsTopLeft, Search, WandSparkles, Workflow, X } from "lucide-react";
+import { FolderClosed, FolderKanban, LibraryBig, MessageCircle, PanelsTopLeft, ShieldCheck, Search, WandSparkles, Workflow, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createConversationSubmission, createProject, fetchConversations, fetchMessages, fetchModules, fetchProjects, fetchServiceHealth, fetchTasks, fetchWorkbenches, submitConversation, type ServiceConnection } from "./api";
+import { fetchModules, fetchServiceHealth, fetchWorkbenches, type ServiceConnection, type ConversationUpdate } from "./api";
 import { ContextSidebar } from "./components/ContextSidebar";
 import { SettingsDialog, type UiFontSize } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { ProfileDialog } from "./components/ProfileDialog";
 import { knowledgeItems, skills, workflows } from "./data";
-import { AutomationScreen } from "./screens/AutomationScreen";
 import { ConversationScreen } from "./screens/ConversationScreen";
 import { KnowledgeScreen } from "./screens/KnowledgeScreen";
 import { TaskBoardScreen } from "./screens/TaskBoardScreen";
 import { WorkbenchScreen } from "./screens/WorkbenchScreen";
 import type { Conversation, ConversationMessage, ConversationView, CurrentUser, ModuleStatus, ModuleVisibility, ResearchPage, SalesPage, ProcurementPage, Project, Section, TaskItem, WorkbenchId, WorkbenchStatus } from "./types";
 import {sectionNavigation,workbenches,workbenchContext} from "./workbenchRegistry";
-import {useConversationProject} from "./chat/useConversationProject";
+import {useChatWorkspace} from "./chat/useChatWorkspace";
+import {ProjectDrawer} from "./chat/ProjectDrawer";
 import {useAppFeedback} from "./appFeedback";
-import { PageState } from "./components/WorkbenchLayout";
+import {taskTitle} from "./taskPresentation";
+import { EmptyState, PageState } from "./components/WorkbenchLayout";
 
 type AppProps = {
   currentUser: CurrentUser;
   onLogout: () => Promise<void>;
   onUserChanged: (user: CurrentUser) => void;
   onPasswordChanged: (message: string) => void;
+  onSessionInvalid?: () => void;
 };
 
 type SearchScope = "全部" | "会话" | "项目" | "知识" | "自动化" | "工作台" | "任务";
@@ -51,13 +53,13 @@ function loadUiFontSize(): UiFontSize {
   } catch { return 3; }
 }
 
-function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged }: AppProps) {
+function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged, onSessionInvalid }: AppProps) {
   const [moduleStatuses, setModuleStatuses] = useState<ModuleStatus[]>([]);
   const [moduleRegistryState, setModuleRegistryState] = useState<"loading" | "ready" | "error">("loading");
   const [registryRetry, setRegistryRetry] = useState(0);
   const enabledModules = useMemo(() => MODULE_IDS.reduce<ModuleVisibility>((visibility, id) => {
     const allowed = currentUser.is_system_admin || ((id === "chat" || id === "tasks") && Boolean(currentUser.ai_enabled)) || (id === "knowledge" ? (currentUser.scope_levels.knowledge ?? 0) >= 2 : id === "workbench" && workbenches.some(item => (currentUser.scope_levels[item.id] ?? 0) >= 2));
-    visibility[id] = allowed && moduleStatuses.some((module) => module.id === id && module.mode !== "off");
+    visibility[id] = id !== 'automation' && allowed && moduleStatuses.some((module) => module.id === id && module.mode !== "off");
     return visibility;
   }, { chat: false, knowledge: false, automation: false, workbench: false, tasks: false }), [moduleStatuses, currentUser]);
   const [section, setSection] = useState<Section>("workbench");
@@ -71,19 +73,12 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged }: A
   const contextCloseTimer = useRef<number | null>(null);
   const selectedConversationIdRef = useRef<string | null>(null);
   const conversationViewRef = useRef<ConversationView>("new");
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState<'general'|'conversations'|null>(null);
   const [uiFontSize, setUiFontSize] = useState<UiFontSize>(loadUiFontSize);
   const [conversationView, setConversationView] = useState<ConversationView>("new");
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
-  const [conversationMode, setConversationMode] = useState<"聊天" | "工作">("工作");
+  const [conversationMode, setConversationMode] = useState<"聊天" | "工作">("聊天");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const projectAssociation = useConversationProject(value => setConversations(current => current.map(row => row.id === value.id ? value : row)), setConversations);
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
-  const [messagesState, setMessagesState] = useState<"loading" | "ready" | "error">("ready");
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const [workbenchDataState, setWorkbenchDataState] = useState<"loading" | "ready" | "error">("loading");
   const [workbenchStatuses, setWorkbenchStatuses] = useState<WorkbenchStatus[]>([]);
   const [workbenchRegistryState, setWorkbenchRegistryState] = useState<"loading" | "ready" | "error">("loading");
   const [selectedWorkbenchId, setSelectedWorkbenchId] = useState<WorkbenchId>("management");
@@ -93,11 +88,20 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged }: A
   const [procurementPage, setProcurementPage] = useState<ProcurementPage>("dashboard");
   const [knowledgeScope, setKnowledgeScope] = useState<"个人" | "公共">("个人");
   const [selectedKnowledgeTitle, setSelectedKnowledgeTitle] = useState(knowledgeItems[0].title);
-  const [automationTab, setAutomationTab] = useState<"技能" | "工作流">("技能");
-  const [selectedSkill, setSelectedSkill] = useState(skills[0]);
-  const [selectedWorkflow, setSelectedWorkflow] = useState(workflows[0]);
+  const automationTab = "技能";
+  const selectedSkill = skills[0];
+  const selectedWorkflow = workflows[0];
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedTaskRunId, setSelectedTaskRunId] = useState<string | null>(null);
+  const [taskDetailsContainer, setTaskDetailsContainer] = useState<HTMLDivElement | null>(null);
+  const [projectDialog, setProjectDialog] = useState<string | null | undefined>(undefined);
   const [serviceConnection, setServiceConnection] = useState<ServiceConnection>({ state: "checking" });
+  const workspace = useChatWorkspace(currentUser.id,enabledModules.chat,enabledModules.tasks,serviceConnection.state==='online',conversationView,selectedConversationId,value=>{
+    if(value.conversation && conversationViewRef.current==='new' && selectedConversationIdRef.current===null){setSelectedConversationId(value.conversation.id);setConversationView('existing');}
+    if(value.task)setSelectedTaskId(value.task.id);
+  },()=>onSessionInvalid?.());
+  const {projects,conversations,tasks,messages,messagesState,projectAssociation,state:workbenchDataState}=workspace;
+  useEffect(()=>{if(!enabledModules.chat){setProjectDialog(undefined);setSelectedConversationId(null);setConversationView('new');setCurrentProjectId(null);}if(!enabledModules.tasks)setSelectedTaskId(null);},[enabledModules.chat,enabledModules.tasks]);
   const permissions = JSON.stringify([currentUser.is_system_admin, currentUser.ai_enabled, currentUser.scope_levels]);
   const visibleWorkbenchStatuses = workbenchStatuses.filter(item => currentUser.is_system_admin || (currentUser.scope_levels[item.id] ?? 0) >= 2);
   const workbenchViewState = workbenchRegistryState === "error" && visibleWorkbenchStatuses.length ? "ready" : workbenchRegistryState;
@@ -106,8 +110,9 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged }: A
   const activeWorkbenchId = section === "workbench" && openedWorkbenchId === selectedWorkbenchId && workbenchViewState === "ready" && visibleWorkbenchStatuses.some(item => item.id === openedWorkbenchId && item.mode === "active") ? openedWorkbenchId : null;
 
   const selectedConversation = conversations.find((conversation) => conversation.id === selectedConversationId) ?? null;
-  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
-  const conversationTask = [...tasks].reverse().find((task) => task.conversation_id === selectedConversationId) ?? null;
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? (section==='tasks'&&tasks.length===1?tasks[0]:null);
+  const conversationTasks=tasks.filter(task=>task.conversation_id===selectedConversationId);
+  const conversationTask=conversationTasks.find(task=>task.id===selectedTaskId)??(conversationTasks.length===1?conversationTasks[0]:null);
   const conversationTitle = selectedConversation?.title ?? "新聊天";
   const conversationProjectId = conversationView === "existing" ? selectedConversation?.project_id ?? null : currentProjectId;
   const conversationProjectTitle = projects.find((project) => project.id === conversationProjectId)?.title ?? null;
@@ -176,7 +181,7 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged }: A
   useEffect(() => {
     if (!enabledModules.workbench) {
       setWorkbenchStatuses([]);
-      setWorkbenchRegistryState("ready");
+      setWorkbenchRegistryState("loading");
       return;
     }
     if (serviceConnection.state !== "online") {
@@ -193,53 +198,9 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged }: A
     return () => controller.abort();
   }, [enabledModules.workbench, serviceConnection.state, permissions, registryRetry]);
 
-  useEffect(() => {
-    if (serviceConnection.state !== "online") {
-      if (serviceConnection.state === "offline") setWorkbenchDataState("error");
-      return;
-    }
-
-    const controller = new AbortController();
-    const needsConversationData = enabledModules.chat || enabledModules.tasks;
-    if (!needsConversationData) {
-      setWorkbenchDataState("ready");
-      return () => controller.abort();
-    }
-    setWorkbenchDataState("loading");
-    Promise.all([fetchProjects(controller.signal), fetchConversations(controller.signal), fetchTasks(controller.signal)])
-      .then(([loadedProjects, loadedConversations, loadedTasks]) => {
-        setProjects(loadedProjects);
-        setConversations(loadedConversations);
-        setTasks(loadedTasks);
-        setSelectedTaskId((current) => current ?? loadedTasks[0]?.id ?? null);
-        setWorkbenchDataState("ready");
-      })
-      .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) {
-          setWorkbenchDataState("error");
-        }
-      });
-    return () => controller.abort();
-  }, [enabledModules.chat, enabledModules.tasks, serviceConnection.state]);
-
-  useEffect(() => {
-    if (!enabledModules.chat || conversationView !== "existing" || !selectedConversationId || serviceConnection.state !== "online") {
-      setMessages([]);
-      setMessagesState("ready");
-      return;
-    }
-    const controller = new AbortController();
-    setMessagesState("loading");
-    fetchMessages(selectedConversationId, controller.signal)
-      .then((loadedMessages) => { setMessages(loadedMessages); setMessagesState("ready"); })
-      .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) setMessagesState("error");
-      });
-    return () => controller.abort();
-  }, [conversationView, enabledModules.chat, selectedConversationId, serviceConnection.state]);
-
-  const closeContext = useCallback(() => {
+  const closeContext = useCallback(async () => {
     if (!contextOpen) return;
+    if (section === 'tasks' && !await confirmWorkbenchLeave()) return;
     if (contextCloseTimer.current !== null) window.clearTimeout(contextCloseTimer.current);
     setContextClosing(true);
     setContextLayoutOpen(false);
@@ -248,7 +209,7 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged }: A
       setContextClosing(false);
       contextCloseTimer.current = null;
     }, 220);
-  }, [contextOpen]);
+  }, [contextOpen, section]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -272,17 +233,14 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged }: A
     setMobileOpen(true);
   };
 
-  const toggleContext = () => {
+  const openContext = () => {
     setMobileOpen(false);
-    if (contextOpen) {
-      closeContext();
-      return;
-    }
     if (contextCloseTimer.current !== null) window.clearTimeout(contextCloseTimer.current);
     setContextClosing(false);
     setContextLayoutOpen(true);
     setContextOpen(true);
   };
+  const toggleContext = () => { if (contextOpen) void closeContext(); else openContext(); };
 
   const runtimeEnvironment = serviceConnection.state === "online" ? serviceConnection.health.environment : null;
   const screenChrome = {
@@ -293,59 +251,20 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged }: A
     environment: runtimeEnvironment,
   };
 
-  const submitMessage = async (content: string, submissionKey: string): Promise<boolean> => {
-    const creatingConversation = conversationView === "new" || !selectedConversationId;
-    const conversationId = selectedConversationId;
-    try {
-      let result: { message: ConversationMessage; task: TaskItem | null };
-      if (creatingConversation) {
-        const title = content.length > 28 ? `${content.slice(0, 28)}…` : content;
-        const created = await createConversationSubmission(
-          title,
-          currentProjectId,
-          conversationMode === "聊天" ? "chat" : "work",
-          content,
-          submissionKey,
-        );
-        setConversations((current) => [...current, created.conversation]);
-        result = created;
-        if (conversationViewRef.current === "new" && selectedConversationIdRef.current === null) {
-          setSelectedConversationId(created.conversation.id);
-          setConversationView("existing");
-          setMessages([created.message]);
-          setMessagesState("ready");
-        }
-      } else {
-        await projectAssociation.wait();
-        if (!conversationId) throw new Error("Conversation is unavailable");
-        result = await submitConversation(
-          conversationId,
-          conversationMode === "聊天" ? "chat" : "work",
-          content,
-          submissionKey,
-        );
-        if (selectedConversationIdRef.current === conversationId) {
-          setMessages((current) => [...current, result.message]);
-          setMessagesState("ready");
-        }
-      }
-      if (result.task) {
-        const acceptedTask = result.task;
-        setTasks(current => current.some(task => task.id === acceptedTask.id)
-          ? current.map(task => task.id !== acceptedTask.id || (task.revision ?? 1) > (acceptedTask.revision ?? 1) ? task : acceptedTask)
-          : [...current, acceptedTask]);
-        setSelectedTaskId(result.task.id);
-      }
-      return true;
-    } catch {
-      if (
-        (creatingConversation && conversationViewRef.current === "new")
-        || (!creatingConversation && selectedConversationIdRef.current === conversationId)
-      ) {
-        setMessagesState("error");
-      }
-      return false;
-    }
+  const openConversation=(id:string,taskId?:string)=>{showSection('chat');setConversationView('existing');setSelectedConversationId(id);setSelectedTaskId(taskId??null);setConversationMode(taskId||conversations.find(row=>row.id===id)?.mode==='work'?'工作':'聊天');};
+  const newConversation=(projectId:string|null=null)=>{workspace.discardDraft();showSection('chat');setConversationView('new');setSelectedConversationId(null);setSelectedTaskId(null);setCurrentProjectId(projectId);setConversationMode(projectId?'工作':'聊天');};
+  const openTask=(task:TaskItem)=>openConversation(task.conversation_id,task.id);
+  const changeConversation=async(row:Conversation,changes:ConversationUpdate)=>{
+    if(changes.archived&&(row.id===selectedConversationId||section==='tasks'&&contextOpen&&row.id===selectedTask?.conversation_id)&&!await confirmWorkbenchLeave())return false;
+    const saved=await workspace.changeConversation(row,changes);
+    if(changes.archived&&saved.archived&&saved.id===selectedConversationId)newConversation();
+    return true;
+  };
+  const removeConversation=async(row:Conversation)=>{
+    await workspace.removeConversation(row);
+    if(row.id===selectedConversationId)newConversation();
+    if(selectedTask?.conversation_id===row.id){setSelectedTaskId(null);void closeContext();}
+    return true;
   };
 
   const showSection = (next: Section) => {
@@ -364,9 +283,10 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged }: A
         activeSection={section}
         selectedConversationId={conversationView === "existing" ? selectedConversationId : null}
         currentProjectId={currentProjectId}
-        projects={projects}
+        projects={projects.filter(project=>!project.removed)}
         conversations={conversations}
         dataState={workbenchDataState}
+        projectSummaries={workspace.projectSummaries}
         enabledModules={enabledModules}
         environment={runtimeEnvironment}
         openedWorkbenchId={activeWorkbenchId}
@@ -377,9 +297,13 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged }: A
         procurementPage={procurementPage}
         onProcurementPageChange={async (next) => { if (await confirmWorkbenchLeave()) setProcurementPage(next); }}
         onSectionChange={async (nextSection) => { if (!await confirmWorkbenchLeave()) return; showSection(nextSection); }}
-        onNewConversation={async () => { if (!await confirmWorkbenchLeave()) return; showSection("chat"); setConversationView("new"); setSelectedConversationId(null); }}
-        onConversationOpen={async (conversationId) => { if (!await confirmWorkbenchLeave()) return; showSection("chat"); setConversationView("existing"); setSelectedConversationId(conversationId); }}
-        onProjectCreate={(title) => { void createProject(title).then((created) => { setProjects((current) => [...current, created]); setCurrentProjectId(created.id); }).catch(() => setWorkbenchDataState("error")); }}
+        onNewConversation={async () => { if (await confirmWorkbenchLeave()) newConversation(); }}
+        onConversationOpen={async (id) => { if (await confirmWorkbenchLeave()) openConversation(id); }}
+        onConversationUpdate={changeConversation}
+        onProjectCreate={async()=>{if(await confirmWorkbenchLeave()){workspace.discardDraft();setProjectDialog(null);}}}
+        onProjectOpen={async id=>{if(await confirmWorkbenchLeave()){workspace.discardDraft();setProjectDialog(id);}}}
+        onProjectNewConversation={async id=>{if(await confirmWorkbenchLeave())newConversation(id);}}
+        onDataRetry={()=>void workspace.reload().catch(()=>{})}
         onSearchOpen={() => { setProfileOpen(false); setMobileOpen(false); setGlobalSearchOpen(true); }}
         feedbackUnread={feedbackUnread}
         onFeedbackOpen={() => { setProfileOpen(false); setMobileOpen(false); openFeedback(); }}
@@ -387,36 +311,43 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged }: A
         onProfileToggle={() => setProfileOpen((open) => !open)}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
-        onOpenSettings={() => { setProfileOpen(false); setSettingsOpen(true); }}
+        onOpenSettings={() => { setProfileOpen(false); setSettingsOpen('general'); }}
+        onOpenArchived={() => { setProfileOpen(false); setMobileOpen(false); setSettingsOpen('conversations'); }}
         onOpenProfile={() => { setProfileOpen(false); setPersonalProfileOpen(true); }}
         onLogout={async () => { if (await confirmWorkbenchLeave()) await onLogout(); }}
       />
       {(moduleRegistryState === "loading" || moduleRegistryState === "error" && !moduleStatuses.length) && <main className="app-main"><PageState error={moduleRegistryState === "error"} className="workspace-detail-empty"><strong>{moduleRegistryState === "error" ? "模块状态不可用" : "正在读取模块状态"}</strong><p>{moduleRegistryState === "error" ? "请重新加载页面后重试。" : "正在确认可用入口。"}</p>{moduleRegistryState === "error" && <button className="secondary-button" onClick={() => window.location.reload()}>重新加载页面</button>}</PageState></main>}
       {(moduleRegistryState === "error" && moduleStatuses.length > 0 || workbenchRegistryState === "error" && visibleWorkbenchStatuses.length > 0) && <PageState error className="app-registry-status" onRetry={() => setRegistryRetry(value => value + 1)}>状态刷新失败，当前保留上次确认的入口和未保存输入。</PageState>}
-      {(moduleRegistryState === "ready" || moduleRegistryState === "error" && moduleStatuses.length > 0) && !MODULE_IDS.some(id => enabledModules[id]) && <main className="app-main"><PageState className="workspace-detail-empty"><strong>暂无可用模块</strong><p>当前账号没有已启用且可访问的模块，请联系管理员。</p></PageState></main>}
-      {section === "chat" && enabledModules.chat && <ConversationScreen {...screenChrome} view={conversationView} conversationTitle={conversationTitle} mode={conversationMode} onModeChange={setConversationMode} projects={projects} projectId={conversationProjectId} projectSaving={projectAssociation.busy} projectError={projectAssociation.error} onProjectRetry={projectAssociation.retry} onProjectChange={(projectId) => { if (conversationView === "existing" && selectedConversation) projectAssociation.change(selectedConversation, projectId); else setCurrentProjectId(projectId); }} messages={messages} messagesState={messagesState} onSubmit={submitMessage} ownerId={currentUser.id} onAccessLost={() => { void onLogout().catch(() => {}); }} onExecutionSettled={() => {
-        const target = selectedConversationId;
-        if (!target) return;
-        return Promise.all([fetchMessages(target), fetchTasks()]).then(([values, rows]) => {
-          if (selectedConversationIdRef.current === target) setMessages(current => [...values, ...current.filter(message => !values.some(value => value.id === message.id))]);
-          setTasks(current => [...rows.map(row => current.find(task => task.id === row.id && (task.revision ?? 1) > (row.revision ?? 1)) ?? row), ...current.filter(task => !rows.some(row => row.id === task.id))]);
-        });
-      }} />}
+      {(moduleRegistryState === "ready" || moduleRegistryState === "error" && moduleStatuses.length > 0) && !MODULE_IDS.some(id => enabledModules[id]) && <main className="app-main"><EmptyState icon={ShieldCheck} className="workspace-detail-empty" title="暂无可用模块">请联系管理员确认访问范围。</EmptyState></main>}
+      {section === 'chat' && enabledModules.chat && !workspace.denied && <ConversationScreen {...screenChrome}
+        ownerId={currentUser.id} view={conversationView} conversationId={selectedConversationId} conversationTitle={conversationTitle} mode={conversationMode}
+        onModeChange={async mode=>{if(conversationView==='new'&&await confirmWorkbenchLeave()){workspace.discardDraft();if(conversationView==='new'&&mode==='聊天')setCurrentProjectId(null);setConversationMode(mode);}}}
+        onEntryMode={setConversationMode}
+        projects={projects} projectId={conversationProjectId} task={conversationTask} tasks={conversationTasks} tasksEnabled={workspace.tasksAvailable}
+        onTaskChange={async id=>{if(await confirmWorkbenchLeave()){workspace.discardDraft();setSelectedTaskId(id);}}}
+        workspace={workspace} onProjectChange={async id=>{if(!await confirmWorkbenchLeave())return;workspace.discardDraft();if(conversationView==='existing'&&selectedConversation)projectAssociation.change(selectedConversation,id);else setCurrentProjectId(id);}}
+        onAccessLost={()=>{workspace.handleLost({status:401});}} />}
       {section === "knowledge" && enabledModules.knowledge && <KnowledgeScreen {...screenChrome} scopeTab={knowledgeScope} onScopeTabChange={setKnowledgeScope} selectedTitle={selectedKnowledgeTitle} onSelectedTitleChange={setSelectedKnowledgeTitle} />}
-      {section === "automation" && enabledModules.automation && <AutomationScreen {...screenChrome} tab={automationTab} onTabChange={setAutomationTab} selectedSkill={selectedSkill} onSelectedSkillChange={setSelectedSkill} selectedWorkflow={selectedWorkflow} onSelectedWorkflowChange={setSelectedWorkflow} />}
       {section === "workbench" && enabledModules.workbench && <WorkbenchScreen {...screenChrome} currentUser={currentUser} statuses={visibleWorkbenchStatuses} dataState={workbenchViewState} selectedId={selectedWorkbenchId} onSelectedIdChange={async (id) => { if (!await confirmWorkbenchLeave()) return; setSelectedWorkbenchId(id); setOpenedWorkbenchId(null); setProcurementPage("dashboard"); }} openedWorkbenchId={openedWorkbenchId} onOpenedWorkbenchIdChange={async (next) => { if (await confirmWorkbenchLeave()) setOpenedWorkbenchId(next); }} salesPage={salesPage} onSalesPageChange={async (next) => { if (await confirmWorkbenchLeave()) setSalesPage(next); }} researchPage={researchPage} onResearchPageChange={async (next) => { if (await confirmWorkbenchLeave()) setResearchPage(next); }} procurementPage={procurementPage} onProcurementPageChange={setProcurementPage} />}
-      {section === "tasks" && enabledModules.tasks && <TaskBoardScreen {...screenChrome} tasks={tasks} projects={projects} conversations={conversations} dataState={workbenchDataState} selectedTask={selectedTask} onSelectedTaskChange={(task) => setSelectedTaskId(task.id)} />}
+      {section === 'tasks' && enabledModules.tasks && !workspace.denied && <TaskBoardScreen {...screenChrome} ownerId={currentUser.id} tasks={tasks} projects={projects} conversations={conversations} dataState={workspace.taskState} selectedTask={selectedTask}
+        detailContainer={taskDetailsContainer} runId={selectedTaskRunId} onRunChange={async id=>{if(await confirmWorkbenchLeave())setSelectedTaskRunId(id);}} onTaskSaved={workspace.taskSaved}
+        chatEnabled={enabledModules.chat} onNewTask={async projectId=>{if(await confirmWorkbenchLeave()){newConversation(projectId);setConversationMode('工作');}}} onDataRetry={()=>void workspace.reload().catch(()=>{})} onSelectedTaskChange={async task=>{if(await confirmWorkbenchLeave()){setSelectedTaskId(task.id);setSelectedTaskRunId(null);}}}
+        onTaskInspect={async(task,runId)=>{if(!await confirmWorkbenchLeave())return false;setSelectedTaskId(task.id);setSelectedTaskRunId(runId??null);openContext();return true;}}
+        onTaskOpen={async task=>{if(await confirmWorkbenchLeave())openTask(task);}} onAccessLost={workspace.handleTaskLost} />}
+      {workspace.denied && <PageState error>授权已失效，正在清理当前工作区。</PageState>}
+      {projectDialog!==undefined && enabledModules.chat && !workspace.denied && <ProjectDrawer project={projects.find(row=>row.id===projectDialog)??null} owner={currentUser.id} conversations={conversations} tasks={tasks} tasksReady={workspace.tasksAvailable&&workspace.taskState==='ready'} onSaved={project=>{workspace.projectSaved(project);if(projectDialog===null)setCurrentProjectId(project.id);}} onClose={()=>setProjectDialog(undefined)} onNewConversation={newConversation} onConversation={openConversation} onTask={openTask} onAccessLost={()=>workspace.handleLost({status:401})} /> }
       <ContextSidebar
         section={section}
         conversationTitle={conversationView === "new" ? (conversationMode === "聊天" ? "新聊天" : "新工作") : conversationTitle}
         conversationMode={conversationMode}
         conversationView={conversationView}
         projectTitle={conversationProjectTitle}
+        taskProjectTitle={projects.find(row=>row.id===(section==='chat'?conversationTask:selectedTask)?.project_id)?.title??null}
         automationTab={automationTab}
         open={contextOpen}
         closing={contextClosing}
         onClose={closeContext}
-        onReturnChat={async () => { if (!await confirmWorkbenchLeave()) return; if (selectedTask) setSelectedConversationId(selectedTask.conversation_id); showSection("chat"); setConversationView("existing"); }}
+        taskContentRef={setTaskDetailsContainer}
         knowledgeItem={knowledgeItems.find((item) => item.title === selectedKnowledgeTitle) ?? knowledgeItems[0]}
         skill={selectedSkill}
         workflow={selectedWorkflow}
@@ -434,39 +365,23 @@ function AppShell({ currentUser, onLogout, onUserChanged, onPasswordChanged }: A
         onSelect={async (result) => {
           if (!await confirmWorkbenchLeave()) return;
           if (result.kind === "conversation") {
-            showSection("chat");
-            setConversationView("existing");
-            setSelectedConversationId(result.sourceId);
+            openConversation(result.sourceId);
           } else if (result.kind === "project") {
-            showSection("chat");
-            setConversationView("new");
-            setSelectedConversationId(null);
-            setCurrentProjectId(result.sourceId);
+            newConversation(result.sourceId);
           } else if (result.kind === "knowledge") {
             const item = knowledgeItems.find((knowledgeItem) => knowledgeItem.title === result.sourceId);
             setKnowledgeScope(item?.scope === "公共知识" ? "公共" : "个人");
             showSection("knowledge");
             setSelectedKnowledgeTitle(result.sourceId);
-          } else if (result.kind === "skill") {
-            const skill = skills.find((item) => item.title === result.sourceId);
-            if (skill) setSelectedSkill(skill);
-            setAutomationTab("技能");
-            showSection("automation");
-          } else if (result.kind === "workflow") {
-            const workflow = workflows.find((item) => item.title === result.sourceId);
-            if (workflow) setSelectedWorkflow(workflow);
-            setAutomationTab("工作流");
-            showSection("automation");
           } else if (result.kind === "workbench") {
             setSelectedWorkbenchId(result.sourceId as WorkbenchId);
             showSection("workbench");
           } else {
-            setSelectedTaskId(result.sourceId);
-            showSection("tasks");
+            const task=tasks.find(row=>row.id===result.sourceId);if(task)openTask(task);
           }
         }}
       />
-      {settingsOpen && <SettingsDialog currentUser={currentUser} onUserChanged={onUserChanged} serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} workbenchStatuses={workbenchStatuses} workbenchRegistryState={workbenchRegistryState} uiFontSize={uiFontSize} onUiFontSizeChange={setUiFontSize} onClose={() => setSettingsOpen(false)} onOpenProfile={() => { setSettingsOpen(false); setPersonalProfileOpen(true); }} />}
+      {settingsOpen && <SettingsDialog initialTab={settingsOpen} conversationManagement={enabledModules.chat&&!workspace.denied?{conversations,projects,state:workbenchDataState,onUpdate:changeConversation,onDelete:removeConversation,onRetry:workspace.reload,onAccessLost:workspace.handleLost}:undefined} currentUser={currentUser} onUserChanged={onUserChanged} serviceConnection={serviceConnection} moduleStatuses={moduleStatuses} moduleRegistryState={moduleRegistryState} workbenchStatuses={workbenchStatuses} workbenchRegistryState={workbenchRegistryState} uiFontSize={uiFontSize} onUiFontSizeChange={setUiFontSize} onClose={() => setSettingsOpen(null)} onOpenProfile={() => { setSettingsOpen(null); setPersonalProfileOpen(true); }} />}
       {feedbackOpen && <FeedbackDialog draft={feedbackDraft} onDraftChange={setFeedbackDraft} currentUser={currentUser} context={activeWorkbenchId ? workbenchContext(activeWorkbenchId,{procurement:procurementPage,research:researchPage,sales:salesPage}) : sectionNavigation.find(item=>item.id===section)?.label??"工作台"} version={serviceConnection.state === "online" ? serviceConnection.health.api_version : "未知"} onClose={closeFeedback} onUnreadChanged={refreshUnread} />}
       {personalProfileOpen && <ProfileDialog onClose={() => setPersonalProfileOpen(false)} onUserChanged={onUserChanged} onPasswordChanged={onPasswordChanged} beforePasswordChange={confirmWorkbenchLeave} />}
     </div>
@@ -513,13 +428,11 @@ function GlobalSearchDialog({
   const projectTitle = (projectId: string | null) => projects.find((project) => project.id === projectId)?.title;
   const conversationTitleById = (conversationId: string) => conversations.find((conversation) => conversation.id === conversationId)?.title;
   const results: GlobalSearchResult[] = [
-    ...[...conversations].reverse().map((conversation) => ({ id: `conversation:${conversation.id}`, sourceId: conversation.id, kind: "conversation" as const, scope: "会话" as const, title: conversation.title, meta: projectTitle(conversation.project_id) ? `会话 · ${projectTitle(conversation.project_id)}` : "会话 · 未关联项目", keywords: `${conversation.title} ${projectTitle(conversation.project_id) ?? ""}` })),
-    ...projects.map((project) => ({ id: `project:${project.id}`, sourceId: project.id, kind: "project" as const, scope: "项目" as const, title: project.title, meta: `项目 · ${conversations.filter((conversation) => conversation.project_id === project.id).length} 个会话`, keywords: project.title })),
+    ...[...conversations].reverse().filter(row=>!row.archived).map((conversation) => ({ id: `conversation:${conversation.id}`, sourceId: conversation.id, kind: "conversation" as const, scope: "会话" as const, title: conversation.title, meta: projectTitle(conversation.project_id) ? `会话 · ${projectTitle(conversation.project_id)}` : "会话 · 未关联项目", keywords: `${conversation.title} ${projectTitle(conversation.project_id) ?? ""}` })),
+    ...projects.filter(project=>!project.removed).map((project) => ({ id: `project:${project.id}`, sourceId: project.id, kind: "project" as const, scope: "项目" as const, title: project.title, meta: `项目 · ${conversations.filter((conversation) => conversation.project_id === project.id&&!conversation.archived).length} 个会话`, keywords: project.title })),
     ...knowledgeItems.map((item) => ({ id: `knowledge:${item.title}`, sourceId: item.title, kind: "knowledge" as const, scope: "知识" as const, title: item.title, meta: `${item.scope} · ${item.updated}`, keywords: `${item.title} ${item.scope} ${item.tags.join(" ")} ${item.project ?? ""}` })),
-    ...skills.map((item) => ({ id: `skill:${item.title}`, sourceId: item.title, kind: "skill" as const, scope: "自动化" as const, title: item.title, meta: `技能 · ${item.status} · ${item.version}`, keywords: `${item.title} ${item.description} 技能 ${item.status}` })),
-    ...workflows.map((item) => ({ id: `workflow:${item.title}`, sourceId: item.title, kind: "workflow" as const, scope: "自动化" as const, title: item.title, meta: `工作流 · ${item.status} · ${item.version}`, keywords: `${item.title} ${item.description} 工作流 ${item.status}` })),
     ...workbenches.filter((item) => workbenchStatuses.some((status) => status.id === item.id && status.mode !== "off")).map((item) => ({ id: `workbench:${item.id}`, sourceId: item.id, kind: "workbench" as const, scope: "工作台" as const, title: item.title, meta: `${item.department} · 职能工作台`, keywords: `${item.department} ${item.title} ${item.summary} ${item.modules.join(" ")} ${item.source} ${item.output}` })),
-    ...[...tasks].reverse().map((task) => ({ id: `task:${task.id}`, sourceId: task.id, kind: "task" as const, scope: "任务" as const, title: task.objective, meta: `任务 · ${projectTitle(task.project_id) ?? conversationTitleById(task.conversation_id) ?? "未关联项目"}`, keywords: `${task.objective} ${projectTitle(task.project_id) ?? ""} ${conversationTitleById(task.conversation_id) ?? ""}` })),
+    ...[...tasks].reverse().map((task) => ({ id: `task:${task.id}`, sourceId: task.id, kind: "task" as const, scope: "任务" as const, title: taskTitle(task), meta: `任务 · ${projectTitle(task.project_id) ?? conversationTitleById(task.conversation_id) ?? "未关联项目"}`, keywords: `${task.objective} ${projectTitle(task.project_id) ?? ""} ${conversationTitleById(task.conversation_id) ?? ""}` })),
   ];
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleResults = results.filter((result) => {
@@ -538,7 +451,7 @@ function GlobalSearchDialog({
   const scopes: SearchScope[] = ["全部"];
   if (enabledModules.chat) scopes.push("会话", "项目");
   if (enabledModules.knowledge) scopes.push("知识");
-  if (enabledModules.automation) scopes.push("自动化");
+
   if (enabledModules.workbench) scopes.push("工作台");
   if (enabledModules.tasks) scopes.push("任务");
 

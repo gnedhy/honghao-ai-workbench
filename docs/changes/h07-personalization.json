@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "H07 个人／项目 AGENTS.md 原生发现与账号隔离的 Codex 原生记忆，只读查看、整体清除及持久恢复。",
+  "consumers": [
+    "src/components/SettingsDialog.tsx",
+    "src/chat/ProjectDrawer.tsx",
+    "api/codex_runtime.py",
+    "api/operations.py"
+  ],
+  "permissions": "所有读写按本人及现有模块鉴权；前台文本仍禁用工具，原生后台只允许本人记忆文件汇总的 exec_command/write_stdin，外层隐藏业务数据、其他账号和凭据。",
+  "data": "core15 表保留；指令为服务端不可变 AGENTS.md。原生 SQLite 和 Markdown 按账号保存，业务数据库仍为 PostgreSQL；memory_extractions 仅作原生用量审计，旧个人记忆保留到用户清除。",
+  "lifecycle": "下一轮生效，当前轮冻结；项目专用替代个人；普通聊天只用记忆；后台提炼与回复终态隔离。",
+  "exits": "编辑 dirty / busy 复用共享离开保护；保存失败与版本冲突保留草稿。",
+  "compatibility": "旧自定义注入线程按产品历史重建；新轮次使用原生机制，不导入旧运行或旧版记忆。默认六小时闲置和六小时汇总冷却，管理改为只读查看与整体清除。",
+  "recovery": "不可变指令和原生文件、SQLite 快照接入既有备份恢复；关闭／清除／撤权阻断旧后台，永久删除先经原生 thread/delete 再删除业务图，失败可重试。",
+  "modules": [
+    "chat",
+    "tasks"
+  ],
+  "files": [
+    "api/personalization.py",
+    "api/codex_runtime.py",
+    "api/database.py",
+    "api/main.py",
+    "api/modules.py",
+    "api/operations.py",
+    "api/postgres.py",
+    "api/migrations/postgresql/0015_personalization.sql",
+    "src/personalization/Personalization.tsx",
+    "src/personalization/Personalization.css",
+    "src/components/SettingsDialog.tsx",
+    "src/chat/ProjectDrawer.tsx",
+    "src/api.ts",
+    "src/types.ts"
+  ],
+  "verification": {
+    "api": [
+      "tests/test_personalization.py::test_rule_api",
+      "tests/test_personalization.py::test_native_memories_are_read_only_and_account_isolated",
+      "tests/test_personalization.py::test_legacy_memories_retained_without_new_injection_and_usage_kept",
+      "tests/test_personalization.py::test_native_memory_symlinks_and_large_files_rejected",
+      "tests/test_personalization.py::test_rule_files",
+      "tests/test_personalization.py::test_rule_restore",
+      "tests/test_personalization_runtime.py::test_running_rules_are_frozen_next_turn_uses_frozen_project",
+      "tests/test_personalization_runtime.py::test_native_proxy_routes_memory_usage_without_changing_reply",
+      "tests/test_personalization_runtime.py::test_native_reset_uses_official_rpc_and_preserves_other_account",
+      "tests/test_personalization_runtime.py::test_native_instruction_discovery_uses_only_frozen_effective_file[personal]",
+      "tests/test_personalization_runtime.py::test_native_instruction_discovery_uses_only_frozen_effective_file[project]",
+      "tests/test_personalization_runtime.py::test_native_instruction_empty_and_unsigned_snapshot_are_not_loaded",
+      "tests/test_personalization_runtime.py::test_native_background_fenced_after_identity_regrant",
+      "tests/test_personalization_runtime.py::test_permanent_delete_removes_native_thread_before_product_graph",
+      "tests/test_personalization.py::test_native_initialization_documents_are_not_saved_memories",
+      "tests/test_ai_project_ui_browser.py::test_browser_ai_project_ui_actual_consumers"
+    ],
+    "node": [],
+    "browser": [
+      {
+        "file": "scripts/check-ai-project-ui.mjs",
+        "id": "h07-personal-project-instructions-and-memory",
+        "apiTest": "tests/test_ai_project_ui_browser.py::test_browser_ai_project_ui_actual_consumers"
+      }
+    ]
+  }
+}

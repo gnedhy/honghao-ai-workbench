@@ -1,3 +1,4 @@
+import {EmptyState} from "../components/WorkbenchLayout";
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Plus, Search } from "lucide-react";
 
@@ -92,7 +93,7 @@ export function SalesProductPicker({ products, selected, basis, cost, add = fals
             </button>;
           })}
         </div>)}
-        {!matches.length && <p role="status">{excludeIds.length && excludeIds.length === products.length ? "所有产品均已加入" : "没有匹配的产品"}</p>}
+        {!matches.length && <EmptyState compact icon={Search} title={excludeIds.length && excludeIds.length === products.length ? "所有产品均已加入" : "没有匹配的产品"}/>}
       </div>
     </div>
   </details>;

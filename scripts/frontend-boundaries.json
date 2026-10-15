@@ -29,6 +29,11 @@
       "reason": "现有DepartmentEditor含部门保存，不是纯选择控件",
       "maintainer": "组织管理维护者",
       "removeWhen": "父业务层传入部门保存操作且设置页回归通过"
+    },
+    "src/components/AIConfigSettings.tsx": {
+      "reason": "设置中的AI模型、预算与队列业务页面，自身负责草稿、鉴权接口及版本冲突，不是通用控件",
+      "maintainer": "设置与AI运行维护者",
+      "removeWhen": "独立设置业务容器接手等效请求和状态且管理员配置页面回归通过"
     }
   },
   "compatibility": [

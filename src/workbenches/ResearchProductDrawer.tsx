@@ -1,7 +1,7 @@
 import {useCallback,useEffect,useState,useRef} from "react";
-import {ArrowLeft,Pencil,Trash2,ChevronRight} from "lucide-react";
+import {History, ArrowLeft,Pencil,Trash2,ChevronRight} from "lucide-react";
 import {fetchJson} from "../api";
-import {WorkbenchLoading} from "../components/WorkbenchLayout";
+import {EmptyState, WorkbenchLoading} from "../components/WorkbenchLayout";
 import {DiscardChangesDialog,useUnsavedChanges} from "../components/Interaction";
 import {ResearchFormulaEditor} from "./ResearchFormulaEditor";
 import {Drawer,ReasonFields,FormulaDetails,HistoricalFormula,Money,Movement} from "./ResearchProductView";
@@ -67,7 +67,7 @@ export function ResearchProductDrawer({ id, accessLevel, onClose, onChanged }: {
       {(detail.product.status === "updating" || detail.product.status === "failed") && <div className={s.notice}>成本{detail.product.status === "updating" ? "更新中" : "更新失败，等待重试"}。以下为上次完成的有效成本记录。</div>}
       {detail.product.lifecycle === "inactive" && <p className={s.notice}>此配方已停用，不参与当前产品核算。恢复前须重新试算、保存并启用。</p>}
       <FormulaDetails formula={detail.history[0]?.formula ?? formula} latest={detail.latest} inventory={detail.inventory} policy={policy} onPolicyChange={setPolicy} onRef={ref => {if(!writing.current&&!editorWorking.current)setPath([...path, ref]);}}/>
-      <section className={s.historySection}><div className={s.sectionHeading}><h3>成本历史</h3><span>{detail.history.length} 条</span></div>{detail.history.map((item,index) => { const expanded = record?.event_id === item.event_id && record?.recorded_at === item.recorded_at; return <div key={`${item.event_id}-${index}`} className={s.inlineRecord}><button className={s.historyRow} aria-expanded={expanded} onClick={() => setRecord(expanded ? null : item)}><span>{recordDate(item)}<small>{item.record_type === "backfill" ? "历史回算 · " : ""}{item.reason ?? "成本核算"}</small></span><Money value={item.latest_cost}/><Movement change={item.change} comparisonBasis={item.comparison_basis}/><ChevronRight size={15} style={{transform:expanded?"rotate(90deg)":undefined}}/></button>{expanded && <div className={s.expandedRecord}><HistoricalFormula key={`${record!.event_id}-${record!.recorded_at}`} record={record!} initialPolicy={policy}/><button className={s.back} onClick={() => setRecord(null)}>收起本期明细</button></div>}</div>; })}{!detail.history.length && <p>尚未建立成本记录。</p>}</section>
+      <section className={s.historySection}><div className={s.sectionHeading}><h3>成本历史</h3><span>{detail.history.length} 条</span></div>{detail.history.map((item,index) => { const expanded = record?.event_id === item.event_id && record?.recorded_at === item.recorded_at; return <div key={`${item.event_id}-${index}`} className={s.inlineRecord}><button className={s.historyRow} aria-expanded={expanded} onClick={() => setRecord(expanded ? null : item)}><span>{recordDate(item)}<small>{item.record_type === "backfill" ? "历史回算 · " : ""}{item.reason ?? "成本核算"}</small></span><Money value={item.latest_cost}/><Movement change={item.change} comparisonBasis={item.comparison_basis}/><ChevronRight size={15} style={{transform:expanded?"rotate(90deg)":undefined}}/></button>{expanded && <div className={s.expandedRecord}><HistoricalFormula key={`${record!.event_id}-${record!.recorded_at}`} record={record!} initialPolicy={policy}/><button className={s.back} onClick={() => setRecord(null)}>收起本期明细</button></div>}</div>; })}{!detail.history.length && <EmptyState icon={History} title="暂无成本记录"/>}</section>
 
 
     </>}

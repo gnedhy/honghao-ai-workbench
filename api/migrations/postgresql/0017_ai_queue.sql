@@ -1,0 +1,17 @@
+ALTER TABLE tasks DROP CONSTRAINT tasks_status_check;
+ALTER TABLE tasks ADD CONSTRAINT tasks_status_check CHECK(status IN ('created','queued','running','waiting','review','completed','stopped','failed','blocked'));
+ALTER TABLE task_runs DROP CONSTRAINT task_runs_status_check;
+ALTER TABLE task_runs DROP CONSTRAINT task_runs_check;
+ALTER TABLE task_runs DROP CONSTRAINT task_runs_phase_check;
+ALTER TABLE task_runs ALTER COLUMN started_at DROP NOT NULL;
+ALTER TABLE task_runs ADD COLUMN queued_at text;
+ALTER TABLE task_runs ADD COLUMN model_config_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE task_runs ADD CONSTRAINT task_runs_status_check CHECK(status IN ('queued','running','waiting','completed','stopped','failed','blocked'));
+ALTER TABLE task_runs ADD CONSTRAINT task_runs_check CHECK((status IN ('queued','running','waiting'))=(ended_at IS NULL));
+ALTER TABLE task_runs ADD CONSTRAINT task_runs_phase_check CHECK(phase IN ('queued','starting','generating','ended'));
+DROP INDEX task_runs_active;
+DROP INDEX ai_run_active_conversation;
+CREATE UNIQUE INDEX task_runs_active ON task_runs(task_id) WHERE status IN ('queued','running','waiting');
+CREATE UNIQUE INDEX ai_run_active_conversation ON task_runs(conversation_id) WHERE context_id IS NOT NULL AND status IN ('queued','running','waiting');
+CREATE INDEX ai_run_queue ON task_runs(_order) WHERE status='queued';
+UPDATE schema_metadata SET value=17 WHERE key='schema_version';

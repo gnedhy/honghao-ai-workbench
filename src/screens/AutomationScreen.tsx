@@ -1,7 +1,9 @@
+import "./AutomationScreen.css";
 import { CheckCircle2, Clock3, FileInput, FileOutput, GitBranch, Play, Plus, Search, ShieldCheck, WandSparkles, Workflow } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { TopBar, type ScreenChromeProps } from "../components/TopBar";
+import {EmptyState} from '../components/WorkbenchLayout';
 import { skills, workflows } from "../data";
 import type { SkillItem, WorkflowItem } from "../types";
 
@@ -94,5 +96,5 @@ function SectionHeading({ label, title, description }: { label: string; title: s
 }
 
 function WorkspaceEmpty({ label }: { label: string }) {
-  return <div className="workspace-empty"><Search size={18} /><strong>没有匹配{label}</strong><p>换一个名称或用途试试。</p></div>;
+  return <EmptyState icon={Search} className="workspace-empty" title={`没有匹配${label}`}/>;
 }

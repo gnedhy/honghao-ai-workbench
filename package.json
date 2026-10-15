@@ -28,7 +28,9 @@
     "playwright": "1.63.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "recharts": "3.10.1"
+    "react-markdown": "10.1.0",
+    "recharts": "3.10.1",
+    "remark-gfm": "4.0.1"
   },
   "devDependencies": {
     "@types/react": "19.2.18",
@@ -38,5 +40,8 @@
     "oxlint": "1.86.0",
     "typescript": "7.0.2",
     "vite": "8.2.1"
+  },
+  "overrides": {
+    "shell-quote": "1.12.0"
   }
 }

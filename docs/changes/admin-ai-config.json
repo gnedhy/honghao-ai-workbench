@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "管理员模型／密钥、预算／请求用量账本和持久公平队列，聊天与工作选择冻结到轮次。",
+  "modules": [
+    "chat",
+    "tasks"
+  ],
+  "files": [
+    "api/ai_control.py",
+    "api/migrations/postgresql/0016_ai_control.sql",
+    "api/migrations/postgresql/0017_ai_queue.sql",
+    "api/identity.py",
+    "src/chat/ModelSelection.tsx",
+    "src/components/AIConfigSettings.tsx",
+    "src/components/AIConfigSettings.css",
+    "src/components/aiConfigValues.ts",
+    "src/components/AIUsageView.tsx"
+  ],
+  "consumers": [
+    "api/codex_runtime.py",
+    "api/main.py",
+    "api/operations.py",
+    "src/components/SettingsDialog.tsx",
+    "src/screens/ConversationScreen.tsx",
+    "src/components/ProfileDialog.tsx"
+  ],
+  "permissions": "配置仅管理员，本人模型／额度按登录身份；密钥不回显，排队出队及每请求重新检查权限和预算。",
+  "data": "core16配置、凭据版本及十进制费用账本，core17队列／模型快照；费用保留历史单价和未知用量，不随会话删除。",
+  "lifecycle": "轮次冻结模型／档位，下一轮使用新配置；同用户串行、不同用户公平，重启保留排队但不重放已发请求。",
+  "exits": "三页独立保存，版本冲突／失败保留草稿；dirty／busy走已有退出保护。",
+  "compatibility": "旧调用未传模型／档位用管理员默认，默认Flash／high、Pro关闭、执行1、预算未设置；原价格数据保留。",
+  "recovery": "配置、账本、队列及受保护密钥文件纳入既有备份恢复；未知请求转待核算，不计零或返还已耗费用。",
+  "verification": {
+    "api": [
+      "tests/test_ai_control.py::test_settings_authorization_conflicts_and_capacity",
+      "tests/test_ai_control.py::test_decimal_cached_reasoning_accounting_soft_cutoff_and_pending",
+      "tests/test_ai_control.py::test_pending_usage_and_user_overrides_are_isolated",
+      "tests/test_ai_control.py::test_billing_ledger_survives_deleted_owner_and_price_changes",
+      "tests/test_ai_control.py::test_beijing_month_boundaries_and_recovery",
+      "tests/test_ai_control.py::test_boundary_validation_and_parallel_settlement",
+      "tests/test_ai_control.py::test_private_versioned_keys_legacy_fallback_and_link_rejection",
+      "tests/test_ai_queue.py::test_admin_settings_are_private_revisioned_and_credentials_never_return",
+      "tests/test_ai_queue.py::test_50_submitters_are_bounded_fair_cancellable_and_do_not_charge_queue",
+      "tests/test_ai_queue.py::test_queue_survives_restart_and_expired_or_revoked_input_is_not_sent",
+      "tests/test_ai_queue.py::test_regrant_does_not_revive_previously_revoked_queue",
+      "tests/test_ai_project_ui_browser.py::test_browser_ai_project_ui_actual_consumers"
+    ],
+    "node": [
+      {
+        "file": "tests_ui/ai-config-values.test.ts",
+        "id": "AI amount validation preserves decimal strings and enforces server bounds"
+      }
+    ],
+    "browser": [
+      {
+        "file": "scripts/check-ai-project-ui.mjs",
+        "id": "ai-config-budget-conflict-and-queue-draft",
+        "apiTest": "tests/test_ai_project_ui_browser.py::test_browser_ai_project_ui_actual_consumers"
+      }
+    ]
+  }
+}

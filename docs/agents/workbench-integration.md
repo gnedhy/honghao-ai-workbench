@@ -48,4 +48,6 @@ ModuleBoundary 按用户 ID／工作台 ID 隔离错误。chunk 加载失败使�
 
 H04 沿此静态条目接入 [CodexRuntime](../../api/codex_runtime.py)、聊天所属 [useConversationExecution](../../src/chat/useConversationExecution.ts)及实际会话消费者；记录真实运行、SSE 和恢复，不添加工作台 ID。具体接口与权限／预算见 [H04 合同](../business/项目AI工作区-H04运行接入.md)。完成后的正文／任务读取失败有明确提示和重新对账，身份失效优先清理；后台运行与页面 busy 分开。
 
+H05 延续聊天／任务条目，列表与消息读取、提交回执和草稿归 `src/chat/` 所属 Hook，项目抽屉与任务历史复用公共控件。公共 Composer、Sidebar 和分段控件只接收受控值／提议。任务 403 与身份失效分开，迟到回执检查当前能力；真实消费者、0008／快照恢复和退出范围见 [H05 合同](../business/项目AI工作区-H05项目与任务界面.md)及本项 `docs/changes` 声明，没有新的工作台注册。
+
 H03 的 chat/tasks 使用同一静态契约文件的 `modules` 条目，校验真实模块 ID、业务维护者、权限、数据、退出恢复与实际消费者；不登记为职能工作台，不建立运行时注册器。已有工作台检查保持不变。任务范围验证可选 `--scope chat` 或 `--scope tasks`，涉及身份、迁移、公共类型和跨模块变更仍以 `--scope all` 收尾。文件、规则和技能实际接口在 H06/H07 接入时补齐对应合同与回归。

@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 import hashlib
 import importlib.util
 import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
+from uuid import UUID
 
 import psycopg
 from psycopg import sql
@@ -138,7 +142,7 @@ def _table_evidence(db, source_path_map: dict[str, str] | None = None) -> dict:
                 values[index] = source_path_map.get(values[index], values[index])
                 row = values
             encoded = json.dumps(row, ensure_ascii=False, separators=(',', ':'),
-                                 default=lambda value: {"bytes": bytes(value).hex()}).encode('utf-8')
+                                 default=lambda value: str(value) if isinstance(value, (UUID, datetime, Decimal)) else {"bytes": bytes(value).hex()}).encode('utf-8')
             digest.update(encoded + b'\n')
             count += 1
         result[table] = {"count": count, "sha256": digest.hexdigest(), "columns": [c.name for c in cursor.description]}
@@ -159,6 +163,35 @@ def _references(db, data_dir: Path) -> tuple[list[str], list[dict]]:
             raise ValueError("采购来源文件路径不符合受控目录约定")
         referenced.add(relative)
         source_paths.append({"sha256": digest, "stored_path": stored_path, "path": relative})
+    from api.personalization import instruction_file
+    instructions = db.execute("""SELECT owner_id,'personal',instructions_path,instructions_sha256 FROM personalizations WHERE instructions_path IS NOT NULL
+        UNION SELECT p.owner_id,p.id,i.content_path,i.content_sha256 FROM project_instructions i JOIN projects p ON p.id=i.project_id WHERE i.content_path IS NOT NULL
+        UNION SELECT owner_id,personalization_snapshot->>'instruction_scope',personalization_snapshot->>'instruction_path',personalization_snapshot->>'instruction_sha256'
+            FROM task_runs WHERE personalization_snapshot->>'instruction_path' IS NOT NULL""").fetchall()
+    for actor_id,scope,relative,digest in instructions:
+        instruction_file(data_dir,relative,digest,actor_id,scope)
+        referenced.add(relative)
+    from api.ai_control import AIControlStore
+    credentials = AIControlStore(None, data_dir)
+    for (version,) in db.execute('SELECT version FROM ai_credentials'):
+        path = credentials.key_path(version)
+        credentials.read_key(version)
+        referenced.add(path.relative_to(data_dir.resolve()).as_posix())
+    native_root=data_dir/'controlled-work/native'
+    if native_root.exists():
+        if db.execute("SELECT 1 FROM task_runs WHERE status IN ('running','waiting') UNION ALL SELECT 1 FROM memory_extractions WHERE status='running' LIMIT 1").fetchone():
+            raise ValueError('请等待 AI 运行与原生记忆整理完成后再备份')
+        owner_ids={UUID(row[0]).hex for row in db.execute('SELECT id FROM identity_users')}
+        for owner in native_root.iterdir():
+            if owner.name not in owner_ids or not owner.is_dir() or owner.is_symlink() or owner.is_junction():
+                raise ValueError('原生状态账号目录不符合快照约定')
+            for path in owner.rglob('*'):
+                if _native_transient(path.relative_to(data_dir)):
+                    continue
+                if path.is_symlink() or path.is_junction():
+                    raise ValueError('原生状态快照来源不能是链接')
+                if path.is_file() and not path.name.endswith(('-wal','-shm','-journal')):
+                    referenced.add(path.relative_to(data_dir).as_posix())
     return sorted(referenced), source_paths
 
 
@@ -181,10 +214,18 @@ def create_snapshot(settings: Settings, destination_root: Path) -> Path:
                 relative = source.relative_to(settings.data_dir)
                 destination = temporary / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, destination)
+                if relative.parts[:2]==('controlled-work','native') and source.suffix=='.sqlite':
+                    with closing(sqlite3.connect(f'file:{source.as_posix()}?mode=ro',uri=True)) as native, closing(sqlite3.connect(destination)) as copied:
+                        native.backup(copied)
+                        if copied.execute('PRAGMA quick_check').fetchone()[0]!='ok':
+                            raise ValueError('原生状态数据库备份校验失败')
+                    destination.chmod(0o600)
+                else:
+                    shutil.copy2(source, destination)
             manifest = {"version": 2, "engine": "postgresql", "created_at": datetime.now(UTC).isoformat(),
                 "environment": settings.environment, "database_environment": settings.database_environment,
                 "migrations": migrations, "tables": tables, "references": referenced, "source_paths": source_paths,
+                "native_data_root":str(settings.data_dir.resolve()),
                 "files": [_file_record(path, temporary) for path in _snapshot_files(temporary)]}
         _write_staging_manifest(temporary, manifest)
         verify_snapshot(temporary, expected_environment=settings.environment,
@@ -266,8 +307,10 @@ def verify_snapshot(snapshot: Path, *, expected_environment: str | None = None,
 
 def _empty_restore_target(db) -> bool:
     for table in _table_names(db):
-        if table not in {'schema_metadata', 'identity_roles', 'procurement_working_state'} and db.execute(sql.SQL('SELECT 1 FROM public.{} LIMIT 1').format(sql.Identifier(table))).fetchone():
+        if table not in {'schema_metadata', 'identity_roles', 'procurement_working_state', 'ai_control_settings'} and db.execute(sql.SQL('SELECT 1 FROM public.{} LIMIT 1').format(sql.Identifier(table))).fetchone():
             return False
+    if db.execute('SELECT count(*),bool_and(revision=1 AND updated_by IS NULL) FROM ai_control_settings').fetchone() != (3,True):
+        return False
     roles = db.execute('SELECT id,name,system FROM identity_roles ORDER BY id').fetchall()
     versions = dict(db.execute('SELECT key,value FROM schema_metadata').fetchall())
     expected = {**_expected_schema_versions(), 'organization_schema_version': 1,
@@ -312,6 +355,8 @@ def restore_snapshot(settings: Settings, snapshot: Path) -> None:
                 relative = Path(record['path'])
                 target = staging / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
+                if relative.parts[0]=='private-ai-credentials':
+                    target.parent.chmod(0o700)
                 shutil.copy2(snapshot / relative, target)
             _write_staging_manifest(staging, manifest)
             verify_snapshot(staging, expected_environment=settings.environment,
@@ -331,6 +376,8 @@ def restore_snapshot(settings: Settings, snapshot: Path) -> None:
                     continue
                 target = settings.data_dir / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
+                if relative.parts[0]=='private-ai-credentials':
+                    target.parent.chmod(0o700)
                 if target.exists():
                     raise ValueError('恢复目标已出现文件，停止覆盖')
                 # Creating the destination link is atomic and cannot replace a file appearing after preflight.
@@ -350,6 +397,23 @@ def restore_snapshot(settings: Settings, snapshot: Path) -> None:
             references, source_paths = _references(db, settings.data_dir)
             if references != sorted(manifest['references']) or [(s['sha256'],s['path']) for s in source_paths] != [(s['sha256'],s['path']) for s in manifest.get('source_paths', [])]:
                 raise RuntimeError('恢复后的引用文件与快照不一致，保留现场供核验')
+            old_native=manifest.get('native_data_root')
+            if old_native and old_native!=str(settings.data_dir.resolve()):
+                # Only native execution paths relocate; original transcript text and product provenance remain unchanged.
+                for record in manifest['files']:
+                    relative=Path(record['path'])
+                    if len(relative.parts)<5 or relative.parts[:2]!=('controlled-work','native') or relative.name!='state_5.sqlite':
+                        continue
+                    old_owner=Path(old_native)/'controlled-work/native'/relative.parts[2]
+                    new_owner=settings.data_dir.resolve()/'controlled-work/native'/relative.parts[2]
+                    with closing(sqlite3.connect(settings.data_dir/relative)) as native, native:
+                        for thread,rollout,cwd in native.execute('SELECT id,rollout_path,cwd FROM threads').fetchall():
+                            moved=[]
+                            for value in (rollout,cwd):
+                                try: suffix=Path(value).relative_to(old_owner)
+                                except ValueError: raise RuntimeError('原生执行路径超出所属账号，保留恢复现场') from None
+                                moved.append(str(new_owner/suffix))
+                            native.execute('UPDATE threads SET rollout_path=?,cwd=? WHERE id=?',(*moved,thread))
             lease.execute('SELECT 1')
             marker.unlink()
     except BaseException:
@@ -567,15 +631,21 @@ def _validate_local_file(path: Path, root: Path) -> None:
 def _snapshot_sources(settings: Settings) -> list[Path]:
     files = [settings.data_dir / name for name in ('environment', 'runtime-config.json', 'workbench-runtime-config.json')
              if (settings.data_dir / name).is_file()]
-    for directory in ('knowledge', 'controlled-work/procurement-sources'):
+    for directory in ('knowledge', 'controlled-work/procurement-sources', 'controlled-work/instructions', 'controlled-work/native'):
         root = settings.data_dir / directory
         if root.is_symlink() or root.is_junction():
             raise ValueError('快照来源不能是链接')
         if root.is_dir():
             for path in root.rglob('*'):
                 if path.is_symlink() or path.is_junction():
+                    if directory=='controlled-work/native' and _native_transient(path.relative_to(settings.data_dir)):
+                        continue
                     raise ValueError('快照来源不能是链接')
                 if path.is_file() and _allowed_snapshot_path(path.relative_to(settings.data_dir)):
+                    if directory=='controlled-work/native' and path.name.endswith(('-wal','-shm','-journal')):
+                        continue
+                    if directory=='controlled-work/native' and _native_transient(path.relative_to(settings.data_dir)):
+                        continue
                     files.append(path)
     for path in files:
         _validate_local_file(path, settings.data_dir)
@@ -590,9 +660,19 @@ def _file_record(path: Path, root: Path) -> dict:
     return {'path': path.relative_to(root).as_posix(), 'size': path.stat().st_size, 'sha256': _sha256(path)}
 
 
+def _native_transient(path: Path) -> bool:
+    return len(path.parts)>6 and path.parts[:2]==('controlled-work','native') and path.parts[3]=='contexts' and path.parts[5:7]==('home','tmp')
+
+
 def _allowed_snapshot_path(path: Path) -> bool:
+    if re.fullmatch(r'private-ai-credentials/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.key',path.as_posix()):
+        return True
     if path.as_posix() in {DATABASE_NAME, 'environment', 'runtime-config.json', 'workbench-runtime-config.json'}:
         return True
+    if re.fullmatch(r'controlled-work/instructions/[0-9a-f]{32}/(?:personal|[0-9a-f]{32})/[0-9a-f]{32}/AGENTS\.md',path.as_posix()):
+        return True
+    if len(path.parts)>3 and not _native_transient(path) and path.parts[:2]==('controlled-work','native') and re.fullmatch('[0-9a-f]{32}',path.parts[2]):
+        return all(part not in ('','.','..') and '\\' not in part and ':' not in part for part in path.parts[3:])
     return len(path.parts) == 3 and ((path.parts[:2] == ('knowledge', 'sources') and path.suffix.lower() == '.pdf') or
         (path.parts[:2] == ('knowledge', 'items') and path.suffix.lower() == '.md') or
         (path.parts[:2] == ('controlled-work', 'procurement-sources') and path.suffix.lower() == '.xlsx'))

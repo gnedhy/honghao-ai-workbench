@@ -1,6 +1,7 @@
 import {useEffect, useRef, useState, type ReactNode} from "react";
 import {ChevronRight, Check, ArrowLeft} from "lucide-react";
 import {Drawer as SharedDrawer} from "../components/Drawer";
+import {positionWorkbenchDisplayMenu} from "../components/WorkbenchMenus";
 import {type Adjustment, type Calculation, type Product, type ComparisonBasis, type Formula, type RecordRow, cost, yieldText, basis, adjustmentReasons} from "./researchModel";
 import p from "../components/WorkbenchSurface.module.css";
 import s from "./ResearchWorkbench.module.css";
@@ -24,7 +25,7 @@ export function Menu({ title, icon, children, className = "", chevron = true, co
   const menu = useRef<HTMLDetailsElement>(null);
   const close = (focus = false) => { if (menu.current) menu.current.open = false; if (focus) menu.current?.querySelector("summary")?.focus(); };
   useEffect(() => { const outside = (event: PointerEvent) => { if (!menu.current?.contains(event.target as Node)) close(); }; document.addEventListener("pointerdown",outside); return () => document.removeEventListener("pointerdown",outside); }, []);
-  return <details ref={menu} className={`${p.columnMenu} ${className}`} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(); }} onKeyDown={event => {
+  return <details ref={menu} className={`${p.columnMenu} ${className}`} onToggle={event=>{if(event.currentTarget.classList.contains(p.displayMenu))positionWorkbenchDisplayMenu(event.currentTarget);}} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(); }} onKeyDown={event => {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); }
     if (menu.current?.open && ["ArrowDown","ArrowUp"].includes(event.key) && !(event.target instanceof HTMLInputElement)) { event.preventDefault(); event.stopPropagation(); const options = Array.from(menu.current.querySelectorAll<HTMLButtonElement>("button[data-menu-option]")); const index = options.indexOf(document.activeElement as HTMLButtonElement); options[(index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length]?.focus(); }
   }}><summary>{icon}{title}{count > 0 && <em>{count}</em>}{chevron && <ChevronRight size={13}/>}</summary><div>{children}</div></details>;

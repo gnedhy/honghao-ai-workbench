@@ -1,8 +1,10 @@
-import { Check, ChevronRight, Eye, EyeOff, Info, KeyRound, X } from "lucide-react";
+import { Check, ChevronRight, Eye, EyeOff, Info, KeyRound, LoaderCircle, X } from "lucide-react";
 import { useEffect, useRef, useState, type InputHTMLAttributes } from "react";
-import { changeMyPassword, fetchPersonalProfile } from "../api";
+import { changeMyPassword, fetchPersonalProfile, fetchAIUsage } from "../api";
 import { DiscardChangesDialog, SettingsGroup, useFadingScrollbars, useExitTransition } from "./Interaction";
-import type { CurrentUser, PersonalProfile } from "../types";
+import type { AIUsage, CurrentUser, PersonalProfile } from "../types";
+import {AIUsageView} from './AIUsageView';
+import {WorkbenchOptionMenu} from './WorkbenchMenus';
 
 const SCOPE_NAMES: Record<string, string> = { procurement: "采购工作台", research: "研发工作台", sales: "销售工作台", management: "总经办工作台", knowledge: "知识库" };
 const LEVEL_NAMES: Record<number, string> = { 2: "查看", 3: "编辑", 4: "管理" };
@@ -27,6 +29,11 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
   const [profile, setProfile] = useState<PersonalProfile | null>(null);
   const [loadError, setLoadError] = useState("");
   const [reload, setReload] = useState(0);
+  const [usage,setUsage]=useState<{actor:string;data:AIUsage}|null>(null);
+  const [usageLoading,setUsageLoading]=useState(false);
+  const [usageError,setUsageError]=useState(false);
+  const [usageReload,setUsageReload]=useState(0);
+  const [usagePeriod,setUsagePeriod]=useState<'7'|'30'|'all'>('30');
   useEffect(() => { const refresh = () => setReload(n => n + 1); window.addEventListener("activation-grants-changed", refresh); return () => window.removeEventListener("activation-grants-changed", refresh); }, []);
   const [expanded, setExpanded] = useState(false);
   const [instant, setInstant] = useState(false);
@@ -53,6 +60,15 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
     }).catch(() => { if (!controller.signal.aborted) setLoadError("我的账号读取失败，请重试；登录失效时请重新登录。"); });
     return () => controller.abort();
   }, [reload, onUserChanged]);
+
+  const actor=profile?.id;
+  const currentUsage=usage&&usage.actor===actor?usage.data:null;
+  useEffect(()=>{
+    if(!actor)return;
+    const controller=new AbortController();setUsageLoading(true);setUsageError(false);
+    void fetchAIUsage(usagePeriod,actor,controller.signal).then(data=>{if(!controller.signal.aborted)setUsage({actor,data});}).catch(()=>{if(!controller.signal.aborted)setUsageError(true);}).finally(()=>{if(!controller.signal.aborted)setUsageLoading(false);});
+    return()=>controller.abort();
+  },[actor,usagePeriod,usageReload]);
 
   useEffect(() => {
     const protect = (event: BeforeUnloadEvent) => { if (dirty || busy.current) event.preventDefault(); };
@@ -84,7 +100,7 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
     finally { busy.current = false; setSubmitting(false); }
   };
 
-  return <dialog inert={exit.closing} ref={dialog} className="settings-dialog personal-profile" data-closing={exit.closing || undefined} aria-labelledby="personal-profile-title"
+  return <dialog inert={exit.closing} ref={dialog} className="settings-dialog personal-profile personal-profile--account" data-closing={exit.closing || undefined} aria-labelledby="personal-profile-title"
     onCancel={(event) => { event.preventDefault(); if (discardOpen) { setDiscardOpen(false); dialog.current?.querySelector<HTMLButtonElement>("header button")?.focus(); } else close(); }}
     onKeyDown={(event) => { if (event.key === "Escape") event.stopPropagation(); }}
     onMouseDown={(event) => {
@@ -99,9 +115,14 @@ export function ProfileDialog({ onClose, onUserChanged, onPasswordChanged, befor
       {loadError ? <div role="alert"><p>{loadError}</p><button className="secondary-button" onClick={() => setReload((value) => value + 1)}>重新读取</button></div> : !profile ? <p role="status">正在读取我的账号…</p> : <>
         <div className="personal-profile__identity"><span className="avatar" aria-hidden="true">{Array.from(profile.display_name)[0]}</span><div><div className="personal-profile__name"><strong>{profile.display_name}</strong>{profile.is_system_admin && <span className="personal-profile__role">管理员</span>}</div><p><span aria-label={`登录账号：${profile.username}`}>{profile.username}</span><span aria-hidden="true"> · </span><span aria-label={`部门：${profile.department || "未分配"}`}>{profile.department || "未分配"}</span></p></div></div>
         {!!profile.departments?.some(d => !d.is_primary) && <p className="personal-profile__hint">兼属：{profile.departments.filter(d => !d.is_primary).map(d => d.name).join('、')}</p>}
-        <div className="personal-profile__scroll" tabIndex={0} role="region" aria-label="我的权限与密码设置">
-        <section className="personal-profile__access personal-account-permissions" aria-label="我的权限">
-          <SettingsGroup id="my-permissions" title="我的权限" description="查看功能模块与职能工作台的授权范围。" summary={profile.is_system_admin ? "系统管理员" : `${Object.keys(profile.scope_levels).length} 项已授权`}>
+        <div className="personal-profile__scroll" tabIndex={0} role="region" aria-label="AI使用情况、我的权限范围与密码设置">
+        <section className="personal-profile__usage" aria-labelledby="my-ai-usage-title" aria-busy={usageLoading}>
+            <div className="ai-usage-heading"><h2 id="my-ai-usage-title">AI使用情况{usageLoading&&<LoaderCircle size={14} className="run-activity__spinner" role="status" aria-label="正在更新使用情况"/>}</h2><WorkbenchOptionMenu label="统计范围" value={usagePeriod} className="ai-usage-range" options={[{value:'7',label:'近 7 天'},{value:'30',label:'近 30 天'},{value:'all',label:'全部记录'}]} onSelect={value=>setUsagePeriod(value as typeof usagePeriod)}/></div>
+            {currentUsage?<AIUsageView usage={currentUsage}/>:!usageError&&<p className="ai-usage-note" role="status">正在读取使用情况…</p>}
+            {usageError&&<p className="ai-usage-note" role="alert">AI使用情况读取失败。{currentUsage&&'当前仍显示上次结果。'}<button className="secondary-button" type="button" onClick={()=>setUsageReload(n=>n+1)}>重试</button></p>}
+        </section>
+        <section className="personal-profile__access personal-account-permissions" aria-label="我的权限范围">
+          <SettingsGroup id="my-permissions" title="我的权限范围" description="查看功能模块与职能工作台的授权范围。" summary={profile.is_system_admin ? "系统管理员" : `${Object.keys(profile.scope_levels).length} 项已授权`}>
             <div className="personal-account-scope-heading"><span>项目 AI 工作区</span><span>{profile.is_system_admin || profile.ai_enabled ? "已授权" : "未授权"}</span></div>
             {profile.is_system_admin && <p className="personal-profile__hint">拥有全部业务范围和系统管理权限。</p>}
             {[{ id: "modules", title: "功能模块", scopes: ["knowledge"] }, { id: "workbenches", title: "职能工作台", scopes: ["procurement", "research", "sales", "management"] }].map(group => ({ ...group, scopes: group.scopes.filter(scope => profile.is_system_admin || (profile.scope_levels[scope as keyof typeof profile.scope_levels] ?? 0) >= 2) })).filter(group => group.scopes.length > 0).map(group => <SettingsGroup key={group.id} id={"my-permissions-" + group.id} title={group.title} description={group.id === "modules" ? "查看各功能模块的访问权限。" : "查看各工作台的业务操作权限。"} summary={`${group.scopes.length} 项已授权`}>

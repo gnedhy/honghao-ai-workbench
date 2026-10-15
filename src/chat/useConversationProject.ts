@@ -3,7 +3,7 @@ import {fetchConversations, setConversationProject} from '../api';
 import {useUnsavedChanges} from '../components/Interaction';
 import type {Conversation} from '../types';
 
-export function useConversationProject(onSaved: (value: Conversation) => void, onReloaded: (values: Conversation[]) => void) {
+export function useConversationProject(onSaved: (value: Conversation) => void, onReloaded: (values: Conversation[]) => void, onAccessLost: (error:unknown)=>boolean, owner:string) {
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
   const active=useRef(true);
@@ -15,10 +15,10 @@ export function useConversationProject(onSaved: (value: Conversation) => void, o
   const reconcile=async()=>{
     const controller=new AbortController();reading.current=controller;
     try {
-      const values=await fetchConversations(controller.signal);
+      const values=await fetchConversations(controller.signal,owner);
       if (!active.current) return false;
       onReloaded(values);return true;
-    } catch {return false;}
+    } catch(error) {if(active.current)onAccessLost(error);return false;}
     finally {if (reading.current===controller) reading.current=null;}
   };
   const change=(conversation: Conversation,projectId: string | null)=>{
@@ -26,11 +26,12 @@ export function useConversationProject(onSaved: (value: Conversation) => void, o
     running.current=true;setBusy(true);setError('');
     operation.current=(async()=>{
       try {
-        const saved=await setConversationProject(conversation.id,projectId,conversation.revision);
+        const saved=await setConversationProject(conversation.id,projectId,conversation.revision,owner);
         if (active.current) onSaved(saved);
         return active.current;
-      } catch {
+      } catch(error) {
         if (!active.current) return false;
+        if(onAccessLost(error))return false;
         const confirmed=await reconcile();
         if (active.current) setError(confirmed ? '已重新读取当前项目归属，请核对后继续。' : '项目关联结果尚未确认，请重新读取后再发送。');
         return confirmed;

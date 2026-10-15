@@ -4,8 +4,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
-from contextlib import contextmanager
+import time
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from pathlib import Path
 from threading import Lock
@@ -38,15 +40,23 @@ def database_url(value: str | None = None) -> str:
 
 
 def connect(url: str | None = None) -> psycopg.Connection:
-    return psycopg.connect(
-        database_url(url),
-        autocommit=True,
-        connect_timeout=5,
-        application_name="honghao-workbench",
-        options="-c timezone=UTC -c search_path=public,pg_catalog "
-                "-c statement_timeout=30000 -c lock_timeout=10000 "
-                "-c idle_in_transaction_session_timeout=60000",
-    )
+    for attempt in range(2):
+        try:
+            return psycopg.connect(
+                database_url(url),
+                autocommit=True,
+                connect_timeout=5,
+                application_name="honghao-workbench",
+                options="-c timezone=UTC -c search_path=public,pg_catalog "
+                        "-c statement_timeout=30000 -c lock_timeout=10000 "
+                        "-c idle_in_transaction_session_timeout=60000",
+            )
+        except psycopg.OperationalError as error:
+            if attempt or os.name != 'nt' or error.sqlstate is not None or '(0x00002747/10055)' not in str(error):
+                raise
+            # The socket failed before a connection exists; no SQL can be replayed.
+            logging.getLogger(__name__).warning('Windows PostgreSQL connect buffer unavailable; retrying once')
+            time.sleep(.05)
 
 
 @contextmanager
@@ -65,7 +75,7 @@ def database_lease(url: str) -> Iterator[psycopg.Connection]:
 
 
 @contextmanager
-def transaction(url: str, *, write: bool = False) -> Iterator[psycopg.Connection]:
+def transaction(url: str, *, write: bool = False, connection: psycopg.Connection | None = None) -> Iterator[psycopg.Connection]:
     active = _TRANSACTION.get()
     if active is not None:
         active_url, connection, writable = active
@@ -81,7 +91,7 @@ def transaction(url: str, *, write: bool = False) -> Iterator[psycopg.Connection
     if lease is not None:
         # A database restart can drop the session lock; the old service must then fail closed.
         lease.execute("SELECT 1")
-    with connect(url) as connection, connection.transaction():
+    with (connect(url) if connection is None else nullcontext(connection)) as connection, connection.transaction():
         if write:
             # ponytail: serialize business writes as SQLite did; split locks only after concurrency tests.
             connection.execute("SELECT pg_advisory_xact_lock(%s)", (WRITE_LOCK,))

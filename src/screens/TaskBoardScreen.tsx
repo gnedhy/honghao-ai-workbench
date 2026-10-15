@@ -1,65 +1,84 @@
-import { Clock3, MoreHorizontal, Search } from "lucide-react";
-import { useState } from "react";
-import { SegmentedControl } from "../components/SegmentedControl";
-import { TopBar, type ScreenChromeProps } from "../components/TopBar";
-import { taskStatusLabel } from "../taskPresentation";
-import type { Conversation, Project, TaskItem } from "../types";
+import {useEffect,useRef,useState} from 'react';
+import {createPortal} from 'react-dom';
+import {CheckCircle2,ClipboardCheck,Circle,CirclePause,FilterX,LoaderCircle,Plus,RotateCw,Search} from 'lucide-react';
+import {SegmentedControl} from '../components/SegmentedControl';
+import {WorkbenchOptionMenu} from '../components/WorkbenchMenus';
+import {PageState} from '../components/WorkbenchLayout';
+import {useFadingScrollbars} from '../components/Interaction';
+import {TopBar,type ScreenChromeProps} from '../components/TopBar';
+import {useTaskRuns} from '../chat/useTaskRuns';
+import {taskStatusLabel,taskTitle} from '../taskPresentation';
+import {BoardColumn} from '../tasks/BoardColumn';
+import {TaskDetails,type TaskDetailAction} from '../tasks/TaskDetails';
+import {TaskListRows,TaskRunRows} from '../tasks/TaskPanelRows';
+import {matchesTaskFilters,matchesTaskSearch} from '../tasks/taskFilters';
+import type {Conversation,Project,TaskItem,TaskStatus} from '../types';
 
-type TaskBoardScreenProps = ScreenChromeProps & {
-  tasks: TaskItem[];
-  projects: Project[];
-  conversations: Conversation[];
-  dataState: "loading" | "ready" | "error";
-  selectedTask: TaskItem | null;
-  onSelectedTaskChange: (task: TaskItem) => void;
-};
+const groups=[
+  {id:'pending',label:'待执行',statuses:['created','queued'],icon:Circle},
+  {id:'running',label:'处理中',statuses:['running'],icon:LoaderCircle},
+  {id:'attention',label:'待跟进',statuses:['waiting','failed','blocked','stopped'],icon:CirclePause},
+  {id:'review',label:'待验收',statuses:['review'],icon:ClipboardCheck},
+  {id:'completed',label:'已完成',statuses:['completed'],icon:CheckCircle2},
+] satisfies {id:string;label:string;statuses:TaskStatus[];icon:typeof Circle}[];
+const statuses:TaskStatus[]=['created','queued','running','waiting','failed','blocked','stopped','review','completed'];
 
-export function TaskBoardScreen({ contextOpen, onOpenNavigation, onToggleContext, moduleMode, environment, tasks, projects, conversations, dataState, selectedTask, onSelectedTaskChange }: TaskBoardScreenProps) {
-  const [tab, setTab] = useState<"任务管理" | "运行记录">("任务管理");
-  const [query, setQuery] = useState("");
-  const visibleTasks = tasks.filter((task) => task.objective.toLowerCase().includes(query.trim().toLowerCase()));
-
-  return (
-    <main className="app-main">
-      <TopBar
-        title="任务看板"
-        subtitle={tab === "任务管理" ? `${tasks.length} 个任务` : "真实运行历史"}
-        tabs={<SegmentedControl value={tab} options={["任务管理", "运行记录"] as const} onChange={setTab} label="任务看板类型" />}
-        contextOpen={contextOpen}
-        onOpenNavigation={onOpenNavigation}
-        onToggleContext={onToggleContext}
-        moduleMode={moduleMode}
-        environment={environment}
-      />
-      {tab === "任务管理" ? (
-        <section className="task-board">
-          <div className="task-board__toolbar"><div><h1>任务管理</h1><p>由工作提交产生的持久执行对象</p></div><label className="search-field search-field--short"><Search size={16} /><input aria-label="搜索任务" placeholder="搜索任务" value={query} onChange={(event) => setQuery(event.target.value)} /></label></div>
-          {dataState === "loading" && <p className="board-state">正在读取任务…</p>}
-          {dataState === "error" && <p className="board-state board-state--error">任务读取失败，请检查本地服务后重试。</p>}
-          {dataState === "ready" && visibleTasks.length === 0 && <div className="board-empty"><Clock3 size={20} /><h2>{tasks.length === 0 ? "还没有任务" : "没有匹配的任务"}</h2><p>{tasks.length === 0 ? "在会话中切换到工作并提交内容后，任务会出现在这里。" : "换一个关键词试试。"}</p></div>}
-          {visibleTasks.length > 0 && (
-            <div className="task-table-wrap">
-              <table className="task-table">
-                <thead><tr><th>任务</th><th>状态</th><th>项目</th><th>最近运行</th><th>创建时间</th><th><span className="sr-only">操作</span></th></tr></thead>
-                <tbody>{visibleTasks.map((task) => {
-                  const conversation = conversations.find((item) => item.id === task.conversation_id);
-                  const project = projects.find((item) => item.id === task.project_id);
-                  return <tr className={selectedTask?.id === task.id ? "is-active" : ""} key={task.id} onClick={() => onSelectedTaskChange(task)}><td><strong>{task.objective}</strong><small>来自会话：{conversation?.title ?? "会话不可用"}</small></td><td><span className="task-status task-status--waiting"><Clock3 size={14} />{taskStatusLabel(task.status)}</span></td><td>{project?.title ?? "未关联"}</td><td>{task.latest_run ?? "尚未运行"}</td><td>{formatDate(task.created_at)}</td><td><button className="icon-button" type="button" aria-label={`${task.objective}更多操作`}><MoreHorizontal size={17} /></button></td></tr>;
-                })}</tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      ) : (
-        <section className="run-log-screen">
-          <div className="run-log-screen__heading"><div><h1>运行记录</h1><p>执行、暂停、恢复与审批历史</p></div></div>
-          <div className="board-empty"><Clock3 size={20} /><h2>尚无运行记录</h2><p>任务将在接入受控执行环境后产生真实运行记录。</p></div>
-        </section>
-      )}
-    </main>
+export function TaskBoardScreen({ownerId,tasks,projects,conversations,dataState,selectedTask,detailContainer,runId,onRunChange,onSelectedTaskChange,onTaskInspect,onTaskOpen,onTaskSaved,onNewTask,chatEnabled,onDataRetry,onAccessLost,...chrome}:ScreenChromeProps & {
+  ownerId:string;tasks:TaskItem[];projects:Project[];conversations:Conversation[];dataState:'loading'|'ready'|'error';selectedTask:TaskItem|null;
+  detailContainer:HTMLDivElement|null;runId:string|null;onRunChange:(id:string)=>void;
+  onSelectedTaskChange:(task:TaskItem)=>void;onTaskInspect:(task:TaskItem,runId?:string)=>Promise<boolean>;onTaskOpen:(task:TaskItem)=>void;onNewTask:(projectId:string|null)=>void;chatEnabled:boolean;onDataRetry:()=>void;onAccessLost:(error:unknown)=>void;
+  onTaskSaved:(task:TaskItem)=>void;
+}) {
+  const scrolling=useRef<HTMLElement>(null);useFadingScrollbars(scrolling);
+  const [view,setView]=useState<'状态分组'|'列表'|'运行记录'>('状态分组');
+  const [query,setQuery]=useState('');const [projectFilter,setProjectFilter]=useState('all');const [statusFilter,setStatusFilter]=useState('all');
+  const [detailAction,setDetailAction]=useState<{taskId:string;kind:TaskDetailAction}|null>(null);
+  const inspect=async(task:TaskItem,runId?:string,kind?:TaskDetailAction)=>{
+    if(await onTaskInspect(task,runId))setDetailAction(kind?{taskId:task.id,kind}:null);
+  };
+  const selected=selectedTask;
+  const projectNames=Object.fromEntries(projects.map(row=>[row.id,row.title]));
+  const project=(id:string|null)=>id?projectNames[id]??'项目暂不可读':'未关联项目';
+  const conversation=(task:TaskItem)=>conversations.find(row=>row.id===task.conversation_id)?.title??'会话暂不可读';
+  const reload=useRef(onDataRetry);reload.current=onDataRetry;
+  const active=tasks.some(task=>task.status==='queued'||task.status==='running'||task.status==='waiting');
+  useEffect(()=>{if(!active)return;const timer=setInterval(()=>reload.current(),1500);return()=>clearInterval(timer);},[active]);
+  const history=useTaskRuns(view==='运行记录'||chrome.contextOpen?selected?.id:undefined,onAccessLost,ownerId);
+  const runs=history.rows.filter(row=>row.task_id===selected?.id);
+  const filtered=tasks.filter(task=>
+    matchesTaskSearch(task,query,project(task.project_id)+' '+conversation(task))&&
+    matchesTaskFilters(task,statusFilter==='all'?[]:[statusFilter as TaskStatus])&&
+    (projectFilter==='all'||(projectFilter==='none'?task.project_id===null:task.project_id===projectFilter))
   );
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  const visible=[...filtered].reverse();
+  const changeView=(next:typeof view)=>{setView(next);};
+  const clear=()=>{setQuery('');setProjectFilter('all');setStatusFilter('all');};
+  const filtering=Boolean(query.trim()||projectFilter!=='all'||statusFilter!=='all');
+  return <main ref={scrolling} className="app-main task-panel-screen fading-scrollbar"><TopBar {...chrome} title="任务面板" subtitle={`${filtering?`${visible.length} / `:''}${tasks.length} 个任务`} tabs={null} action={<button className="secondary-button task-panel-new" type="button" disabled={!chatEnabled} title={!chatEnabled?'聊天模块当前不可用':undefined} onClick={()=>onNewTask(projectFilter==='all'||projectFilter==='none'?null:projectFilter)}><Plus size={15}/>创建任务</button>}/>
+    <section className="task-board task-panel">
+      <div className="task-panel-toolbar">
+        <SegmentedControl value={view} options={['状态分组','列表','运行记录'] as const} onChange={changeView} label="任务面板视图"/>
+        <div className="task-panel-filters">
+          <label className="search-field search-field--short"><Search size={15}/><input aria-label="搜索任务" placeholder="搜索任务、项目或会话" value={query} onChange={event=>setQuery(event.target.value)}/></label>
+          <WorkbenchOptionMenu label="筛选任务项目" value={projectFilter} className="task-panel-menu" options={[{value:'all',label:'全部项目'},{value:'none',label:'未关联项目'},...projects.map(row=>({value:row.id,label:row.title}))]} onSelect={setProjectFilter}/>
+          <WorkbenchOptionMenu label="筛选任务状态" value={statusFilter} className="task-panel-menu" options={[{value:'all',label:'全部状态'},...statuses.map(status=>({value:status,label:taskStatusLabel(status)}))]} onSelect={setStatusFilter}/>
+          <button className="icon-button" type="button" aria-label="清除筛选" title="清除筛选" disabled={!filtering} onClick={clear}><FilterX size={15}/></button>
+          <button className="icon-button" type="button" aria-label="刷新任务面板" onClick={onDataRetry}><RotateCw size={15}/></button>
+        </div>
+      </div>
+      {dataState==='loading'&&!tasks.length&&<PageState>正在读取任务…</PageState>}
+      {dataState==='error'&&<PageState error onRetry={onDataRetry}>任务刷新失败，已确认记录保留。</PageState>}
+      {view==='状态分组'&&(dataState==='ready'||visible.length>0)&&<div className="task-panel-board">{groups.map(({id,label,statuses:groupStatuses,icon:Icon})=><BoardColumn key={id} id={id} label={label} icon={<Icon size={15}/>} tasks={visible.filter(task=>matchesTaskFilters(task,groupStatuses))} projectNames={projectNames} ownerId={ownerId} chatEnabled={chatEnabled} onOpenTask={(task,action)=>void inspect(task,undefined,action)} onOpenConversation={onTaskOpen}/>)}</div>}
+      {view==='列表'&&(dataState==='ready'||visible.length>0)&&<TaskListRows tasks={visible} ownerId={ownerId} project={project} conversation={conversation} selectedId={chrome.contextOpen?selected?.id:undefined} emptyText={dataState==='ready'?(filtering?'没有匹配任务，请调整筛选。':'暂无任务'):null} onInspect={task=>void inspect(task)} onOpenConversation={onTaskOpen} chatEnabled={chatEnabled}/>}
+      {view==='运行记录'&&<>
+        <div className="task-panel-history-choice" aria-busy={history.state==='loading'}>{visible.length>0&&<><span>查看任务</span><WorkbenchOptionMenu label="选择运行记录任务" side="right" className="task-panel-menu task-panel-task-choice" value={visible.some(task=>task.id===selected?.id)?selected?.id??'':''} display={visible.some(task=>task.id===selected?.id)?undefined:'选择任务'} options={visible.map(task=>({value:task.id,label:taskTitle(task)}))} onSelect={id=>{const task=tasks.find(row=>row.id===id);if(task){onSelectedTaskChange(task);}}}/>{selected&&visible.some(task=>task.id===selected.id)&&<small role="status">{history.state==='loading'?'正在读取…':`${runs.length} 次运行`}</small>}</>}</div>
+        {(!selected||!visible.some(task=>task.id===selected.id))?(dataState==='ready'&&<TaskRunRows runs={[]} emptyText={visible.length?'选择任务查看运行记录':filtering?'没有匹配任务，请调整筛选。':'暂无运行记录'} onInspect={()=>{}}/>):<>
+          {history.state==='error'&&<PageState error onRetry={history.reload}>运行记录读取失败，已确认记录保留。</PageState>}
+          <TaskRunRows runs={runs} selectedId={chrome.contextOpen?runId:undefined} emptyText={history.state==='loading'?'正在读取运行记录…':history.state==='ready'?'这项任务尚未运行。':null} onInspect={id=>void inspect(selected,id)}/>
+        </>}
+      </>}
+    </section>
+    {chrome.contextOpen&&detailContainer&&selected&&createPortal(<TaskDetails key={selected.id} task={selected} ownerId={ownerId} projectTitle={project(selected.project_id)} conversationTitle={conversation(selected)}
+      history={history} action={detailAction?.taskId===selected.id?detailAction:null} onActionHandled={()=>setDetailAction(current=>current?.taskId===selected.id?{...current,kind:'progress'}:current)} chatEnabled={chatEnabled} runId={runId} onRunChange={onRunChange} onTaskOpen={onTaskOpen} onTaskSaved={onTaskSaved} onDataRetry={onDataRetry} onAccessLost={onAccessLost}/>,detailContainer)}
+  </main>;
 }

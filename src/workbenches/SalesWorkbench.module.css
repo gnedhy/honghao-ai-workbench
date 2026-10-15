@@ -176,6 +176,7 @@
 .root:global(.workbench-detail):has(.productSection) { display:flex; flex-direction:column; overflow:hidden; }
 .productSection { display:flex; flex:0 1 auto; min-width:0; min-height:0; padding-top:20px; flex-direction:column; }
 .productSection > div { flex:0 1 auto; min-height:0; }
+.productSection:has(:global(.ui-empty-state)),.productSection > div:has(:global(.ui-empty-state)) { flex:1; }
 .productToolbar { gap:8px; }
 .productToolbar > label input:not([type=checkbox]) { min-height:0; padding:0; border:0; background:transparent; }
 .quoteTable td > small { display:block; margin-top:5px; color:#68747b; font-size:calc(10px + var(--ui-font-offset)); line-height:1.45; }

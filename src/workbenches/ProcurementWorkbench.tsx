@@ -3,7 +3,7 @@ import { useUnsavedChanges } from "../components/Interaction";
 import { ProcurementMaterialDrawer } from "./ProcurementMaterialDrawer";
 import { ReadOnlyMaterialDrawer, ChartEmpty, ChangePrices, price, formatDate, formatShanghaiDateTime, formatPriceDate, shortDate, focusWithoutScroll, recordDialogKeys, updateEventLabel} from "./ProcurementMaterialView";
 import { ReasonSelect } from "./procurementPriceEditing";
-import { DashboardPanel, WorkbenchLoading } from "../components/WorkbenchLayout";
+import {EmptyState,  DashboardPanel, WorkbenchLoading } from "../components/WorkbenchLayout";
 import { DecimalInput } from "../components/DecimalInput";
 import { PriceMovement as Movement } from "../components/PriceMovement";
 import { Drawer } from "../components/Drawer";
@@ -11,7 +11,7 @@ import { TrendMaterialMenu, PriceDateRangeMenu } from "../components/WorkbenchMe
 import { useMoverPaging } from "../components/useMoverPaging";
 import { RecordFilters } from "../components/RecordFilters";
 import { createPortal } from "react-dom";
-import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, CalendarDays, Check, ChevronRight, Clock3, FileUp, PackageCheck, RefreshCw, TrendingDown, TrendingUp, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, CalendarDays, Check, ChevronRight, Clock3, FileUp, History, PackageCheck, RefreshCw, TrendingDown, TrendingUp, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { createProcurementMaterial, cancelProcurementSchedule, confirmProcurementImport, fetchProcurementBatch, fetchProcurementMaterial, fetchProcurementOverview, previewProcurementImport, publishProcurementUpdate} from "../api";
@@ -160,7 +160,7 @@ function PriceTrendPanel({ data, className = "" }: { data: ProcurementOverview; 
 
   return <DashboardPanel className={`${styles.dashboardPanel} ${styles.trendPanel}${className ? ` ${className}` : ""}`}>
     <div className={styles.panelHeading}><div><span>历史价格记录</span><h2>原料价格走势</h2></div><div className={styles.chartActions}><PriceDateRangeMenu label="走势日期范围" period={period} range={range} onChange={setPeriod} /><TrendMaterialMenu materials={data.materials} selected={selectedMaterial} onSelect={setSelectedMaterial} /></div></div>
-    {failed ? <ChartEmpty title="价格历史暂时不可用" detail="稍后重新进入该页面。" /> : history === null ? <WorkbenchLoading local title="正在读取采购价格趋势" /> : trend.length < 2 ? <ChartEmpty title="暂无可比较周期" detail="至少需要两期单值价格才会生成趋势线。" /> : <div className={styles.lineChart} aria-label={`${selectedMaterial}价格趋势`}><ResponsiveContainer width="100%" height="100%"><LineChart data={trend} accessibilityLayer margin={{ top: 8, right: 12, bottom: 4, left: 0 }}><CartesianGrid stroke="#edf0f1" vertical={false} /><XAxis dataKey="recordedAt" tickFormatter={shortDate} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis domain={axis.domain} ticks={axis.ticks} interval="preserveStartEnd" minTickGap={6} tickFormatter={value => Number(value).toFixed(2)} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} width={52} /><Tooltip labelFormatter={(value) => formatPriceDate(String(value))} formatter={(value) => [price(String(value)), "最新价"]} /><Line type="monotone" dataKey="value" stroke="#2f3337" strokeWidth={2} dot={{ r: 3, fill: "#fff", strokeWidth: 2 }} activeDot={{ r: 4 }} /></LineChart></ResponsiveContainer></div>}
+    {failed ? <ChartEmpty error title="价格历史暂时不可用" detail="稍后重新进入该页面。" /> : history === null ? <WorkbenchLoading local title="正在读取采购价格趋势" /> : trend.length < 2 ? <ChartEmpty title="暂无可比较周期" detail="至少需要两期单值价格才会生成趋势线。" /> : <div className={styles.lineChart} aria-label={`${selectedMaterial}价格趋势`}><ResponsiveContainer width="100%" height="100%"><LineChart data={trend} accessibilityLayer margin={{ top: 8, right: 12, bottom: 4, left: 0 }}><CartesianGrid stroke="#edf0f1" vertical={false} /><XAxis dataKey="recordedAt" tickFormatter={shortDate} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis domain={axis.domain} ticks={axis.ticks} interval="preserveStartEnd" minTickGap={6} tickFormatter={value => Number(value).toFixed(2)} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} width={52} /><Tooltip labelFormatter={(value) => formatPriceDate(String(value))} formatter={(value) => [price(String(value)), "最新价"]} /><Line type="monotone" dataKey="value" stroke="#2f3337" strokeWidth={2} dot={{ r: 3, fill: "#fff", strokeWidth: 2 }} activeDot={{ r: 4 }} /></LineChart></ResponsiveContainer></div>}
   </DashboardPanel>;
 }
 
@@ -210,7 +210,7 @@ function PriceDistributionPanel({ data }: { data: ProcurementOverview }) {
   ].filter(item => item.value > 0);
   return <DashboardPanel className={styles.dashboardPanel}>
         <div className={styles.panelHeading}><div><span>原料数量占比</span><h2>价格变动分布</h2></div><PriceDateRangeMenu label="分布日期范围" period={period} range={range} onChange={setPeriod} /></div>
-        {failed ? <ChartEmpty title="价格分布读取失败" detail="请重新加载页面。" /> : history === null ? <WorkbenchLoading local title="正在读取采购价格分布" /> : !movement ? <ChartEmpty title="暂无价格版本统计" detail="所选截止日期之前没有价格版本。" /> : <><div className={styles.pieChart}><ResponsiveContainer width="100%" height="100%"><PieChart accessibilityLayer><Pie data={pieData} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={2}>{pieData.map((item) => <Cell key={item.name} fill={item.color} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><strong>{movement.comparable}</strong><span>项可比较</span></div><div className={styles.chartLegend}>{pieData.map((item) => <span key={item.name} className={item.name === "持平" ? styles.stableText : undefined}><i style={{ background: item.color }} />{item.name}<strong>{item.value}</strong></span>)}</div></>}
+        {failed ? <ChartEmpty error title="价格分布读取失败" detail="请重新加载页面。" /> : history === null ? <WorkbenchLoading local title="正在读取采购价格分布" /> : !movement ? <ChartEmpty title="暂无价格版本统计" detail="所选截止日期之前没有价格版本。" /> : <><div className={styles.pieChart}><ResponsiveContainer width="100%" height="100%"><PieChart accessibilityLayer><Pie data={pieData} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={2}>{pieData.map((item) => <Cell key={item.name} fill={item.color} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><strong>{movement.comparable}</strong><span>项可比较</span></div><div className={styles.chartLegend}>{pieData.map((item) => <span key={item.name} className={item.name === "持平" ? styles.stableText : undefined}><i style={{ background: item.color }} />{item.name}<strong>{item.value}</strong></span>)}</div></>}
       </DashboardPanel>;
 }
 
@@ -241,14 +241,14 @@ function PriceMovers({ batches, cache, compact = false }: { batches: Procurement
       setPage(0); setPreviousPage(null); setInstant(true);
     }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => controller.abort();
-  }, [historyKey, retry]);
+  }, [batches, cache, historyKey, retry, setInstant, setPage, setPreviousPage]);
 
 
 
   return <DashboardPanel className={`${styles.dashboardPanel} ${styles.moversPanel}${compact ? ` ${styles.compactMovers}` : ""}`} aria-label="价格变动排行" aria-roledescription={compact ? undefined : "轮播"} {...interaction}>
     <div className={styles.panelHeading}><div><span>区间涨跌幅</span><h2>价格变动排行</h2></div><div className={styles.moverActions}><PriceDateRangeMenu period={period} range={range} onChange={value => { setPeriod(value); setPage(0); setPreviousPage(null); setInstant(true); }} /><div className={styles.moverSwitch} role="group" aria-label="排行方向">{(["up", "down"] as const).map(value => <button key={value} type="button" aria-pressed={ranking === value} onClick={() => { setRanking(value); setPage(0); setPreviousPage(null); setInstant(true); }}>{value === "up" ? "涨幅" : "降幅"}</button>)}</div></div></div>
     {failed && history !== null && <p role="status">排行刷新失败，暂显示上次结果。<button type="button" onClick={() => setRetry(value => value + 1)}>重试</button></p>}
-    {failed && history === null ? <div className={styles.chartEmpty}><strong>价格排行读取失败</strong><button type="button" className="secondary-button" onClick={() => setRetry(value => value + 1)}>重新加载</button></div> : rows === null ? <WorkbenchLoading local title="正在读取采购价格排行" /> : !rankedRows.length ? <ChartEmpty title={ranking === "up" ? "暂无涨价原料" : "暂无降价原料"} detail="该范围内暂无符合条件的原料；缺少期初价格不参与排行。" /> : <>
+    {failed && history === null ? <div className={styles.chartEmpty}><strong>价格排行读取失败</strong><button type="button" className="secondary-button" onClick={() => setRetry(value => value + 1)}>重新加载</button></div> : rows === null ? <WorkbenchLoading local title="正在读取采购价格排行" /> : !rankedRows.length ? <ChartEmpty title={ranking === "up" ? "暂无涨价原料" : "暂无降价原料"} detail="缺少期初价格的原料不参与排行。" /> : <>
       <div key={`${ranking}-${range.start}-${range.end}`} className={styles.moverPages} data-instant={instant || reduced} aria-live={rotating ? "off" : "polite"}>
         {Array.from({ length: pages }, (_, index) => <div key={index} data-active={page === index} data-retiring={previousPage === index} aria-hidden={page !== index} inert={page !== index} className={styles.moverList} role="group" aria-roledescription={compact ? undefined : "排行页"} aria-label={compact ? "排行结果" : `第 ${index + 1} 页，共 ${pages} 页`}>
           {rankedRows.slice(index * pageSize, (index + 1) * pageSize).map((row, rowIndex) => { const Icon = row.changePercent > 0 ? TrendingUp : TrendingDown; return <div key={`${row.batchId}-${row.materialId}`} style={{ transitionDelay: `${Math.floor(rowIndex / 2) * 30}ms` }}><Icon size={16} /><span><span className={styles.moverLine}><strong><button type="button" className={styles.materialLink} onClick={event => { materialTrigger.current = event.currentTarget; setSelectedMaterial(row.materialId); }}><span><strong title={row.item.code}>{row.item.code}</strong></span><ChevronRight size={16} aria-hidden="true"/></button></strong><span className={styles.moverPrices} title={`比较日期：${formatPriceDate(row.previousDate)} → ${formatPriceDate(row.date)}`}><span>{price(row.previous)}</span><ArrowRight size={12} /><b>{price(row.item.latest_price)}</b><Movement value={row.changePercent} /></span></span><small className={styles.moverVersions}><span>v{row.version}</span>{" · "}<span>{formatPriceDate(row.date)}</span></small></span></div>; })}
@@ -441,7 +441,7 @@ function PublishedBatchDrawer({ batchId, onClose }: { batchId: string; onClose: 
       <div className={styles.changePrices}><table className={styles.table}><thead><tr>{header("code", "原料编号 / 来源")}{header("previous", "上版价格")}{header("current", "本版价格")}{header("change", "涨跌变化")}</tr></thead><tbody>{priceItems.map(item => { const comparison = detail.comparison?.items[item.material_id]; const source=detail.snapshot_sources?.[item.material_id]; return <tr key={item.material_id}><td><strong>{item.code} · {item.unit}</strong><span>{source?.price_date ?? "未定价"}{source?.sheet ? ` · ${source.sheet}!${source.cell ?? "—"}` : ""}</span></td><td>{price(comparison?.previous_raw ?? comparison?.previous)}</td><td><strong>{price(source?.raw_price ?? item.latest_price)}</strong>{source && source.price_kind!=="number" && source.price_kind!=="missing" && <small>原文异常，不参与精确涨跌</small>}</td><td><Movement value={comparison?.change == null ? null : comparison.change * 100} /></td></tr>; })}</tbody></table></div>
       </div>
       <div className={styles.versionPane} id="version-panel-changes" role="tabpanel" aria-labelledby="version-tab-changes" tabIndex={0} hidden={tab !== "changes"}>
-        {!detail.changes?.length ? <p className={styles.batchMeta}>此版本没有可关联的逐次修改记录。</p> : <ol className={styles.changeTimeline}>{detail.changes.map(change => <li key={change.id}><div><strong>{updateEventLabel(change.event)}</strong><time>{formatShanghaiDateTime(change.created_at)}</time></div><p>{change.actor}</p>{change.reason && <p>{change.reason}</p>}<ChangePrices items={change.items ?? []} /></li>)}</ol>}
+        {!detail.changes?.length ? <EmptyState compact icon={History} title="暂无关联修改记录"/> : <ol className={styles.changeTimeline}>{detail.changes.map(change => <li key={change.id}><div><strong>{updateEventLabel(change.event)}</strong><time>{formatShanghaiDateTime(change.created_at)}</time></div><p>{change.actor}</p>{change.reason && <p>{change.reason}</p>}<ChangePrices items={change.items ?? []} /></li>)}</ol>}
       </div>
     </>}
   </PriceRecordDrawer>;
@@ -563,7 +563,7 @@ function PublishConfirm({ update, publishing, onClose, onConfirm }: { update: Pr
 }
 
 function Empty({ title, detail }: { title: string; detail: string }) {
-  return <div className={styles.empty}><PackageCheck size={21} /><strong>{title}</strong><p>{detail}</p></div>;
+  return <EmptyState icon={PackageCheck} className={styles.empty} title={title}>{detail}</EmptyState>;
 }
 
 async function publish(update: ProcurementUpdate, baseline_id: string | null, mode: "immediate" | "scheduled", activateAt: string | undefined, onUpdated: (data: ProcurementOverview) => void, onNotice: (message: string) => void) {

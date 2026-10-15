@@ -38,6 +38,7 @@ let browser;
 const results = [];
 try {
   await server.listen();
+  await server.warmupRequest('/w1-baseline.tsx'); await server.waitForRequestsIdle();
   browser = await chromium.launch({ headless: true });
   const origin = server.resolvedUrls.local[0];
   async function run(name, check, fault = '', pageName = 'calculate') {

@@ -14,7 +14,7 @@ const output = process.env.W8_OUTPUT_DIR ?? `.scratch/w8-20261003/${red ? 'red-'
 mkdirSync(output, {recursive:true});
 const entry = path.resolve('w8-app.tsx').replaceAll('\\', '/');
 const original = new Set(['App.tsx','screens/WorkbenchScreen.tsx','components/Sidebar.tsx','components/SettingsDialog.tsx','components/FeedbackDialog.tsx','workbenches/WorkbenchModuleSlot.tsx']);
-const server = await createServer({configFile:false,logLevel:'silent',cacheDir:'.scratch/w8-20261003/vite-cache',plugins:[react(),{
+const server = await createServer({configFile:false,logLevel:'silent',optimizeDeps:{entries:['index.html']},cacheDir:'.scratch/w8-20261003/vite-cache',plugins:[react(),{
  name:'w8-isolated-app',enforce:'pre',
  configureServer(instance){instance.middlewares.use(async(req,res,next)=>{
   const url=req.url.split('?')[0];

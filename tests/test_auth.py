@@ -1,4 +1,5 @@
 import time
+from threading import Event,Thread,Timer
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,7 @@ def create_admin(settings: Settings, password: str = "Correct-Horse-2026") -> No
     )
 
 
-def test_admin_can_log_in_and_read_current_session(tmp_path: Path) -> None:
+def test_admin_can_log_in_and_read_current_session(tmp_path: Path,monkeypatch) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
     app = create_app(settings)
 
@@ -31,7 +32,14 @@ def test_admin_can_log_in_and_read_current_session(tmp_path: Path) -> None:
             "/api/login",
             json={"username": "admin", "password": "Correct-Horse-2026"},
         )
+        lookups=[]
+        original=IdentityStore.user_for_session
+        def counted_session(store,token):
+            lookups.append(True)
+            return original(store,token)
+        monkeypatch.setattr(IdentityStore,'user_for_session',counted_session)
         current = client.get("/api/me")
+        assert len(lookups)==1,'One HTTP request repeats the session database lookup'
 
     assert login.status_code == 200
     assert login.json() == {
@@ -53,12 +61,25 @@ def test_admin_can_log_in_and_read_current_session(tmp_path: Path) -> None:
     assert "Correct-Horse-2026" not in login.text
 
 
-def test_logout_invalidates_the_server_session(tmp_path: Path) -> None:
+def test_logout_invalidates_the_server_session(tmp_path: Path,monkeypatch) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
         create_admin(settings)
         client.post("/api/login", json={"username": "admin", "password": "Correct-Horse-2026"})
+        original=IdentityStore.user_for_session
+        authenticated=Event()
+        def logout_after_lookup(store,token):
+            user=original(store,token)
+            if user and not authenticated.is_set():
+                authenticated.set();store.logout(token)
+            return user
+        with monkeypatch.context() as patch:
+            patch.setattr(IdentityStore,'user_for_session',logout_after_lookup)
+            denied=client.post('/api/users',json={'username':'stale-session-user','display_name':'synthetic','password':'Synthetic-Password-2026','scope_levels':{}})
+            assert denied.status_code==401,'A write reused identity verified before session revocation'
+        client.post('/api/login',json={'username':'admin','password':'Correct-Horse-2026'})
+        assert not any(user['username']=='stale-session-user' for user in client.get('/api/users').json())
         logout = client.post("/api/logout")
         current = client.get("/api/me")
 
@@ -66,7 +87,7 @@ def test_logout_invalidates_the_server_session(tmp_path: Path) -> None:
     assert current.status_code == 401
 
 
-def test_business_apis_require_authentication(tmp_path: Path) -> None:
+def test_business_apis_require_authentication(tmp_path: Path,monkeypatch) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
 
     with TestClient(create_app(settings)) as client:
@@ -75,6 +96,24 @@ def test_business_apis_require_authentication(tmp_path: Path) -> None:
         create_admin(settings)
         client.post("/api/login", json={"username": "admin", "password": "Correct-Horse-2026"})
         modules_after_login = client.get("/api/modules")
+        entered,release=Event(),Event()
+        original=IdentityStore.user_for_session
+        def held_identity(store,token):
+            entered.set()
+            assert release.wait(5)
+            return original(store,token)
+        monkeypatch.setattr(IdentityStore,'user_for_session',held_identity)
+        protected=[]
+        reading=Thread(target=lambda:protected.append(client.get('/api/modules')))
+        reading.start()
+        assert entered.wait(5)
+        guard=Timer(2,release.set);guard.start()
+        try:
+            assert client.get('/api/health').status_code==200
+            assert not release.is_set(),'Session database lookup blocks unrelated HTTP requests'
+        finally:
+            release.set();guard.cancel();reading.join(timeout=5)
+        assert not reading.is_alive() and protected[0].status_code==200
 
     assert health.status_code == 200
     assert modules_before_login.status_code == 401
@@ -211,7 +250,7 @@ def test_identity_schema_is_additive_to_core_schema_v5(tmp_path: Path) -> None:
         ).fetchone()
 
     assert health.status_code == 200
-    assert Database(settings.database_url).schema_version() == 7
+    assert Database(settings.database_url).schema_version() == 17
     assert identity_version == (7,)
 
 

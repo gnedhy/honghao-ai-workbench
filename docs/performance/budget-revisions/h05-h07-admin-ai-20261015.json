@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "revisions": [
+    {
+      "metric": "bundle.totalJsKiB",
+      "from": 380,
+      "to": 400,
+      "reason": "2026-10-15 用户明确批准总 JS 上限调整为 400 KiB，其它门槛保持不变。H05 后续候选增加 H07 个人／项目指令、按账号隔离的原生记忆，以及管理员 AI 配置、预算用量与排队界面。已移除失效样式并将未接入的自动化原型样式移回所属组件；保留已有功能、业务工作台 lazy 边界与原性能负载，不为继续压缩总 JS 额外重构。",
+      "evidence": "历史基线 .scratch/h05/context-high-bundle-20261009.json：总 JS 379.6826171875 KiB、初始 JS 142.6015625 KiB、总 CSS 59.4462890625 KiB（历史候选，不作同源码功能归因）。本次 full-gate-20261015/final-clean-lifecycle-bundle.json：总 JS 394.9697265625 KiB、初始 JS 157.4140625 KiB、总 CSS 59.2373046875 KiB；旧 380 KiB 超限报告保留。final-clean-lifecycle-browser.json 中原 5 context、4 倍 CPU、采购 2000／研发 500／销售 2000 产品负载全部通过；final-clean-lifecycle-api.json 原 6 profile 各 9 次及 SQL 门槛全部通过。证据保存于本机外部 full-gate-20261015 目录，基线副本为 baseline-h05-bundle-20261009.json；最终统一门禁结论记录于 docs/history/records/项目AI工作区-H05闭环收尾-2026-10-08.md。仅总 JS 预算变更，其它数值与样本不变；该批准不构成正式部署授权。 最终标准 all verifier 退出 0，585 API／71 Node 全通过且无跳过；收据 final-clean-lifecycle-receipt.json，源码 source-final-clean-lifecycle.json 共 480 文件前后一致。"
+    }
+  ]
+}

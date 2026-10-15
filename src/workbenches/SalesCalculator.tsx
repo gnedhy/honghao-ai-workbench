@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
-import { ChevronDown, Plus, RotateCcw, Trash2 } from "lucide-react";
+import {History,  ChevronDown, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { DecimalInput } from "../components/DecimalInput";
 import { DiscardChangesDialog } from "../components/Interaction";
-import { PageState } from "../components/WorkbenchLayout";
+import {EmptyState,  PageState } from "../components/WorkbenchLayout";
 import { type Product } from "./salesModel";
 import { basisLabel, dateLabel, format, initialProduct, incompleteStep, type Saved, type Source, type Panel } from "./salesCalculatorModel";
 import { useCalculatorWorkspace } from "./salesCalculatorWorkspace";
@@ -87,7 +87,7 @@ export function SalesCalculator({ products, accessLevel }: { products: Product[]
               </button>
               {accessLevel >= 3 && <button type="button" aria-label={`删除 ${dateLabel(row.created_at)} 的测算`} title="删除历史测算" onClick={() => setDeleteTarget(row)}><Trash2 size={14} /></button>}
             </div>)}
-            {historyLoading ? <PageState>正在读取历史测算</PageState> : historyError ? <PageState error className={c.error} onRetry={() => retryHistory()}>{historyError}</PageState> : !workspaces.length && <small>暂无历史测算</small>}
+            {historyLoading ? <PageState>正在读取历史测算</PageState> : historyError ? <PageState error className={c.error} onRetry={() => retryHistory()}>{historyError}</PageState> : !workspaces.length && <EmptyState compact icon={History} title="暂无历史测算"/>}
           </div>
         </details>
         {accessLevel >= 3 && <button className="primary-button" type="button" disabled={busy || hasPanelDrafts || panels.some(panel => incompleteStep(panel) >= 0)} onClick={() => void saveWorkspace()}>{busy ? "保存中…" : "保存对比"}</button>}

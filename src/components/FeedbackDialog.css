@@ -5,7 +5,7 @@
 .feedback-dialog[open]::backdrop{animation:fade-in var(--motion-fast) ease-out both}
 .feedback-dialog[data-closing=true]{animation:feedback-out var(--motion-exit) var(--ease-out) both;pointer-events:none}
 .feedback-dialog[data-closing=true]::backdrop{animation:fade-out var(--motion-exit) ease-out both}
-.feedback-body{animation:reduced-fade-in var(--motion-exit) ease-out both}
+.feedback-body{scrollbar-gutter:stable}
 .feedback-filter[open]>div{animation:surface-in var(--motion-fast) var(--ease-out) both;transform-origin:top right}
 .feedback-icon,.feedback-mine,.feedback-segments label,.feedback-upload-target{transition:background-color var(--motion-fast) ease,color var(--motion-fast) ease,border-color var(--motion-fast) ease,transform var(--motion-press) var(--ease-out)}
 @media(hover:hover){.feedback-icon:active:not(:disabled),.feedback-mine:active{transform:scale(.97)}}
@@ -41,3 +41,4 @@
 @media(max-width:650px){.feedback-body[data-view=new]{padding:20px}.feedback-compose-fields{gap:18px}.feedback-dialog .feedback-kind-options{gap:12px}.feedback-dialog .feedback-segments label{padding:5px 10px}.feedback-upload-target{gap:10px}.feedback-upload-choice{display:none}.feedback-actions:has(.feedback-privacy){flex-wrap:wrap}.feedback-privacy{width:100%;margin-bottom:4px}}
 @media(max-width:650px){.feedback-dialog{height:680px}.feedback-header{padding:16px;gap:6px}.feedback-header h2{font-size:18px}.feedback-header>.secondary-button{font-size:12px;padding:7px 9px}.feedback-body{padding:16px}.feedback-item{gap:8px}.feedback-item-copy strong{font-size:13px}.feedback-item-right{font-size:11px}.feedback-actions{padding:12px 16px}.feedback-error{padding:8px 16px}.feedback-toolbar>div{gap:10px}.feedback-dialog label span{font-size:12px}}
 .feedback-dialog input:focus-visible:where(html:not([data-input-modality="pointer"]) *),.feedback-dialog textarea:focus-visible:where(html:not([data-input-modality="pointer"]) *),.feedback-dialog select:focus-visible:where(html:not([data-input-modality="pointer"]) *){outline-offset:-2px}
+.feedback-body[data-view=list]:has(> .ui-empty-state){display:flex;flex-direction:column}.feedback-body[data-view=list]>.ui-empty-state{flex:1}

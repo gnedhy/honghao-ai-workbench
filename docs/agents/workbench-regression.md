@@ -4,7 +4,9 @@
 
 ## 变更、消费者与测试
 
-H04 的 `tests/test_ai_runtime.py` 联通专用 PostgreSQL 与真实控制器，注入合成 stdio／模型／沙箱，覆盖私有幂等、事件、预算、停止、撤权、重启和数据恢复；`test_ai_runtime_ui.py` 启动实际 App 的 `scripts/check-ai-runtime.mjs`，覆盖 1440/390 较早待执行输入、读取失败恢复、SSE 断线去重、停止和失权清理。上述不替代 OS／真实模型验证；Ubuntu 实测另用 `scripts/check-codex-h04.py`，只接受明确的 honghao_test_app/honghao_test/test 身份，并独占测试锁。完整门禁仍保留原工作台、API／Node／浏览器／性能样本。
+H05 现役入口为 `test_ai_project_ui.py`、`test_ai_project_ui_browser.py`／`check-ai-project-ui.mjs`、`test_conversation_delete.py` 和 `test_task_acceptance.py`，复用 H03/H04 的真实App/API/PG消费者。覆盖三种任务视图、逐轮验收、busy任务／轮次选择及来源归档、单任务自动选择、actor绑定、归档各入口、恢复／删除、更名并发和读取失权。新建／变更／首次提交回执的模式投影须与历史列表一致，原项目重入检查保留。自动注入模型／stdio／OS不能替代实际原生内核和DeepSeek；真实配置闭环见 [配置闭环实测](../history/records/项目AI工作区-H05配置修改闭环实测-2026-10-09.md)，2026-10-15 最新完整门禁及各历史版本的独立数字见 [H05收尾记录](../history/records/项目AI工作区-H05闭环收尾-2026-10-08.md#2026-10-15扩展候选完整门禁)；当前消费者同时校验996,147窗口、943,718默认阈值、精简提示进入／退出及项目单选完整命中区域。迁移校验同时保留采购／研发原偏好和源数据，不只检查新增任务表。
+
+H04 的 `tests/test_ai_runtime.py` 联通专用 PostgreSQL 与真实控制器，注入合成 stdio／模型／沙箱，覆盖私有幂等、事件、预算、停止、撤权、重启和数据恢复；`test_ai_runtime_ui.py` 启动实际 App 的 `scripts/check-ai-runtime.mjs`，覆盖 1440/390 较早待执行输入、读取失败恢复、SSE 断线去重、停止和失权清理。上述不替代 OS／真实模型验证；Ubuntu 实测另用 `scripts/check-codex-h04.py`，只接受明确的 honghao_test_app/honghao_test/test 身份，并独占测试锁。共享 `tests/test_postgres.py` 覆盖限定的 Windows 建连恢复边界；重启恢复测试创建的临时控制器必须在 finally 中关闭，避免跨用例调度。完整门禁仍保留原工作台、API／Node／浏览器／性能样本。
 
 表中 `tests/` 用例在真实专用 PostgreSQL 中执行；`tests_ui/` 是 Node 逻辑检查，不能证明实际组件、数据库或权限。`check-sales-baseline.mjs` 使用模拟 API；`test_sales_recovery.py` 启动的 `check-sales-recovery.mjs` 联通真实测试 API 和 PostgreSQL。
 
@@ -96,3 +98,5 @@ G1 证据登记在 W1 任务记录及 #59 评论，不能仅以本文存在判�
 - #60 负责 `SalesWorkbench.tsx`、`Interaction.tsx`、`interactionNavigation.ts` 及保存／退出业务回归；接手本次 `check-sales-baseline.mjs` 的业务断言。API 改动若需要扩大契约或迁移，先另行审查。
 - #61 负责 `package.json`、现有加载脚本、检查命令及依赖边界；直接复用 #60 的销售回归。需要改同一浏览器脚本时先交接该文件，W2 主修改线完成后再接线，不并发编辑。
 - #59 完整关闭、#60/#61 启动、源码推送及生产发布是不同状态。G1 不自动开始后续任务，也不改变仓库设置、总经办状态或正式配置。
+
+H05旧会话阈值补验：test_old_context_usage_keeps_history_and_reads_current_compact_policy保留原始事件而投影现行政策；实际App重开旧回包检查943,718／94.7%。[补丁收据](../history/records/项目AI工作区-H05旧会话阈值提示修复-2026-10-09.md)与先前完整门禁版本分开。

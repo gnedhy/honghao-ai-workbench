@@ -22,16 +22,20 @@ import {ResearchWorkbench} from '/src/workbenches/ResearchWorkbench';
 import {ProcurementNews} from '/src/workbenches/ProcurementNews';
 import {ProcurementDistribution} from '/src/workbenches/ProcurementDistribution';
 import {SalesWorkbench} from '/src/workbenches/SalesWorkbench';
+import {WorkbenchOptionMenu} from '/src/components/WorkbenchMenus';
 import '/src/styles.css';
 const kind=new URLSearchParams(location.search).get('kind');
 const props={accessLevel:2,view:'preview',page:'dashboard',userId:'test',onPageChange:()=>{},onEnter:()=>{}};
 const sales={...props,view:'full',page:kind==='calculator'?'estimator':'calculate',currentUser:{id:'loading-test',scope_levels:{sales:2}}};
-createRoot(document.getElementById('root')).render(kind==='research'?h(ResearchWorkbench,props):kind==='news'?h(ProcurementNews,{cache:{current:null}}):kind==='distribution'?h(ProcurementDistribution,{revision:0,renderLedger:()=>null}):kind==='sales'||kind==='calculator'?h(SalesWorkbench,sales):h(ProcurementWorkbench,props));`; },
+createRoot(document.getElementById('root')).render(kind==='menu'?h('div',{className:'app-shell'},h('aside',{className:'sidebar is-mobile-open'},h('div',{className:'sidebar__scroll'},h('div',{style:{height:1000}},'合成项目列表'),h(WorkbenchOptionMenu,{side:'right',label:'最近列表操作',className:'ai-project-menu sidebar-header-menu',value:'',display:'菜单',options:[{value:'archived',label:'已归档会话'}],onSelect:()=>{document.title='chosen';}}))),h('main',{className:'app-main'},'菜单检查')):kind==='research'?h(ResearchWorkbench,props):kind==='news'?h(ProcurementNews,{cache:{current:null}}):kind==='distribution'?h(ProcurementDistribution,{revision:0,renderLedger:()=>null}):kind==='sales'||kind==='calculator'?h(SalesWorkbench,sales):h(ProcurementWorkbench,props));`; },
 }], server: { host: '127.0.0.1', port: 0, hmr: false } });
 let browser;
 const gate = () => { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; };
 try {
-  await server.listen(); browser = await chromium.launch({ headless: true });
+  await server.listen();
+  // Compile the dev harness before timing functional browser navigation.
+  await server.warmupRequest('/loading-check.tsx'); await server.waitForRequestsIdle();
+  browser = await chromium.launch({ headless: true });
   const origin = server.resolvedUrls.local[0];
   async function run(name, kind, respond, check) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } }); page.setDefaultTimeout(7000);
@@ -55,6 +59,20 @@ try {
       assert.deepEqual(errors, []); assert.deepEqual(unexpected, []); console.log('PASS', name);
     } finally { await page.close(); }
   }
+  await run('sidebar menu: scrolling and reopen keep page position and clickable options', 'menu', async route=>route.abort(), async page=>{
+    const summary=page.getByLabel('最近列表操作',{exact:true});
+    for(const width of [1280,390,1280]){
+      await page.setViewportSize({width,height:900});
+      await summary.click();
+      await page.getByRole('button',{name:'已归档会话',exact:true}).waitFor();
+      const geometry=await page.evaluate(()=>{const sidebar=document.querySelector('.sidebar'),menu=document.querySelector('[popover]');return {left:sidebar.getBoundingClientRect().left,scrollLeft:document.scrollingElement.scrollLeft,open:menu.matches(':popover-open')};});
+      assert.deepEqual(geometry,{left:0,scrollLeft:0,open:true});
+      await page.getByRole('button',{name:'已归档会话',exact:true}).click();
+      assert.equal(await page.title(),'chosen');
+    }
+    await summary.click();await page.getByRole('button',{name:'已归档会话',exact:true}).waitFor();
+    await page.setViewportSize({width:1180,height:900});await page.getByRole('button',{name:'已归档会话',exact:true}).waitFor({state:'hidden'});
+  });
   for (const kind of ['procurement', 'research', 'news', 'distribution']) {
     const pending = gate();
     await run('loading -> failure: ' + kind, kind, async route => {
@@ -84,10 +102,10 @@ try {
     await sales[retry ? 1 : 0].promise;
     await route.fulfill(retry ? { json: empty(path) } : { status: 500, json: { detail: '合成读取失败' } });
   }, async page => {
-    await page.getByText('正在加载销售工作台', { exact: true }).waitFor(); assert.equal(await page.getByText('没有符合条件的产品。', { exact: true }).count(), 0);
-    sales[0].release(); await page.getByText('销售工作台暂时不可用', { exact: true }).waitFor(); assert.equal(await page.getByText('没有符合条件的产品。', { exact: true }).count(), 0);
+    await page.getByText('正在加载销售工作台', { exact: true }).waitFor(); assert.equal(await page.getByText('没有符合条件的产品', { exact: true }).count(), 0);
+    sales[0].release(); await page.getByText('销售工作台暂时不可用', { exact: true }).waitFor(); assert.equal(await page.getByText('没有符合条件的产品', { exact: true }).count(), 0);
     retry = true; await page.getByRole('button', { name: '重新加载', exact: true }).click(); await page.getByText('正在加载销售工作台', { exact: true }).waitFor();
-    sales[1].release(); await page.getByText('没有符合条件的产品。', { exact: true }).waitFor();
+    sales[1].release(); await page.getByText('没有符合条件的产品', { exact: true }).waitFor();
   });
   const history = [gate(), gate()], evaluations = []; let historyRetry = false;
   await run('calculator: history pending/failure/retry/empty; evaluation failure and out-of-order responses', 'calculator', async (route, path) => {

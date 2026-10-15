@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { useExitTransition } from "./Interaction";
 import styles from "./WorkbenchSurface.module.css";
@@ -12,7 +12,7 @@ export function Drawer({ title, label, titleAction, children, onClose, beforeClo
   const previousFocus = useRef(document.activeElement as HTMLElement | null);
   const checking = useRef(false);
   const { closing, close: finishClose } = useExitTransition(onClose);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = previousFocus.current;
     const element = dialog.current;
     element?.showModal();
