@@ -3,6 +3,8 @@ import json
 from copy import deepcopy
 from decimal import Decimal
 
+SUMMARY_PAYLOAD = "summary_payload"
+
 
 def backfill(db):
     from api.research import capture, evaluate, now, packed, signature, comparison
@@ -83,17 +85,30 @@ def purchase_periods(db):
 
 
 def linked_history(db, key, periods=None):
+    return linked_histories(db,[key],periods).get(key,[])
+
+
+def linked_histories(db, keys, periods=None, summary=False):
     """Project comparisons without ever editing original payloads or their signatures."""
-    from api.research import comparison, comparison_price
+    if not keys:
+        return {}
     periods = purchase_periods(db) if periods is None else periods
-    entries = [json.loads(raw) for raw, in db.execute('SELECT payload FROM research_backfill_records WHERE product_id=%s ORDER BY purchase_version',(key,))]
-    for raw, in db.execute('SELECT payload FROM research_cost_records WHERE product_id=%s ORDER BY sequence',(key,)):
+    payload = SUMMARY_PAYLOAD if summary else 'payload'
+    entries = {key:[] for key in keys}
+    for key,raw in db.execute(f'SELECT product_id,{payload} FROM research_backfill_records WHERE product_id=ANY(%s) ORDER BY purchase_version',(list(keys),)):
+        entries[key].append(json.loads(raw))
+    for key,raw in db.execute(f'SELECT product_id,{payload} FROM research_cost_records WHERE product_id=ANY(%s) ORDER BY sequence',(list(keys),)):
         row=json.loads(raw)
         row.update(record_type='formal',effective_date=row['recorded_at'][:10],product_id=key)
         period = periods.get(row['event_id'])
         if period and period.get('price_date'):
             row.update(effective_date=period['price_date'], purchase_version=period['version'])
-        entries.append(row)
+        entries[key].append(row)
+    return {key:_compare_history(rows) for key,rows in entries.items()}
+
+
+def _compare_history(entries):
+    from api.research import comparison, comparison_price
     previous = None
     basis = None
     rows = []
@@ -110,20 +125,32 @@ def linked_history(db, key, periods=None):
     return list(reversed(rows))
 
 
-def version_history(db, event_id=None):
+def version_history(db, event_id=None, access=None, product_id=None, summary=False, histories=None):
     versions = {}
     periods = purchase_periods(db)
     keys = [r[0] for r in db.execute("SELECT DISTINCT product_id FROM research_cost_records UNION SELECT DISTINCT product_id FROM research_backfill_records ORDER BY product_id")]
+    visible = access.visible_ids(db) if access else set()
+    if access:
+        keys = [key for key in keys if key in visible]
+    if product_id is not None:
+        keys = [key for key in keys if key==product_id]
+    histories = histories if histories is not None else linked_histories(db,keys,periods,summary=summary or not event_id)
     for key in keys:
-        for row in linked_history(db,key,periods):
+        for row in histories[key]:
             if row['kind'] != 'recipe' or (event_id and row['event_id']!=event_id):
                 continue
+            if access:
+                if not access.allows(row.get('formula',row)):
+                    continue
+                if summary or not event_id:
+                    row={k:v for k,v in row.items() if k not in {"graph","calculations","formula","source_hashes"}}
+                row = access.project(row,visible)
             eid=row['event_id']
             if eid not in versions:
                 versions[eid]={k:row.get(k) for k in ('record_type','purchase_version','effective_date','recorded_at','reason')}
                 versions[eid].update(id=eid,products=[])
-            if not event_id:
-                row={k:v for k,v in row.items() if k not in {'graph','calculations','latest','inventory','formula','lines'}}
+            if summary or not event_id:
+                row={k:v for k,v in row.items() if k not in {'graph','calculations','latest','inventory','formula','lines','source_hashes'}}
             versions[eid]['products'].append(row)
     ordered=sorted(versions.values(),key=lambda r:(r['effective_date'],r['record_type']=='formal',r['recorded_at'],r['purchase_version'] or 0),reverse=True)
     if event_id:

@@ -13,19 +13,20 @@ export function ChartEmpty({ title, detail }: { title: string; detail: string })
 }
 
 export function ledgerCell(item: ProcurementMaterial, column: string, pending: boolean) {
+  if (column === "data_source") return item.inventory_source?.catalog_source ?? "采购维护";
   if (column === "modifier") {
     const modifier = item.price_modifier;
     return modifier?.name ? <span className={styles.modifierCell}><span>{modifier.name}</span>{(item.round_participants?.length ?? 0) > 1 && <details><summary>本轮 {item.round_participants?.length} 人</summary><small>{item.round_participants?.map(person => person.name).join("、")}</small></details>}</span> : !modifier && item.published_price == null && item.source_purchasers?.length ? <span className={styles.modifierCell}>{item.source_purchasers.join("、")}</span> : "未记录";
   }
   if (column === "unit") return item.unit;
   if (column === "inventory_quantity") return item.inventory_quantity == null ? "—" : <span title={`${item.inventory_quantity} ${item.unit}`}>{Math.trunc(Number(item.inventory_quantity))}</span>;
-  if (column === "latest_price") return item.published_price == null ? "—" : <strong>{price(item.published_price)}</strong>;
-  if (column === "previous_latest_price") return item.previous_published_price == null ? "—" : <strong>{price(item.previous_published_price)}</strong>;
+  if (column === "latest_price") return item.published_price == null ? "—" : <strong><Price value={item.published_price}/></strong>;
+  if (column === "previous_latest_price") return item.previous_published_price == null ? "—" : <strong><Price value={item.previous_published_price}/></strong>;
   if (column === "price_date") return item.published_price_date ? formatPriceDate(item.published_price_date) : "—";
   if (column === "status") return <span className={`${styles.statusPill} ${pending ? styles.statusPending : item.published_price == null ? styles.statusMissing : styles.statusOk}`}>{pending ? "待处理" : item.published_price == null ? "未定价" : "有效"}</span>;
-  if (column === "in_transit_price") return price(item.in_transit_price);
-  if (column === "inventory_price") return item.inventory_price == null ? "—" : <strong>{price(item.inventory_price)}</strong>;
-  return price(item.suggested_price);
+  if (column === "in_transit_price") return <Price value={item.in_transit_price}/>;
+  if (column === "inventory_price") return item.inventory_price == null ? "—" : <strong><Price value={item.inventory_price}/></strong>;
+  return <Price value={item.suggested_price}/>;
 }
 
 
@@ -70,6 +71,9 @@ export function ChangePrices({ items }: { items: NonNullable<NonNullable<Procure
 }
 
 export function price(value?: string | null) { return value == null ? "—" : `¥${value}`; }
+function Price({ value }: { value?: string | null }) {
+  return value == null ? "—" : <span title={price(value)}>¥{Number(value).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>;
+}
 export function formatDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 export function formatShanghaiDateTime(value: string | null) { return value ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value)) : "—"; }
 export function formatPriceDate(value: string) { return value.slice(0, 10).replaceAll("-", "."); }
@@ -88,9 +92,10 @@ export function MaterialPriceBody({detail,batches,notice}: {detail: ResearchMate
   const trend = official.filter(item => item.latest_price != null).map(item => ({date: item.version_date, price: Number(item.latest_price)}));
   const validPriceCount = trend.length;
   return <div className={styles.drawerBody}>{notice}
-        <div className={styles.detailMetrics}><div><span>最新价格</span><strong>{price(latestOfficial?.latest_price)}</strong></div><div><span>上版价格</span><strong>{price(previousPrice)}</strong></div><div><span>涨跌</span><Movement value={change} /></div><div><span>价格日期</span><strong>{latestOfficial?.price_date ? formatPriceDate(latestOfficial.price_date) : "—"}</strong></div></div>
+        {detail.material.inventory_source && <p className={styles.sectionDescription}>{detail.material.inventory_source.source} · 库存截至 {detail.material.inventory_source.as_of} · 导入时间 {formatShanghaiDateTime(detail.material.inventory_source.imported_at)}</p>}
+        <div className={styles.detailMetrics}><div><span>最新价格</span><strong><Price value={latestOfficial?.latest_price}/></strong></div><div><span>上版价格</span><strong><Price value={previousPrice}/></strong></div><div><span>涨跌</span><Movement value={change} /></div><div><span>价格日期</span><strong>{latestOfficial?.price_date ? formatPriceDate(latestOfficial.price_date) : "—"}</strong></div></div>
         <section className={styles.drawerSection}><div><span>价格版本</span><h3>有效价格走势</h3></div>{trend.length < 2 ? <ChartEmpty title="暂无可比较周期" detail="至少需要两期有效价格。" /> : <div className={styles.detailChart}><ResponsiveContainer width="100%" height="100%"><LineChart data={trend}><CartesianGrid stroke="#edf0f1" vertical={false} /><XAxis dataKey="date" tickFormatter={shortDate} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} width={42} /><Tooltip formatter={(value) => [price(String(value)), "参考价"]} /><Line type="monotone" dataKey="price" stroke="#2f3337" strokeWidth={2} dot={{ r: 2.5 }} /></LineChart></ResponsiveContainer></div>}</section>
-        <section className={styles.drawerSection}><div><span>历史记录</span><h3>{validPriceCount} 期有效价格</h3></div><div className={styles.priceHistory}><div className={styles.priceHistoryHeading} aria-hidden="true"><span>版本日期</span><span>价格</span><span>修改人</span><span /></div>{[...official].reverse().map(item => <details key={item.id}><summary aria-label={`v${item.version} ${formatPriceDate(item.version_date)}，价格 ${item.latest_price == null ? item.raw_price ?? "未定价" : price(item.latest_price)}，修改人 ${item.modifier?.name || "未记录"}`}><span className={styles.historyDate}>{formatPriceDate(item.version_date)}<small>v{item.version}</small></span><strong>{item.latest_price == null ? item.raw_price ?? "未定价" : price(item.latest_price)}</strong><span>{item.modifier?.name || "未记录"}</span><ChevronRight size={13} aria-hidden="true" /></summary><dl className={styles.historySource}><div><dt>价格来源日期</dt><dd>{item.price_date ? formatPriceDate(item.price_date) : "未记录"}</dd></div><div><dt>数据位置</dt><dd>{[item.sheet, item.cell].filter(Boolean).join(" · ") || "未记录"}</dd></div></dl></details>)}</div></section>
+        <section className={styles.drawerSection}><div><span>历史记录</span><h3>{validPriceCount} 期有效价格</h3></div><div className={styles.priceHistory}><div className={styles.priceHistoryHeading} aria-hidden="true"><span>版本日期</span><span>价格</span><span>修改人</span><span /></div>{[...official].reverse().map(item => <details key={item.id}><summary aria-label={`v${item.version} ${formatPriceDate(item.version_date)}，价格 ${item.latest_price == null ? item.raw_price ?? "未定价" : price(item.latest_price)}，修改人 ${item.modifier?.name || "未记录"}`}><span className={styles.historyDate}>{formatPriceDate(item.version_date)}<small>v{item.version}</small></span><strong>{item.latest_price == null ? item.raw_price ?? "未定价" : <Price value={item.latest_price}/>}</strong><span>{item.modifier?.name || "未记录"}</span><ChevronRight size={13} aria-hidden="true" /></summary><dl className={styles.historySource}><div><dt>价格来源日期</dt><dd>{item.price_date ? formatPriceDate(item.price_date) : "未记录"}</dd></div><div><dt>数据位置</dt><dd>{[item.sheet, item.cell].filter(Boolean).join(" · ") || "未记录"}</dd></div></dl></details>)}</div></section>
         {detail.adjustments.length > 0 && <section className={styles.drawerSection}><div><span>修正记录</span><h3>完整留痕</h3></div><div className={styles.adjustmentList}>{detail.adjustments.map((item) => <article key={item.id}><strong>{item.reason}</strong><span>{item.created_by} · {formatDate(item.created_at)}</span></article>)}</div></section>}
         {detail.sources.length > 0 && <details className={styles.sourceDetails} key={detail.material.id}><summary><span>数据来源</span><small>{detail.sources.length} 处</small><ChevronRight size={14} aria-hidden="true" /></summary>{Array.from(new Set(detail.sources.map(source => source.filename))).map(filename => <div className={styles.sourceFile} key={filename}><p>{filename}</p><ul>{detail.sources.filter(source => source.filename === filename).map(source => <li key={`${source.sheet}-${source.row}`}><span>{source.sheet}<small>第 {source.row} 行</small></span><span>{source.purchaser || "未填写"}</span></li>)}</ul></div>)}</details>}
         {!!detail.changes?.length && <details className={`${styles.sourceDetails} ${styles.materialChanges}`} key={`changes-${detail.material.id}`}><summary><span>修改记录</span><small>{detail.changes.length} 条</small><ChevronRight size={14} aria-hidden="true" /></summary>{detail.changes.map(change=><article key={change.id}><div className={styles.changeByline}><span>{change.actor}</span><time>{formatShanghaiDateTime(change.created_at)}</time></div>{change.status === "cancelled" && <p className={styles.cancelledChange}>已取消，不影响价格</p>}<p>{change.reason}</p><ChangePrices items={change.items ?? []} /></article>)}</details>}

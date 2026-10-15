@@ -16,18 +16,26 @@ PRICE_SHEET = "原料单价"
 OMITTED_CODES = {"CF011", "CF1065A", "CF130", "CF745", "CF747", "CF854C", "CF235C"}
 ZERO_COST_CODES = {"纯水", "加工S-016（偶联剂C）", "加工S-014 （偶联剂A)"}
 DEFAULT_COMPOSITE = "composite:CF401B:CF026K+CF020D"
+ERP_CONCENTRATIONS = {"CF232A": Decimal("0.25"), "CF232B": Decimal("0.65"), "CF232D": Decimal("0.25"), "回收CF232": Decimal("0.90")}
+ERP_STOCK_PRODUCTS = {"CF007B", "CF034A", "CF109B", "CF180水溶液", "FH002", "HM159", "XT013"}
+RECOVERY_CODES = {"回收2", "回收CF232", "CF232D"}
 
 
-def number(value, label: str, *, positive: bool = False) -> Decimal:
+def number(value, label: str, *, positive: bool = False, signed: bool = False) -> Decimal:
     try:
         if isinstance(value, bool) or len(str(value)) > 64:
             raise ValueError
         result = Decimal(str(value))
-        if not result.is_finite() or result < 0 or result > Decimal("1e18") or abs(result.as_tuple().exponent) > 100 or (positive and result == 0):
+        if not result.is_finite() or (result < 0 and not signed) or abs(result) > Decimal("1e18") or abs(result.as_tuple().exponent) > 100 or (positive and result <= 0):
             raise ValueError
         return result
     except (InvalidOperation, ValueError):
         raise ValueError(f"{label} 不是有效的{'正' if positive else '非负'}数值") from None
+
+
+def input_number(value, line: dict, label: str) -> Decimal:
+    # Only confirmed recovery material identities can cross the signed-input boundary.
+    return number(value, label, signed=line.get("kind") == "material" and line.get("ref") in RECOVERY_CODES)
 
 
 def decimal_text(value: Decimal | None) -> str | None:
@@ -276,10 +284,31 @@ def calculate(package: dict, prices: dict, *, source_mode: bool = False, price_p
         raise ValueError("配方标识重复")
     source_materials = {m["code"]: m for m in package["materials"]}
     policy = {} if source_mode else package.get("current_policy", {})
+    erp_stock_products = ERP_STOCK_PRODUCTS | set(policy.get("erp_inventory_fallback_codes", []))
     historical = set(policy.get("historical_recipe_ids", []))
     if historical - recipes.keys():
         raise ValueError("历史试算标识不存在")
     results = {}
+
+    def material_price(price_ref, erp):
+        price_ref = "回收CF232" if erp and price_ref == "回收2" else price_ref
+        factor = ERP_CONCENTRATIONS.get(price_ref) if erp else None
+        lookup = "CF232" if factor is not None else price_ref
+        entry = prices.get(lookup, {})
+        latest, stock = entry.get("latest_price"), entry.get("inventory_price")
+        if erp and price_policy == "inventory" and lookup != "纯水":
+            latest = None  # ERP inventory means exclude unapproved purchase-price fallback.
+        stock = stock if stock is not None and number(stock, price_ref) > 0 else None
+        basis = "inventory" if price_policy == "inventory" and stock is not None else "latest" if latest is not None else "inventory" if stock is not None else "missing"
+        if entry.get("inventory_price_pending_review") and (price_policy == "inventory" or basis == "inventory"):
+            return None, "price_review_pending", lookup
+        selected = {"inventory": stock, "latest": latest, "missing": None}[basis]
+        price = number(selected, price_ref) if selected is not None else None
+        basis = entry.get(basis + "_basis", basis)
+        if price is not None and factor is not None:
+            price *= factor
+            basis = "cf232_" + basis
+        return price, basis, lookup
 
     def visit(key, stack=()):
         if key in stack or len(stack) > 100:
@@ -294,9 +323,9 @@ def calculate(package: dict, prices: dict, *, source_mode: bool = False, price_p
         yield_ = number(recipe["yield"], recipe["name"] + "收率", positive=True)
         amount = Decimal(0)
         weighted = Decimal(0)
-        missing, lines = set(), []
+        missing, lines, pending_review = set(), [], set()
         for line in recipe["lines"]:
-            quantity = number(line["quantity"], recipe["name"] + "投料量")
+            quantity = input_number(line["quantity"], line, recipe["name"] + "投料量")
             amount += quantity
             kind, ref = line["kind"], line["ref"]
             if kind == "material":
@@ -304,30 +333,72 @@ def calculate(package: dict, prices: dict, *, source_mode: bool = False, price_p
             if not source_mode and kind == "material" and ref == "CF401B":
                 kind, ref = "composite", package["default_composite"]
             absent = []
-            if kind != "material":
+            line_review = set()
+            reference_prices = None
+            erp = not source_mode and recipe.get("source_kind") == "erp_bom"
+            if erp and quantity == 0:
+                price, basis = None, "zero_input"
+            elif erp and kind == "material" and line.get("inventory_input") is True:
+                stock = prices.get(ref, {}).get("inventory_price")
+                price = number(stock, ref) if stock is not None and number(stock, ref) > 0 else None
+                absent, basis = ([ref] if price is None else []), ("missing" if price is None else "inventory")
+                if prices.get(ref, {}).get("inventory_price_pending_review"):
+                    price, absent, basis = None, [ref], "price_review_pending"
+                    line_review.add(ref)
+            elif kind != "material":
                 nested = visit(ref, (*stack, key))
                 price = Decimal(nested["cost"]) if nested["cost"] is not None else None
                 absent = nested["missing_materials"] if price is None else []
                 basis = kind
+                line_review.update(nested.get("price_review_pending", []))
+                if erp and price is None and not line_review and line["code"] in erp_stock_products:
+                    stock = prices.get(line["code"], {}).get("inventory_price")
+                    if prices.get(line["code"], {}).get("inventory_price_pending_review"):
+                        absent, basis = [line["code"]], "price_review_pending"
+                        line_review.add(line["code"])
+                    elif stock is not None and number(stock, line["code"]) > 0:
+                        price, absent, basis = number(stock, line["code"]), [], "erp_inventory_fallback"
             elif source_mode:
                 price_text = line.get("source_price_override", source_materials[ref]["source_calculation_price"])
                 # Excel VLOOKUP returns 0 for an empty result cell. Reproduce it only in the labeled source audit.
                 price = Decimal(price_text) if price_text is not None else Decimal(0)
                 basis = "source_blank_as_zero" if price_text is None else "source_workbook"
             else:
-                entry = prices.get(ref, {})
-                latest, stock = entry.get("latest_price"), entry.get("inventory_price")
-                stock = stock if stock is not None and number(stock, ref) > 0 else None
-                basis = "inventory" if price_policy == "inventory" and stock is not None else "latest" if latest is not None else "inventory" if stock is not None else "missing"
-                selected = {"inventory": stock, "latest": latest, "missing": None}[basis]
-                price = number(selected, ref) if selected is not None else None
-                absent = [ref] if price is None else []
-                basis = entry.get(basis + "_basis", basis)
-            if quantity > 0:
+                if erp and line.get('price_refs') is not None:
+                    refs = line['price_refs']
+                    if not isinstance(refs, list) or not 2 <= len(refs) <= 100 or any(not isinstance(c, str) or not c for c in refs) or len(set(refs)) != len(refs) or line.get('price_ref'):
+                        raise ValueError('参考原料均价清单无效')
+                    reference_prices, available, unavailable = [], [], []
+                    for code in refs:
+                        value, value_basis, lookup = material_price(code, erp)
+                        if value_basis == "price_review_pending":
+                            line_review.add(lookup)
+                        reference_prices.append({'code': code, 'unit_cost': decimal_text(value), 'basis': value_basis})
+                        if value is None:
+                            unavailable.append(lookup)
+                        else:
+                            available.append(value)
+                    price = sum(available, Decimal(0)) / len(available) if available else None
+                    basis, absent = ('reference_mean', []) if available else ('missing', unavailable)
+                    if line_review:
+                        price, basis, absent = None, 'price_review_pending', sorted(line_review | set(unavailable))
+                else:
+                    price, basis, lookup = material_price(line.get('price_ref', ref) if erp else ref, erp)
+                    absent = [lookup] if price is None else []
+                    if basis == "price_review_pending":
+                        line_review.add(lookup)
+                if price is None and not line_review and erp and line.get("unpriced_cost_zero") is True:
+                    price, absent, basis = Decimal(0), [], "unpriced_zero_assumption"
+            if quantity != 0:
                 missing.update(absent)
+                pending_review.update(line_review)
                 if price is not None and (not source_mode or line.get("source_cost_included", True)):
                     weighted += quantity * price
             lines.append({"source_row": line["source_row"], "code": line["code"], "kind": kind, "ref": ref,
+                **({"price_ref": line["price_ref"]} if erp and kind == "material" and line.get("price_ref") else {}),
+                **({'price_refs': line['price_refs']} if erp and kind == 'material' and line.get('price_refs') else {}),
+                **({'price_reference_values': reference_prices} if reference_prices is not None else {}),
+                **({'price_review_pending': sorted(line_review)} if line_review else {}),
                 "quantity": line["quantity"], "unit_cost": decimal_text(price), "basis": basis,
                 "amount": decimal_text(quantity * price) if price is not None else None, "missing_materials": absent})
         number(amount, recipe["name"] + "总投料量", positive=True)
@@ -339,6 +410,8 @@ def calculate(package: dict, prices: dict, *, source_mode: bool = False, price_p
             "difference": decimal_text(manual - cost) if manual is not None and cost is not None else None,
             "missing_materials": sorted(missing), "total_input": decimal_text(amount),
             "output_quantity": decimal_text(amount * yield_), "yield": recipe["yield"], "lines": lines}
+        if pending_review:
+            result.update(cost=None, auto_cost=None, difference=None, cost_source="price_review_pending", price_review_pending=sorted(pending_review))
         results[key] = result
         return result
 

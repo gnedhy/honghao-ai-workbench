@@ -28,7 +28,7 @@ def test_browser_procurement_and_research(ready):
     with transaction(settings.database_url) as db:
         sales_before = {name: value for name, value in _table_evidence(db).items() if name.startswith('sales_')}
     IdentityStore(settings.database_url).create_user(username='w6-readonly', display_name='合成只读',
-        department=None, password=TEST_ADMIN_PASSWORD, scope_levels={'research': 2})
+        department='研发五部', password=TEST_ADMIN_PASSWORD, scope_levels={'research': 2})
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', 0)); listener.listen()
         server = uvicorn.Server(uvicorn.Config(client.app, lifespan='off', log_level='critical', access_log=False))

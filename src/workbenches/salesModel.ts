@@ -3,6 +3,11 @@ export const modes: Record<Mode,string> = {domestic_direct:"国内直接厂",dom
 export const reasons = ["客户现用价格","产品功能溢价","高浓／开稀价格对照","其他客户常规售价","客户议价","其他"];
 export type Parameters = Partial<Record<"allocation"|"freight"|"barrel"|"tax"|"profit"|"reverse"|"export_addition_1"|"export_addition_2"|"export_multiplier",string|null>>;
 export type Product = {id:string;code:string;name:string;source:string;department:string;latest_cost:string|null;inventory_cost:string|null;status:string;special_allocation:boolean;source_version:string|null;source_label?:string;source_date?:string|null};
+export function salesDepartments(products: Pick<Product,"department">[]) {
+ const order:Record<string,number>={采购:0,研发一部:1,研发二部:2,研发三部:3,研发四部:4,研发五部:5,研发六组:6,浙江实验室:7};
+ return [...new Set(products.map(product=>product.department))].filter(Boolean)
+  .sort((a,b)=>(order[a]??99)-(order[b]??99)||a.localeCompare(b,"zh-CN"));
+}
 export type Item = {product_id:string;external_name:string;cost_basis:"latest"|"inventory";parameters:Parameters;final_price:string|null;pricing_reasons:string[];pricing_note:string;reference_prices?:Record<string,string>;product?:Product;cost?:string|null;actual_basis?:string;result?:{normal_price:string;break_even_price:string|null}|null;trial_id?:string|null;manual_price_confirmed?:boolean;adopted?:boolean;voided?:boolean;manual_price?:boolean;adjustment_reason?:string};
 export type Batch = {id:string;owner_id:string;revision:number;name:string;mode:Mode;customer_name:string;customer_code:string;uncoded:boolean;salesperson:string;items:Item[];created_at:string;updated_at:string;adjusted:boolean};
 export type Trial = {customer_name?:string;customer_code?:string;uncoded?:boolean;salesperson?:string;id:string;batch_id:string;batch_name:string;created_at:string;actor_id:string;actor_name?:string;mode:Mode;items:Item[]};

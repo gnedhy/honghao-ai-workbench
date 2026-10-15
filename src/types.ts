@@ -95,6 +95,7 @@ export type WorkbenchStatus = {
 export type PriceModifier = { kind: "system" | "source" | "unknown"; name: string; id: string | null };
 
 export type ProcurementMaterial = {
+  inventory_source?: { source: string; catalog_source: string; as_of: string; imported_at: string } | null;
   price_modifier?: PriceModifier | null;
   source_purchasers?: string[];
   participants?: Array<{ id: string; name: string }>;
@@ -239,7 +240,7 @@ export type ProcurementMaterialDetail = {
   official_history: Array<{id: string; version: number; version_date: string; latest_price?: string | null; price_date: string | null; raw_price?: string | null; price_kind: string; sheet: string | null; cell: string | null; modifier?: PriceModifier | null}>;
   sources: Array<{sheet: string; row: number; purchaser: string | null; filename: string}>;
   changes?: ProcurementBatchDetail["changes"];
-  material: { id: string; code: string; name: string; unit: string; archived: boolean; updated_at: string };
+  material: { id: string; code: string; name: string; unit: string; archived: boolean; updated_at: string; inventory_source?: ProcurementMaterial['inventory_source'] };
   latest_price?: string | null;
   previous_price?: string | null;
   change?: number | null;

@@ -1,5 +1,6 @@
 """Real PostgreSQL tests. Only the explicit local test database may be reset."""
 import os
+from contextlib import ExitStack
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -44,8 +45,10 @@ def pg_targets():
 
 
 @pytest.fixture(autouse=True)
-def isolated_postgres(pg_targets, monkeypatch):
+def isolated_postgres(pg_targets, pg_setup_pools, monkeypatch):
     app, migration = pg_targets
+    for url, pool in pg_setup_pools.items():
+        monkeypatch.setitem(postgres._POOLS, url, pool)
     with postgres.transaction(migration, write=True) as connection:
         postgres._check_environment(connection, "test")
         connection.execute("DROP SCHEMA public CASCADE")
@@ -56,6 +59,17 @@ def isolated_postgres(pg_targets, monkeypatch):
     monkeypatch.setenv("HONGHAO_DATABASE_URL", app)
     monkeypatch.setenv("HONGHAO_DATABASE_ENVIRONMENT", "test")
     yield
+
+
+@pytest.fixture(scope='session')
+def pg_setup_pools(pg_targets):
+    # Fixture setup runs before the service pool exists; bound these connections too on Windows.
+    with ExitStack() as stack:
+        pools = {url: stack.enter_context(postgres.ConnectionPool(
+            url, kwargs={**postgres._CONNECTION_OPTIONS, 'prepare_threshold': None},
+            min_size=0, max_size=2, timeout=5, open=False, reset=postgres._reset_connection,
+        )) for url in pg_targets}
+        yield pools
 
 
 @pytest.fixture
@@ -85,4 +99,5 @@ def second_pg(pg_targets):
     finally:
         # name is generated here; no user-controlled or pre-existing database can reach DROP.
         with postgres.connect(admin) as connection:
-            connection.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
+            # Pool disconnects may still be retiring; ordinary DROP waits without extra role privileges.
+            connection.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(name)))

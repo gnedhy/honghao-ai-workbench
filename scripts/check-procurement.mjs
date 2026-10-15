@@ -277,7 +277,8 @@ try {
     await page.getByRole('button', { name: '查看明细', exact: true }).first().click();
     await page.getByRole('button', { name: 'A', exact: true }).click();
     const drawer = page.getByRole('dialog', { name: '原料价格详情', exact: true });
-    await drawer.getByText('¥60', { exact: true }).first().waitFor();
+    await drawer.getByText('¥60.00', { exact: true }).first().waitFor();
+    assert.equal(await drawer.getByText('¥60.00', { exact: true }).first().getAttribute('title'), '¥60');
     await drawer.getByRole('button', { name: '录入新价格', exact: true }).waitFor();
     await page.screenshot({ path: '.scratch/w6-20261003/browser/distribution-writable-detail.png', fullPage: true });
     await drawer.getByRole('button', { name: '关闭详情', exact: true }).click(); await drawer.waitFor({ state: 'detached' });
@@ -297,7 +298,7 @@ try {
     await page.getByRole('button', { name: '切换采购概览', exact: true }).click();
     const ranking = page.getByRole('region', { name: '价格变动排行', exact: true });
     await ranking.getByRole('button', { name: 'A', exact: true }).first().click();
-    await drawer.getByText('¥60', { exact: true }).first().waitFor();
+    await drawer.getByText('¥60.00', { exact: true }).first().waitFor();
     assert.equal(await drawer.getByRole('button', { name: '录入新价格', exact: true }).count(), 0);
     await page.screenshot({ path: '.scratch/w6-20261003/browser/ranking-readonly-detail.png', fullPage: true });
     await drawer.getByRole('button', { name: '关闭详情', exact: true }).click(); await drawer.waitFor({ state: 'detached' });
@@ -313,13 +314,13 @@ try {
     await page.getByRole('button', { name: 'A', exact: true }).click();
     const drawer = page.getByRole('dialog', { name: '原料价格详情', exact: true });
     await drawer.getByRole('button', { name: '重新加载', exact: true }).click();
-    await drawer.getByText('¥60', { exact: true }).first().waitFor();
+    await drawer.getByText('¥60.00', { exact: true }).first().waitFor();
     assert.equal(await drawer.getByRole('button', { name: '录入新价格', exact: true }).count(), 0);
     await page.waitForTimeout(10500);
     await drawer.getByText('价格更新失败，当前显示上次读取的内容。', { exact: false }).waitFor();
     await page.screenshot({ path: '.scratch/w6-20261003/browser/research-readonly-refresh-failed.png', fullPage: true });
     await drawer.getByRole('button', { name: '重试', exact: true }).click();
-    await drawer.getByText('¥60', { exact: true }).first().waitFor();
+    await drawer.getByText('¥60.00', { exact: true }).first().waitFor();
     await drawer.getByRole('button', { name: '关闭详情', exact: true }).click(); await drawer.waitFor({ state: 'detached' });
     const before = reads.filter(path => path.startsWith('/api/workbenches/research/material-prices/')).length;
     await page.waitForTimeout(10500);

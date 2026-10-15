@@ -1,7 +1,7 @@
 import json
 import os
 import psycopg
-from api.postgres import migrate, transaction
+from api.postgres import migrate, transaction, _migration_files
 
 import pytest
 from openpyxl import Workbook
@@ -182,9 +182,9 @@ def test_inventory_schema_verification_preserves_preferences_and_only_migrates_o
     store = ProcurementStore(settings.database_url)
     store.save_preferences(admin, ['unit', 'latest_price', 'previous_latest_price', 'inventory_price', 'in_transit_price'], 'materials', 'scroll', 100)
     expected = store.preferences(admin)
-    assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == 4
+    assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == len(_migration_files())
     assert store.schema_version() == 7
     assert store.preferences(admin) == expected
     store.save_preferences(admin, ['unit', 'latest_price'], 'materials', 'paged', 25)
-    assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == 4
+    assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == len(_migration_files())
     assert store.preferences(admin)['ledger_columns'] == ['unit', 'latest_price']

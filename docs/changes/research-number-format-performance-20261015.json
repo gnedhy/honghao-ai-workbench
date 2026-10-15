@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "研发台账及详情复用同一只读数字格式器，金额不再重复解析，降低分页渲染成本；不调整固定性能门槛或样本。",
+  "modules": [
+    "research"
+  ],
+  "files": [
+    "src/workbenches/researchAnalytics.ts",
+    "src/workbenches/researchModel.ts"
+  ],
+  "consumers": [
+    "src/workbenches/ResearchWorkbench.tsx",
+    "src/workbenches/ResearchProductView.tsx",
+    "src/workbenches/ResearchProductDrawer.tsx",
+    "src/workbenches/ResearchFormulaEditor.tsx"
+  ],
+  "permissions": "纯展示格式化，继续使用服务端实时权限投影；不增加请求、不缓存鉴权或业务结果。",
+  "data": "保留原priceCents十进制舍入、两位小数、缺价及零负值语义；悬停原值、双成本计算、冻结历史及数据库均不修改。",
+  "lifecycle": "仅模块级Intl.NumberFormat实例复用，输入每次重新解析；格式器不存储任何产品或用户数据。",
+  "exits": "不改变现有请求取消、抽屉和编辑退出保护。",
+  "compatibility": "不新增依赖、接口、迁移或计算缓存；PR95原150ms门槛、4倍CPU、500产品、5样本及浏览器计时保持。",
+  "recovery": "仅候选代码变更，正式服务保持20261015-research-read-price；无业务数据恢复操作。",
+  "verification": {
+    "api": [
+      "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements",
+      "tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle"
+    ],
+    "node": [
+      {
+        "file": "tests_ui/researchAnalytics.test.ts",
+        "id": "只读数字两位小数，收率完整精度换算不经浮点数"
+      }
+    ],
+    "browser": [
+      {
+        "file": "scripts/check-workbench-loading.mjs",
+        "id": "research-history-periods-and-material-price-arrows",
+        "apiTest": "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+      }
+    ]
+  }
+}

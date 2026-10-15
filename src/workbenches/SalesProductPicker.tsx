@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Plus, Search } from "lucide-react";
 
 import { WorkbenchOptionMenu } from "../components/WorkbenchMenus";
-import type { Product } from "./salesModel";
+import { LedgerPagination } from "../components/LedgerPagination";
+import { salesDepartments, type Product } from "./salesModel";
 import s from "./SalesProductPicker.module.css";
 
 type Basis = "latest" | "inventory";
@@ -22,12 +23,18 @@ export function SalesProductPicker({ products, selected, basis, cost, add = fals
   const search = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [department, setDepartment] = useState("");
-  const departments = [...new Set(products.map(product => product.department))].filter(Boolean).sort((a, b) => a.localeCompare(b, "zh-CN"));
-  const matches = products.filter(product => !excludeIds.includes(product.id) && (!department || product.department === department)
+  const [source, setSource] = useState("research");
+  const [open, setOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const departments = salesDepartments(products);
+  const matches = products.filter(product => !excludeIds.includes(product.id) && (!source || product.source === source) && (!department || product.department === department)
     && `${product.code} ${product.name} ${product.department}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const currentPage = Math.min(page, Math.max(1, Math.ceil(matches.length / 50)));
+  const shown = matches.slice((currentPage - 1) * 50, currentPage * 50);
   const close = (focus = false) => {
+    setOpen(false);
     if (menu.current) menu.current.open = false;
-    menu.current?.querySelector("details")?.removeAttribute("open");
+    menu.current?.querySelectorAll("details").forEach(details => details.removeAttribute("open"));
     if (focus) menu.current?.querySelector("summary")?.focus();
   };
   useEffect(() => {
@@ -40,9 +47,11 @@ export function SalesProductPicker({ products, selected, basis, cost, add = fals
   return <details ref={menu} className={`${s.picker} ${add ? s.addPicker : ""}`}
     onToggle={event => {
       if (event.target !== event.currentTarget) return;
+      setOpen(event.currentTarget.open);
       if (event.currentTarget.open) {
         setQuery("");
         setDepartment("");
+        setPage(1);
         requestAnimationFrame(() => search.current?.focus());
       }
     }}
@@ -72,15 +81,18 @@ export function SalesProductPicker({ products, selected, basis, cost, add = fals
       </>}
       <ChevronDown size={14} />
     </summary>
-    <div className={s.popover}>
+    {open && <div className={s.popover}>
       <div className={s.filters}>
-        <label className={s.search}><Search size={14} /><input ref={search} type="search" aria-label="搜索产品" placeholder="搜索产品内编、名称或部门" value={query} onChange={event => setQuery(event.target.value)} /></label>
+        <label className={s.search}><Search size={14} /><input ref={search} type="search" aria-label="搜索产品" placeholder="搜索产品内编、名称或部门" value={query} onChange={event => {setQuery(event.target.value);setPage(1);}} /></label>
         <WorkbenchOptionMenu label="筛选部门" value={department} display={department || "全部部门"}
           options={["", ...departments].map(value => ({ value, label: value || "全部部门" }))}
-          onSelect={setDepartment} className={s.departmentMenu} />
+          onSelect={value => {setDepartment(value);setPage(1);}} className={s.departmentMenu} />
+        <WorkbenchOptionMenu label="筛选来源" value={source}
+          options={[{value:"",label:"全部来源"},{value:"research",label:"研发产品"},{value:"procurement",label:"采购原料"}]}
+          onSelect={value => {setSource(value);setPage(1);}} className={s.departmentMenu} />
       </div>
       <div className={s.options}>
-        {matches.map(product => <div className={s.option} key={product.id}>
+        {shown.map(product => <div className={s.option} key={product.id}>
           <div className={s.identity}><strong title={product.code}>{product.code}</strong>{product.name && product.name !== product.code && <small title={product.name}>{product.name}</small>}<small title={product.department}>{product.department}</small></div>
           {(["latest", "inventory"] as const).map(option => {
             const price = option === "latest" ? product.latest_cost : product.inventory_cost;
@@ -94,6 +106,7 @@ export function SalesProductPicker({ products, selected, basis, cost, add = fals
         </div>)}
         {!matches.length && <p role="status">{excludeIds.length && excludeIds.length === products.length ? "所有产品均已加入" : "没有匹配的产品"}</p>}
       </div>
-    </div>
+      <LedgerPagination total={matches.length} page={currentPage} pageSize={50} onPageChange={setPage} />
+    </div>}
   </details>;
 }

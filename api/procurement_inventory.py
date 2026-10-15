@@ -13,6 +13,20 @@ from api.procurement_collaboration import admin_event
 from api.procurement_excel import TOTAL, price_value, read_workbook, text
 
 
+def inventory_snapshot(db: Connection) -> dict:
+    """Bind provenance to the current inventory batch, in the same catalog query."""
+    return {mid: (qty, price, {**{key: raw[key] for key in ('source','catalog_source','as_of') if key in raw}, "imported_at": stamp} if raw else None)
+            for mid, qty, price, raw, stamp in db.execute("""
+                SELECT i.material_id,i.quantity,i.price,s.provenance,i.imported_at
+                FROM procurement_inventory i LEFT JOIN LATERAL (
+                    SELECT raw_json::jsonb->-1 AS provenance FROM procurement_material_sources
+                    WHERE material_id=i.material_id AND sha256=i.source_sha256 AND sheet='ERP库存汇总'
+                    AND jsonb_typeof(raw_json::jsonb->-1)='object'
+                    AND raw_json::jsonb->-1->>'source'='ERP 库存' ORDER BY source_row DESC LIMIT 1
+                ) s ON TRUE
+            """)}
+
+
 def _preview(db: Connection, content: bytes, *, partial: bool = False) -> dict:
     sheets = read_workbook(content)
     if TOTAL not in sheets:

@@ -30,23 +30,18 @@ export function compareCostPeriods<T extends { record_type?: string; purchase_ve
   }).reverse();
 }
 
-export function costComparisonRecord<T extends { latest_cost: string | null; inventory_cost: string | null }>(history: T[], index: number, policy: "latest" | "inventory") {
-  const current = priceCents(history[index]?.[`${policy}_cost`]);
-  if (current == null) return undefined;
-  for (const previous of history.slice(index + 1)) {
-    const value = priceCents(previous[`${policy}_cost`]);
-    if (value == null) return undefined;
-    if (value !== current) return previous;
+type PricedLine = { kind: string; ref: string; quantity: string; unit_cost: string | null };
+export function linePriceMovement(line: PricedLine, history: (readonly PricedLine[] | undefined)[] | undefined) {
+  const current = priceCents(line.unit_cost);
+  if (!(Number(line.quantity) > 0) || current == null) return null;
+  for (const lines of history ?? []) {
+    const matches = lines?.filter(item => item.kind === line.kind && item.ref === line.ref && Number(item.quantity) > 0) ?? [];
+    const before = matches[0], prior = priceCents(before?.unit_cost);
+    // Missing or ambiguous evidence breaks the chain; never infer a replacement material.
+    if (!before || prior == null || matches.some(item => priceCents(item.unit_cost) !== prior)) return null;
+    if (current !== prior) return { direction: current > prior ? "up" as const : "down" as const, current: line.unit_cost!, previous: before.unit_cost! };
   }
-  return undefined;
-}
-
-export function linePriceMovement(line: { kind: string; ref: string; quantity: string; unit_cost: string | null }, previous: { kind: string; ref: string; quantity: string; unit_cost: string | null }[] | undefined) {
-  if (!(Number(line.quantity) > 0)) return null;
-  const before = previous?.find(item => item.kind === line.kind && item.ref === line.ref && Number(item.quantity) > 0);
-  const current = priceCents(line.unit_cost), prior = priceCents(before?.unit_cost);
-  if (current == null || prior == null || current === prior) return null;
-  return { direction: current > prior ? "up" as const : "down" as const, current: line.unit_cost!, previous: before!.unit_cost! };
+  return null;
 }
 
 export function rankCostGaps<T extends { name: string; status: string; latest_cost: string | null; inventory_cost: string | null }>(products: T[], direction: CostGapDirection) {
@@ -59,3 +54,31 @@ export function rankCostGaps<T extends { name: string; status: string; latest_co
     return [{ ...product, gap }];
   }).sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap) || a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
 }
+export function yieldNeedsReview(row: {yield: string; source_kind?: string; yield_source?: {kind: string}}) {
+  return Number(row.yield) > 1 && !(row.source_kind === "erp_bom" && ["mes_mean", "bom_ratio_sum", "user_confirmed"].includes(row.yield_source?.kind ?? ""));
+}
+
+const numberFormatter = new Intl.NumberFormat("zh-CN", {minimumFractionDigits:2,maximumFractionDigits:2});
+export function numberText(value: string | null | undefined) {
+  const cents = priceCents(value);
+  return cents == null ? "—" : numberFormatter.format(cents / 100);
+}
+
+export function yieldValue(value: string) {
+  const parts = value.trim().match(/^(\d+)(?:\.(\d*))?$/);
+  if (!parts) return "—";
+  const fraction = parts[2] ?? "";
+  return `${BigInt(parts[1]) * 100n + BigInt(fraction.padEnd(2,"0").slice(0,2))}${fraction.length > 2 ? `.${fraction.slice(2)}` : ""}`;
+}
+export const yieldText = (value: string) => `${numberText(yieldValue(value))}%`;
+
+const basisNames: Record<string,string> = {confirmed_manual_inventory_price:"确认库存",confirmed_purchase_reference_inventory_price:"采购参考",confirmed_historical_inventory_price:"历史参考",reference_mean:"参考均价",unpriced_zero_assumption:"缺价零算",erp_inventory_fallback:"库存兜底",zero_input:"零量忽略",latest:"最新价格",historical_latest:"当期价格",current_latest_fallback:"最新补位",current_inventory_fallback:"库存补位",inventory:"库存价格",recipe:"引用产品",composite:"复配核算",missing:"缺少价格"};
+export function basisLabel(line: {basis:string;price_ref?:string;price_refs?:string[]}) {
+  if (line.basis.startsWith("cf232_")) return "浓度折价";
+  if (line.price_refs?.length) return "参考均价";
+  if (line.price_ref) return "参考取价";
+  return basisNames[line.basis] ?? "核算依据";
+}
+
+// Match the existing backend access scope without rewriting the source department.
+export const researchDepartment = (row: {department?: string | null}): string => row.department || "研发五部";

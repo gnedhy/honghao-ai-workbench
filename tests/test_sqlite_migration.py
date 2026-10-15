@@ -20,7 +20,7 @@ def legacy(tmp_path, pg_targets):
         for table in ops._table_names(target):
             if table in migration.POST_SQLITE_TABLES:
                 continue
-            columns = target.execute("SELECT column_name,data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=%s AND column_name!='_order' ORDER BY ordinal_position", (table,)).fetchall()
+            columns = target.execute("SELECT column_name,data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=%s AND column_name!='_order' AND is_generated='NEVER' ORDER BY ordinal_position", (table,)).fetchall()
             declarations = [migration._quote(name) + (' INTEGER PRIMARY KEY AUTOINCREMENT' if table == 'research_cost_records' and name == 'sequence' else ' ' + ('INTEGER' if kind in {'integer','bigint'} else 'BLOB' if kind == 'bytea' else 'TEXT')) for name, kind in columns]
             source.execute(f'CREATE TABLE {migration._quote(table)} ({",".join(declarations)})')
             names = ','.join(migration._quote(name) for name, _ in columns)

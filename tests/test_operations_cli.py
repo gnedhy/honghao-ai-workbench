@@ -145,6 +145,11 @@ def test_restore_rejects_a_corrupt_database_even_with_updated_hash(
 def test_restore_requires_confirmation_and_uses_an_empty_target(tmp_path: Path, capsys, second_pg) -> None:
     settings = Settings.from_data_dir(tmp_path / "data")
     _ready_data(settings)
+    payload=json.dumps({'latest_cost':'0.123456789012345678','inventory_cost':None,'graph':[{'name':'frozen graph'}],'lines':[]})
+    with transaction(settings.database_url,write=True) as db:
+        db.execute('INSERT INTO research_cost_records(event_id,product_id,signature,payload) VALUES(%s,%s,%s,%s)',('snapshot-event','snapshot-product','frozen-signature',payload))
+        db.execute('INSERT INTO research_backfill_records(purchase_version,product_id,signature,payload) VALUES(%s,%s,%s,%s)',(1,'snapshot-product','backfill-signature',payload))
+        expected=db.execute('SELECT payload,summary_payload FROM research_cost_records').fetchone()
     snapshot = _create_snapshot(settings, tmp_path / 'snapshots', capsys)
     source = settings.data_dir / 'knowledge/items/产品说明书.md'
     source.write_text('changed', encoding='utf-8')
@@ -157,6 +162,8 @@ def test_restore_requires_confirmation_and_uses_an_empty_target(tmp_path: Path, 
     assert IdentityStore(second_pg['url']).login('snapshot-user','Snapshot-Password-2026',3600)
     with transaction(second_pg['url']) as db:
         restored_path = Path(db.execute('SELECT stored_path FROM procurement_source_imports').fetchone()[0])
+        assert db.execute('SELECT payload,summary_payload FROM research_cost_records').fetchone()==expected
+        assert db.execute('SELECT payload,summary_payload FROM research_backfill_records').fetchone()==expected
     assert restored_path.is_relative_to(target.data_dir) and restored_path.is_file()
     assert not (target.data_dir / RESTORE_MARKER_NAME).exists()
     assert all(value == 'ok' for value in readiness(second_pg['url'], 'test').values())

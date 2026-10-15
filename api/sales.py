@@ -140,18 +140,22 @@ class SalesStore:
 
     def _catalog(self, db):
         pending = db.execute("SELECT status FROM research_events WHERE status!='done' ORDER BY _order LIMIT 1").fetchone()
+        records = {row[0]: row[1:] for row in db.execute('''SELECT DISTINCT ON(r.product_id)
+            r.product_id,r.sequence,r.summary_payload,r.event_id,e.recorded_at
+            FROM research_cost_records r LEFT JOIN research_events e ON e.id=r.event_id
+            WHERE r.product_id IN (SELECT id FROM research_formulas WHERE lifecycle='active')
+            ORDER BY r.product_id,r.sequence DESC''')}
         products = []
         for formula_raw in db.execute("SELECT formula FROM research_formulas WHERE lifecycle='active' ORDER BY position"):
             formula = json.loads(formula_raw[0])
             composite = formula['kind'] != 'recipe'
             if composite and formula['id'] != DEFAULT_COMPOSITE:
                 continue
-            record = db.execute('''SELECT r.sequence,r.payload,r.event_id,e.recorded_at
-                FROM research_cost_records r LEFT JOIN research_events e ON e.id=r.event_id
-                WHERE r.product_id=%s ORDER BY r.sequence DESC LIMIT 1''', (formula['id'],)).fetchone()
+            record = records.get(formula['id'])
             payload = json.loads(record[1]) if record else {}
             code = 'CF401B' if composite else formula['name']
-            products.append(dict(id='research:' + formula['id'], code=code, name=code, source='research', department='研发五部',
+            products.append(dict(id='research:' + formula['id'], code=code, name=code, source='research',
+                                 department=formula.get('department') or ('部门未记录' if formula.get('source_kind') == 'erp_bom' else '研发五部'),
                                  latest_cost=payload.get('latest_cost'), inventory_cost=payload.get('inventory_cost'),
                                  status=('failed' if pending[0] == 'failed' else 'updating') if pending else payload.get('status', 'missing'),
                                  special_allocation=code.startswith(('CF', 'HM')), source_version=str(record[0]) if record else None,

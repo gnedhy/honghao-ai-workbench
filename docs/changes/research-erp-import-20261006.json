@@ -1,0 +1,159 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "ERP研发分析候选：部门及销售读取、负回收、浓度与库存兜底、参考取价及范围、有价算术平均、催化剂缺价零核算和确认收率来源；不写正式数据；v46保留已确认取价并暂缓170项业务资料，CF003独立核算价与ERP原价分离，170项可做技术核对完成，资料暂缓；P-102B未批准参考；导入前隔离验收接入确认库存核算价、采购来源与日期展示，ERP库存参考均价不混入未经批准的采购价",
+  "modules": [
+    "procurement",
+    "research",
+    "sales"
+  ],
+  "files": [
+    "api/migrations/postgresql/0005_research_read_summaries.sql",
+    "api/operations.py",
+    "api/postgres.py",
+    "api/procurement.py",
+    "api/procurement_collaboration.py",
+    "api/procurement_inventory.py",
+    "api/research.py",
+    "api/research_access.py",
+    "api/research_export.py",
+    "api/research_formulas.py",
+    "api/research_history.py",
+    "api/sales.py",
+    "src/types.ts",
+    "src/workbenches/ProcurementMaterialView.tsx",
+    "src/workbenches/ProcurementMaterials.tsx",
+    "src/workbenches/ResearchFormulaEditor.tsx",
+    "src/workbenches/ResearchProductDrawer.tsx",
+    "src/workbenches/ResearchProductView.tsx",
+    "src/workbenches/ResearchWorkbench.module.css",
+    "src/workbenches/ResearchWorkbench.tsx",
+    "src/workbenches/SalesProductPicker.module.css",
+    "src/workbenches/SalesProductPicker.tsx",
+    "src/workbenches/SalesWorkbench.tsx",
+    "src/workbenches/researchAnalytics.ts",
+    "src/workbenches/researchData.ts",
+    "src/workbenches/researchEditSession.ts",
+    "src/workbenches/researchModel.ts",
+    "src/workbenches/salesModel.ts"
+  ],
+  "consumers": [
+    "src/workbenches/ResearchWorkbench.tsx",
+    "src/workbenches/ResearchFormulaEditor.tsx",
+    "api/research_export.py",
+    "api/procurement_inventory.py",
+    "api/sales.py",
+    "src/workbenches/ResearchProductDrawer.tsx",
+    "src/workbenches/researchData.ts"
+  ],
+  "permissions": "研发等级和独立启用权限定在当前有效组织部门，管理员全范围；列表/详情/历史/试算/草稿/导出/生命周期和授权管理服务端检查，冻结图裁剪跨部门配方，内部完整重算；导入后准备指定5位账号研发3+独立启用权，不增加转授权或系统管理；2026-10-13用户确认李文婷、张晓英、韦妹琴、张海容原研发权限覆盖本批全部7个研发部门，保留总经办主部门、原等级和启用授权。",
+  "data": "独立分析库保存10份来源原值、哈希和行号；已确认配方及负责人、37项现役配方采用ERP、指定及按确认排除工单后平均的收率、3行库存掺料、替代、参考均价及催化剂缺价零核算；保留原始工单，确认值来源与编辑调整明确标注；剩余疑点确认后统一导入，新增生成摘要数据库迁移；当前独立v46拟导入2371个ERP产品，保留233项收率和37项ERP采用批准；保留此前取价并应用本批7项独立库存核算价，7项ERP原价仍缺失；CF003核算7.18与ERP原价718.6保留，CF244B历史核算15保留；最新2191可算/180缺价，库存2191可算/180缺价；170个编码完成可做核对后按用户指示暂缓业务资料，保留19组后续索引；价格仍缺失，不填0、不排除产品；P-102B参考P-102D未应用；候选导出成本待完善，不修改在线状态；已完成实际隔离导入4742条复算一致，原在用194+新增1085+恢复归档213=1492原料；旧ERP价格18项转缺失，4旧产品待完善，全台账2384产品2200可算/184待完善；来源原始证据不在元数据API暴露。正式执行清单尚待用户批准。；2026-10-14已确认精确库存核算价CF262=15.45、CF003=7.18、CF328E=16.6、CF321=12.95；CF232=55.9保持；v46数据及完整精度复算保留。",
+  "lifecycle": "复用既有试算、草稿、版本、冻结成本和库存重算队列；已确认回收负数参加签名；读取以同一只读快照组合台账/历史/目录，请求内批量历史复用；历史按摘要和单产品冻结明细读取，旧历史默认完整接口兼容；读取15秒超时和人工重试，403/401清除旧内容。显示两位小数，悬停保留原值；取价四字简称附完整依据。服务生命周期使用Psycopg官方有界连接池，最多4个连接、等候5秒，归还清除会话状态；保留每次权限检查、只读快照和写锁，不增加AI层。；新增候选0005存储生成摘要迁移；摘要与原payload同写生成，原冻结明细与签名不改。正式v4接本批0005；后续AI的13份未发布SQL顺移0006—0018，内容不改；不修改已有迁移历史。",
+  "exits": "沿用researchEditSession与共享退出确认；负投料输入与比例同步保留",
+  "compatibility": "仅source_kind=erp_bom启用浓度和可信元数据指定的库存兜底编码；旧公式和冻结历史保持原取价语义，引用环仍拒绝；13个旧产品原部门空值保留，显示和筛选沿既有研发五部有效范围，并提示原字段未记录。",
+  "recovery": "正式63表只读快照及导入后隔离快照均成功恢复至新空库，原历史保留。正式入口release_research_import.py固定目标、管理员、候选与程序哈希、备份和全表基线，真实恢复演练后同事务导入、核算及账号配置；失败回滚并清理本次新增归档，异常现场禁止启动；持久批次记录防止重复。验收入口继续拒绝正式库。正式发布仍待当前授权。",
+  "verification": {
+    "api": [
+      "tests/test_research_import.py::test_concentration_recovery_fallback_and_legacy_boundaries",
+      "tests/test_research_import.py::test_imported_department_negative_edit_and_frozen_history",
+      "tests/test_research_import.py::test_browser_research_import",
+      "tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle",
+      "tests/test_research_workbench.py::test_draft_persists_isolated_then_activation_updates_dependents",
+      "tests/test_research_import.py::test_confirmed_unpriced_input_zero_and_price_recovery",
+      "tests/test_research_import.py::test_confirmed_price_reference_preserves_material_identity_and_signature",
+      "tests/test_research_import.py::test_confirmed_reference_mean_uses_available_prices_and_preserves_inputs",
+      "tests/test_research_import.py::test_imported_reference_scope_edit_export_and_sales_department",
+      "tests/test_sales.py::test_catalog_is_whitelisted_and_composite_uses_research",
+      "tests/test_research_import.py::test_inventory_price_review_propagates_without_fallback_or_zero",
+      "tests/test_research_import.py::test_erp_inventory_mean_does_not_mix_unapproved_purchase_prices",
+      "tests/test_research_import.py::test_confirmed_inventory_price_is_separate_and_expires_on_next_import",
+      "tests/test_research_departments.py::test_department_lists_history_details_export_and_reference_cost",
+      "tests/test_research_departments.py::test_foreign_writes_and_membership_revocation_are_denied",
+      "tests/test_research_departments.py::test_same_department_activation_and_cross_department_grant_boundary",
+      "tests/test_research_departments.py::test_new_formula_uses_membership_and_rejects_forged_department",
+      "tests/test_research_departments.py::test_approved_accounts_are_dry_run_until_import_and_keep_existing_passwords",
+      "tests/test_research_departments.py::test_missing_upstream_material_is_not_exposed_in_history_summary",
+      "tests/test_research_departments.py::test_detail_does_not_read_unrelated_product_history",
+      "tests/test_research_departments.py::test_history_reads_are_batched_and_preserve_frozen_comparisons",
+      "tests/test_research_departments.py::test_overview_uses_one_snapshot_across_concurrent_catalog_change",
+      "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements",
+      "tests/test_research_departments.py::test_stored_summary_tracks_payload_and_cannot_be_written_independently",
+      "tests/test_procurement_ui.py::test_browser_procurement_and_research",
+      "tests/test_postgres_configuration.py::test_service_connections_reuse_backends_without_leaking_session_settings",
+      "tests/test_postgres_configuration.py::test_reused_connections_preserve_rollback_savepoints_and_read_only",
+      "tests/test_postgres_configuration.py::test_reusable_connections_do_not_bypass_a_lost_service_lease",
+      "tests/test_research_release.py::test_guarded_release_restores_before_commit_and_rejects_duplicate",
+      "tests/test_research_release.py::test_guarded_release_account_failure_rolls_back_database_and_new_files",
+      "tests/test_research_release.py::test_guarded_release_blocks_live_service_invalid_actor_and_old_import_entry",
+      "tests/test_research_release.py::test_guarded_release_remembers_an_older_batch_after_a_later_import",
+      "tests/test_research_release.py::test_guarded_release_restore_failure_prevents_any_import",
+      "tests/test_research_release.py::test_guarded_release_input_change_during_import_rolls_back",
+      "tests/test_research_release.py::test_guarded_import_rejects_wrong_candidate_cardinality",
+      "tests/test_postgres_configuration.py::test_fixture_connections_reuse_backends_across_schema_changes_and_rollback"
+    ],
+    "node": [
+      {
+        "file": "tests_ui/researchAnalytics.test.ts",
+        "id": "双成本差异按金额绝对值排列，保留正负方向及稳定内编顺序"
+      },
+      {
+        "file": "tests_ui/researchAnalytics.test.ts",
+        "id": "导入已确认收率不重复列待核对，后续手改和旧配方仍提示"
+      },
+      {
+        "file": "tests_ui/researchAnalytics.test.ts",
+        "id": "只读数字两位小数，收率完整精度换算不经浮点数"
+      },
+      {
+        "file": "tests_ui/researchAnalytics.test.ts",
+        "id": "取价简称保持四字，区分参考均价、浓度及库存兜底"
+      },
+      {
+        "file": "tests_ui/researchAnalytics.test.ts",
+        "id": "旧配方部门显示及筛选沿用研发五部范围且不修改原字段"
+      }
+    ],
+    "browser": [
+      {
+        "file": "scripts/check-research-import.mjs",
+        "id": "research-import-department-filter-large-catalog",
+        "apiTest": "tests/test_research_import.py::test_browser_research_import"
+      },
+      {
+        "file": "scripts/check-research-import.mjs",
+        "id": "research-import-formula-department-filter",
+        "apiTest": "tests/test_research_import.py::test_browser_research_import"
+      },
+      {
+        "file": "scripts/check-research-import.mjs",
+        "id": "research-import-reference-mean-drilldown",
+        "apiTest": "tests/test_research_import.py::test_browser_research_import"
+      },
+      {
+        "file": "scripts/check-workbench-loading.mjs",
+        "id": "research-read-timeout-retains-error-and-retries",
+        "apiTest": "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+      },
+      {
+        "file": "scripts/check-workbench-loading.mjs",
+        "id": "research-detail-timeout-and-retry",
+        "apiTest": "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+      },
+      {
+        "file": "scripts/check-procurement.mjs",
+        "id": "distribution-ledger-and-ranking-consumers",
+        "apiTest": "tests/test_procurement_ui.py::test_browser_procurement_and_research"
+      },
+      {
+        "file": "scripts/check-procurement.mjs",
+        "id": "research-readonly-scope-failures-refresh-and-cleanup",
+        "apiTest": "tests/test_procurement_ui.py::test_browser_procurement_and_research"
+      },
+      {
+        "file": "scripts/check-research-import.mjs",
+        "id": "research-import-legacy-department-filter",
+        "apiTest": "tests/test_research_import.py::test_browser_research_import"
+      }
+    ]
+  }
+}

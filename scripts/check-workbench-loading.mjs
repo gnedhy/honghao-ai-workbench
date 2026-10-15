@@ -59,7 +59,7 @@ try {
     const salesPaths = ['products', 'batches', 'history', 'records'].map(path => 'GET /api/workbenches/sales/' + path);
     const expected = kind.startsWith('sales') ? salesPaths : kind === 'calculator' ? [...salesPaths, 'GET /api/workbenches/sales/calculator/saved', 'POST /api/workbenches/sales/calculator/evaluate']
       : kind === 'research-detail' ? ['GET /api/workbenches/research/products/recipe%3Afeedback', 'GET /api/workbenches/research/products/recipe%3Anested', 'GET /api/workbenches/research/material-prices', ...['CF004','CF132','CF014'].map(code=>'GET /api/workbenches/research/material-prices/material-'+code)]
-      : kind === 'research' ? ['products', 'history', 'formulas', 'products/recipe%3Atest'].map(path => 'GET /api/workbenches/research/' + path)
+      : kind === 'research' ? ['overview', 'products/recipe%3Atest'].map(path => 'GET /api/workbenches/research/' + path)
       : ['GET /api/workbenches/procurement/' + (kind === 'news' ? 'news' : 'overview')];
     await page.route('**/*', async route => {
       try {
@@ -91,15 +91,30 @@ try {
   }
   const trend = gate();
   await run('research trend: pending distinct from empty', 'research', async (route, path) => {
-    if (path.endsWith('/products')) return route.fulfill({ json: { products: [{ id: 'recipe:test', name: '测试产品', status: 'ready', yield: '100', change: null, latest_cost: '1', inventory_cost: '1' }], pending: false } });
-    if (path.endsWith('/history')) return route.fulfill({ json: { versions: [] } });
-    if (path.endsWith('/formulas')) return route.fulfill({ json: { formulas: [], owners: [] } });
+    if (path.endsWith('/overview')) return route.fulfill({ json: { products: [{ id: 'recipe:test', name: '测试产品', status: 'ready', yield: '100', change: null, latest_cost: '1', inventory_cost: '1' }], pending: false, versions: [], formulas: [], owners: [] } });
     await trend.promise; await route.fulfill({ json: { history: [] } });
   }, async page => {
     await page.getByText('正在读取研发成本走势', { exact: true }).waitFor(); assert.equal(await page.getByText('当前范围没有成本记录', { exact: true }).count(), 0);
     trend.release(); await page.getByText('当前范围没有成本记录', { exact: true }).waitFor(); assert.equal(await page.getByText('正在读取研发成本走势', { exact: true }).count(), 0);
   });
   const sales = [gate(), gate()]; let retry = false;
+  const blockedRead=gate();let readCalls=0,readRecovered=false;
+  await run('research-read-timeout-retains-error-and-retries', 'research', async (route,path)=>{
+    if(!path.endsWith('/overview'))return route.fulfill({json:{history:[]}});
+    readCalls++;
+    if(!readRecovered)await blockedRead.promise;
+    await route.fulfill({json:{products:[],pending:false,versions:[],formulas:[],owners:[]}});
+  },async page=>{
+    await page.getByText('数据读取超过15秒，请重试。',{exact:true}).waitFor({timeout:22000});
+    assert.equal(await page.getByText('正在读取产品成本',{exact:true}).count(),0);
+    await page.waitForTimeout(10500);
+    assert.equal(readCalls,1,'Automatic polling must not hide an initial read failure');
+    assert.ok(await page.getByText('数据读取超过15秒，请重试。',{exact:true}).isVisible());
+    readRecovered=true;blockedRead.release();
+    await page.getByRole('button',{name:'重新加载',exact:true}).click();
+    await page.getByRole('heading',{name:'产品成本计算',exact:true}).waitFor();
+    assert.equal(await page.getByText('数据读取超过15秒，请重试。',{exact:true}).count(),0);
+  });
   const empty = path => ({ [path.endsWith('/products') ? 'products' : path.endsWith('/batches') ? 'batches' : path.endsWith('/history') ? 'trials' : 'records']: [] });
   await run('sales: pending -> failure -> retry -> empty', 'sales', async (route, path) => {
     await sales[retry ? 1 : 0].promise;
@@ -167,8 +182,26 @@ try {
   const formula={id:'recipe:feedback',name:'RH-13',kind:'recipe',owner:'合成负责人',revision:1,yield:'0.98',lines:latest.lines};
   const record=(effective_date,purchase_version,left,right,index)=>({...formula,product_id:formula.id,event_id:'event-'+index,record_type:'formal',recorded_at:'2026-09-30T02:39:3'+index+'Z',effective_date,purchase_version,reason:index===3?'库存价格更新':'采购正式价格更新',formula,latest:left,inventory:right,latest_cost:left.cost,inventory_cost:right.cost,change:{percent:-0.2,reason:'合成比较'}});
   const feedbackHistory=[record('2026-09-30',undefined,latest,inventory,3),record('2026-09-28',24,latest,previousInventory,2),record('2026-09-21',23,previousLatest,previousInventory,1),record('2026-09-14',22,previousLatest,previousInventory,0)];
-  await run('research-history-periods-and-material-price-arrows', 'research-detail', async route => route.fulfill({json:{product:{...formula,status:'ready',lifecycle:'active'},recipes:[formula],latest,inventory,history:feedbackHistory,draft:null,draft_revision:0,options:{owners:[],materials:[],recipes:[],composites:[]}}}), async page => {
+  const changedFormula={...formula,revision:2,yield:'0.9',lines:formula.lines.map(line=>({...line,quantity:'20'}))};
+  const changedLatest={...latest,cost:'12.62962962962962962962962963',yield:'0.9',total_input:'60',output_quantity:'54',lines:latest.lines.map(line=>({...line,quantity:'20',amount:String(Number(line.unit_cost)*20)}))};
+  const changedInventory={...inventory,cost:'11.07407407407407407407407407',yield:'0.9',total_input:'60',output_quantity:'54',lines:inventory.lines.map(line=>({...line,quantity:'20',amount:String(Number(line.unit_cost)*20)}))};
+  const changedHistory=[{...record('2026-10-15',undefined,changedLatest,changedInventory,4),formula:changedFormula,reason:'配方与收率更新',change:{percent:(12.63-12.55)/12.55*100,reason:'配方与收率更新后的合成比较'}},...feedbackHistory];
+  const blockedDetail=gate();let detailRecovered=false;
+  await run('research-detail-timeout-and-retry','research-detail',async route=>{
+    if(!detailRecovered)await blockedDetail.promise;
+    await route.fulfill({json:{product:{...formula,status:'ready',lifecycle:'active'},recipes:[formula],latest,inventory,history:feedbackHistory,draft:null,draft_revision:0,options:{owners:[],materials:[],recipes:[],composites:[]}}});
+  },async page=>{
+    const error=page.getByRole('alert').filter({hasText:'详情读取超过15秒，请重试。'});
+    await error.waitFor({timeout:22000});
+    assert.equal(await page.getByText('正在读取研发配方详情',{exact:true}).count(),0);
+    detailRecovered=true;blockedDetail.release();
+    await page.getByRole('button',{name:'重试',exact:true}).click();
+    await page.getByRole('dialog',{name:'RH-13',exact:true}).waitFor();
+    assert.equal(await error.count(),0);
+  });
+  await run('research-history-periods-and-material-price-arrows', 'research-detail', async route => route.fulfill({json:{product:{...changedFormula,status:'ready',lifecycle:'active'},recipes:[changedFormula],latest:changedLatest,inventory:changedInventory,history:changedHistory,draft:null,draft_revision:0,options:{owners:[],materials:[],recipes:[],composites:[]}}}), async page => {
     const drawer=page.getByRole('dialog',{name:'RH-13',exact:true}); await drawer.waitFor();
+    await drawer.getByText('配方与收率更新',{exact:true}).waitFor();
     for (const date of ['2026-09-30','2026-09-28','2026-09-21','2026-09-14']) await drawer.getByText(date,{exact:false}).waitFor();
     await drawer.getByText('采购正式价格更新 · 采购 v24',{exact:true}).waitFor();
     const table=drawer.locator('table').first(), row=code=>table.getByRole('row').filter({hasText:code});

@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "登录鉴权的数据库读取移出异步主循环；研发完整响应按当前数据版本和有效数据范围合并重建，概览及详情重读取限并发2，排队不占数据库连接；相同完整输入只计算一次双成本，序列化在读取事务结束后完成。",
+  "modules": [
+    "research",
+    "procurement",
+    "sales"
+  ],
+  "files": [
+    "api/main.py",
+    "api/research.py"
+  ],
+  "consumers": [
+    "src/workbenches/researchData.ts",
+    "src/workbenches/ResearchWorkbench.tsx",
+    "src/workbenches/researchEditSession.ts",
+    "src/workbenches/SalesWorkbench.tsx",
+    "src/workbenches/ProcurementWorkbench.tsx"
+  ],
+  "permissions": "每次请求仍核验有效会话；每次研发概览与详情读取在队列等待结束后的只读快照内重新校验会话、账号有效状态、研发等级及部门。操作标记、部门范围与成本共用该快照；排队期间退出登录、撤权或降级不复用旧身份。仅相同有效数据范围、权限等级和数据版本复用概览；不同部门、撤权或停用不能命中原范围。",
+  "data": "原JSON、成本字符串和历史口径保持；进程内最多16份不可变概览正文，以及1份按完整投料、配方、取价、政策及采购期原值生成SHA256指纹的双成本计算结果。未变输入复用纯计算，向调用方及权限投影提供选定产品的深拷贝；更新中不取计算缓存。鉴权结论不缓存，不写业务表，无迁移。ETag与正文绑定同一可重复读快照，成本事件、草稿、价格、组织及权限变更均由原表版本校验失效。",
+  "lifecycle": "首次或强制读取仍返回完整原JSON；未变化的条件读取在轻量只读快照中直接返回304，不进入重建队列。64条固定锁按范围合并重建，重查询上限2，范围哈希碰撞只增加等待不影响授权。缓存随进程退出销毁，LRU上限16项；重建异常不安装缓存，保留原错误状态。",
+  "exits": "沿用现有请求取消、旧响应丢弃、401/403清空数据及错误重试逻辑；只读鉴权线程不执行业务写入。",
+  "compatibility": "旧接口、字段和前端调用不变，响应跳过对JSON原生数据的重复编码。后续开发须整合api/main.py鉴权调用、api/research.py响应队列及范围ETag，并保留现有部门隔离和迁移顺序；无新依赖或数据库迁移。已于2026-10-15通过完整门禁后正式发布，见docs/releases/研发读取与投料涨跌正式更新-2026-10-15.md。",
+  "recovery": "保留版本5旧程序与active-before入口；回退程序继续使用当前正式数据，不回滚合法业务增量；备份及实际隔离恢复见docs/releases/研发读取与投料涨跌正式更新-2026-10-15.md。",
+  "verification": {
+    "api": [
+      "tests/test_research_read_concurrency.py::test_waiting_authentication_does_not_block_public_health",
+      "tests/test_research_read_concurrency.py::test_parallel_full_reads_share_one_exact_response_for_same_scope",
+      "tests/test_research_read_concurrency.py::test_reader_waiting_for_rebuild_rechecks_revoked_department",
+      "tests/test_research_read_concurrency.py::test_detail_calculation_reuse_preserves_precision_and_isolation",
+      "tests/test_research_read_concurrency.py::test_queued_detail_uses_current_operation_permissions",
+      "tests/test_research_read_concurrency.py::test_unchanged_scope_does_not_wait_for_another_scope_rebuild",
+      "tests/test_research_conditional.py::test_inventory_queue_costs_and_draft_deletion_invalidate",
+      "tests/test_research_conditional.py::test_department_and_scope_revocation_never_reuse_old_validator",
+      "tests/test_research_conditional.py::test_validator_and_payload_share_snapshot_during_concurrent_commit",
+      "tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle"
+    ],
+    "node": [],
+    "browser": [
+      {
+        "file": "scripts/check-research.mjs",
+        "id": "conditional-refresh-keeps-table-and-reloads-after-external-change",
+        "apiTest": "tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle"
+      }
+    ]
+  }
+}

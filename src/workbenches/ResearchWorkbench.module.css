@@ -248,3 +248,6 @@ dialog:has(> .reasonFields) { width: min(480px, calc(100vw - 32px)); max-height:
 .linePriceMovement { display: inline-flex; margin-left: 4px; vertical-align: middle; }
 .linePriceMovement[data-direction="up"] { color: #b42318; }
 .linePriceMovement[data-direction="down"] { color: #187764; }
+
+.priceBasis { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.priceBasis svg { color: var(--muted); flex: none; }
