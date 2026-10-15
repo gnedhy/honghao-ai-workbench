@@ -1,6 +1,7 @@
 """Actual H05 App/API/PostgreSQL; native/model/OS injection is synthetic."""
 import json
 import os
+import re
 import socket
 import subprocess
 from pathlib import Path
@@ -31,11 +32,17 @@ def test_browser_ai_project_ui_actual_consumers(controlled):
             assert server.started
             output = Path(os.environ.get('H05_UI_OUTPUT', '.scratch/h05-ui'))
             output.mkdir(parents=True, exist_ok=True)
-            with (output / 'driver-stdout.log').open('w', encoding='utf-8') as stdout, (output / 'driver-stderr.log').open('w', encoding='utf-8') as stderr:
-                reply = subprocess.run(['node', 'scripts/check-ai-project-ui.mjs'], stdout=stdout, stderr=stderr,
-                    timeout=150, env={**os.environ,
-                        'H05_TEST_API': f'http://127.0.0.1:{listener.getsockname()[1]}',
-                        'H05_TEST_PASSWORD': TEST_ADMIN_PASSWORD})
+            try:
+                with (output / 'driver-stdout.log').open('w', encoding='utf-8') as stdout, (output / 'driver-stderr.log').open('w', encoding='utf-8') as stderr:
+                    reply = subprocess.run(['node', 'scripts/check-ai-project-ui.mjs'], stdout=stdout, stderr=stderr,
+                        timeout=150, env={**os.environ,
+                            'H05_TEST_API': f'http://127.0.0.1:{listener.getsockname()[1]}',
+                            'H05_TEST_PASSWORD': TEST_ADMIN_PASSWORD})
+            except subprocess.TimeoutExpired:
+                # Only fixed stage names and numeric timings may enter CI diagnostics.
+                progress = [line for line in (output / 'driver-stderr.log').read_text(encoding='utf-8').splitlines()
+                    if re.fullmatch(r'H05 runtime v[0-9.]+|H05 modules (?:status [0-9]{3}|request failed)|H05 (?:server ready|title animation) [0-9]+ ms|(?:START|PASS) (?:h05|h07|ai-config)-[a-z-]+(?: [0-9]+ ms)?', line)]
+                raise AssertionError('H05 driver exceeded 150s; stages: ' + '; '.join(progress)) from None
             assert reply.returncode == 0, (output / 'driver-stderr.log').read_text(encoding='utf-8')
             result = (output / 'driver-stdout.log').read_text(encoding='utf-8')
             evidence = json.loads(result)

@@ -15,9 +15,11 @@ try{
   const preparationStarted=performance.now();console.error('H05 runtime '+process.version);
   await server.listen();await server.warmupRequest('/src/main.tsx');await server.waitForRequestsIdle();console.error('H05 server ready '+Math.round(performance.now()-preparationStarted)+' ms');browser=await chromium.launch({headless:true});const origin=server.resolvedUrls.local[0];
   async function run(name,width,check,username='alice'){
-    console.error('START '+name);
+    const started=performance.now();console.error('START '+name);
     const context=await browser.newContext({viewport:{width,height:900},hasTouch:width===390});const page=await context.newPage();
     const errors=[];page.on('pageerror',error=>errors.push(error.name));
+    page.on('response',reply=>{if(new URL(reply.url()).pathname==='/api/modules')console.error('H05 modules status '+reply.status());});
+    page.on('requestfailed',request=>{if(new URL(request.url()).pathname==='/api/modules')console.error('H05 modules request failed');});
     assert.equal((await context.request.post(origin+'api/login',{data:{username,password:process.env.H05_TEST_PASSWORD}})).status(),200);
     const get=async path=>{const reply=await context.request.get(origin+path);assert.equal(reply.status(),200);return reply.json();};
     const nav=async name=>{if(width<600)await page.getByRole('button',{name:'打开导航',exact:true}).click();await page.getByRole('button',{name,exact:true}).click();};
@@ -27,9 +29,12 @@ try{
       assert.equal(await page.getByLabel('选择项目',{exact:true}).count(),0);
       await check({page,context,get,nav,origin});
       assert.deepEqual(errors,[]);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+      // Clear decorative hover motion before waiting for screenshot stability.
+      await page.mouse.move(0,0);
+      assert.equal(await page.locator('.sidebar-scrolling-title:hover').count(),0);
       await page.evaluate(()=>Promise.all(document.getAnimations({subtree:true}).filter(animation=>animation.effect?.getComputedTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{}))));
       await page.screenshot({path:`${output}/${width}-${name}.png`,fullPage:true});evidence.push({name,width,status:'passed'});
-      console.error('PASS '+name);
+      console.error('PASS '+name+' '+Math.round(performance.now()-started)+' ms');
     }catch(error){await page.screenshot({path:`${output}/${width}-${name}-failed.png`,fullPage:true});throw error;}
     finally{await context.close();}
   }
@@ -130,6 +135,7 @@ try{
     await page.screenshot({path:output+'/390-long-project-title.png',fullPage:true});await page.setViewportSize({width:1440,height:900});
     const title=page.locator('.sidebar-scrolling-title').filter({hasText:longName}).first();await title.hover();
     assert.ok(await title.evaluate(node=>{const child=node.firstElementChild;const distance=child.scrollWidth-node.clientWidth;const css=getComputedStyle(child);return parseFloat(css.transitionDuration)>=Math.max(3,distance/24)-.01&&css.transitionTimingFunction==='linear';}));
+    console.error('H05 title animation '+Math.round(await title.evaluate(node=>parseFloat(getComputedStyle(node.firstElementChild).transitionDuration))*1000)+' ms');
   });
   await run('h05-chat-work-draft-and-real-history',1024,async({page,get,nav,origin,context})=>{
     const workProject=(await get('api/projects'))[0];
