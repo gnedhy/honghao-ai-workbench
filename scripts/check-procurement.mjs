@@ -311,6 +311,16 @@ try {
     await page.getByRole('button', { name: 'A', exact: true }).waitFor();
     assert.equal(await page.locator('tbody tr').count(), state.materials.filter(row => row.in_formula_scope).length);
     assert.equal(await page.getByRole('button', { name: 'W6-000', exact: true }).count(), 0);
+    const scope = page.getByLabel('原料范围', { exact: true });
+    const formulaLabel = `配方范围（${state.materials.filter(row => row.in_formula_scope).length}项）`;
+    assert.equal(await scope.innerText(), formulaLabel);
+    await scope.click();
+    await page.getByRole('button', { name: `所有原料（${state.materials.length}项）`, exact: true }).click();
+    assert.equal(await page.locator('tbody tr').count(), state.materials.length);
+    assert.equal(await page.getByRole('button', { name: 'W6-000', exact: true }).count(), 1);
+    await scope.click();
+    await page.getByRole('button', { name: formulaLabel, exact: true }).click();
+    assert.equal(await page.locator('tbody tr').count(), state.materials.filter(row => row.in_formula_scope).length);
     await page.getByRole('button', { name: 'A', exact: true }).click();
     const drawer = page.getByRole('dialog', { name: '原料价格详情', exact: true });
     await drawer.getByRole('button', { name: '重新加载', exact: true }).click();
