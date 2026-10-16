@@ -593,13 +593,13 @@ class ResearchStore:
         inputs["package"]["recipes"] = [r for r in inputs["package"]["recipes"] if r['id']!=key]+[formula]
         after = evaluate(inputs)
         affected = []
+        lookup = {r["id"]:r for r in inputs["package"]["recipes"]}
         def uses(recipe, target, seen):
             if recipe["id"] == target:
                 return True
             if recipe["id"] in seen:
                 return False
             seen.add(recipe["id"])
-            lookup = {r["id"]:r for r in inputs["package"]["recipes"]}
             return any(line["kind"] != "material" and uses(lookup[line["ref"]],target,seen) for line in recipe["lines"])
         for r in inputs["package"]["recipes"]:
             if r["kind"] == "recipe" and uses(r,key,set()):

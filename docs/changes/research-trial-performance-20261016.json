@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "研发原料范围菜单显示配方范围与全部在用原料的数量；配方试算每次只构建一次引用索引，保持双成本及影响范围语义。",
+  "modules": [
+    "research",
+    "procurement"
+  ],
+  "files": [
+    "api/research.py",
+    "src/workbenches/ResearchMaterialPrices.tsx"
+  ],
+  "consumers": [
+    "src/workbenches/ResearchFormulaEditor.tsx",
+    "src/workbenches/researchEditSession.ts",
+    "src/workbenches/ResearchProductDrawer.tsx"
+  ],
+  "permissions": "继续使用实时ResearchAccess、草稿版本和HTTP权限校验；默认配方范围及所有原料的已有读取范围不变。",
+  "data": "不改成本公式、Decimal精度、取价、收率、缺价、循环检测、影响范围顺序或试算token；不导入数据，不增加数据库迁移。",
+  "lifecycle": "引用索引在单次_simulate内创建，结束后释放；不增加进程缓存，不跨请求或账号复用试算结果。",
+  "exits": "沿用请求取消、350ms联动防抖、版本冲突、草稿保存及退出保护。",
+  "compatibility": "接口、响应字段和迁移链均不变。H06当前api/research.py与本基线一致；另两份共享文件有界面及测试变动，须三方合并，不能覆盖整文件。独立文件副本合并成功，不代替H06组合验收。",
+  "recovery": "2026-10-16已依据当前授权完成完整门禁、原生备份实际隔离恢复及正式程序切换；63表和迁移1—5保持，回退仅切回旧程序并继续使用当前合法业务数据。见docs/releases/研发原料范围与配方试算正式更新-2026-10-16.md。",
+  "verification": {
+    "api": [
+      "tests/test_research_workbench.py::test_manual_cost_missing_price_and_cycle_validation",
+      "tests/test_research_departments.py::test_foreign_writes_and_membership_revocation_are_denied",
+      "tests/test_procurement_ui.py::test_browser_procurement_and_research",
+      "tests/test_research_import.py::test_browser_research_import",
+      "tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle"
+    ],
+    "node": [],
+    "browser": [
+      {
+        "file": "scripts/check-procurement.mjs",
+        "id": "research-readonly-scope-failures-refresh-and-cleanup",
+        "apiTest": "tests/test_procurement_ui.py::test_browser_procurement_and_research"
+      },
+      {
+        "file": "scripts/check-research-import.mjs",
+        "id": "research-import-reference-mean-drilldown",
+        "apiTest": "tests/test_research_import.py::test_browser_research_import"
+      }
+    ]
+  }
+}

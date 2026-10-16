@@ -62,6 +62,7 @@ try{
   await page.getByRole('heading',{name:'REF-A',exact:true}).waitFor();
   await page.locator('summary').filter({hasText:'查看参考料：REF-A'}).click();await page.getByRole('button',{name:/^REF-B ·/}).click();
   await page.getByRole('heading',{name:'REF-B',exact:true}).waitFor();
+  await page.getByRole('dialog',{name:'REF-B',exact:true}).getByText(/2\/3有价/).waitFor();
   assert.ok((await page.getByRole('dialog',{name:'REF-B',exact:true}).innerText()).includes('2/3有价'));
   await page.screenshot({path:output+'/mean-reference.png'});
   await page.getByRole('button',{name:'返回配方与成本',exact:true}).click();await page.getByRole('dialog',{name:'REF-B',exact:true}).waitFor({state:'hidden'});
