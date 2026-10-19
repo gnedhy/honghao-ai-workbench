@@ -2,4 +2,4 @@
 api/migrations/postgresql/*.sql text eol=lf
 
 # Migration 0006 was formally applied with CRLF; preserve its immutable checksum.
-api/migrations/postgresql/0006_read_versions.sql -text
+api/migrations/postgresql/0006_read_versions.sql -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
