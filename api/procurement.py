@@ -65,7 +65,7 @@ ISSUE_LABELS = {
     "missing_price": "缺少可用价格",
     "duplicate_code": "导入内容存在重复编码",
     "unit_conflict": "计量单位冲突",
-    "price_spike": "最新价波动超过 15%",
+    "price_spike": "行情价波动超过 15%",
 }
 
 
@@ -832,7 +832,7 @@ class ProcurementStore:
         with transaction(self.url) as connection:
             rows = self._active_history(include_archived=include_archived, material_id=material_id)
             material = connection.execute(
-                "SELECT id, code, name, unit, archived_at, updated_at, latest_price FROM procurement_materials WHERE id = %s",
+                "SELECT id, code, name, unit, archived_at, updated_at, latest_price, inventory_price FROM procurement_materials WHERE id = %s",
                 (material_id,),
             ).fetchone()
             adjustments = connection.execute(
@@ -853,6 +853,7 @@ class ProcurementStore:
                 WHERE s.material_id=%s ORDER BY s.sheet,s.source_row""", (material_id,)).fetchall()
             if material is None or (material[4] is not None and not include_archived):
                 return None
+            inventory = inventory_snapshot(connection).get(material_id, (None, material[7], None))
             authorship = collaboration.price_authorship(self.url, material_id)["batches"]
             rows.sort(key=lambda item: (item["effective_date"], item["created_at"]))
             latest = rows[-1] if rows else None
@@ -860,7 +861,7 @@ class ProcurementStore:
             return {
                 "comparison": self.batch_comparison(official[-1][0], preserve_catalog=True)["items"].get(material_id) if official else None,
                 "material": {"id": str(material[0]), "code": str(material[1]), "name": str(material[2]), "unit": str(material[3]), "archived": material[4] is not None, "updated_at": material[5],
-                             "inventory_source": inventory_snapshot(connection).get(material_id, (None,None,None))[2]},
+                             "inventory_quantity": inventory[0], "inventory_price": inventory[1], "inventory_source": inventory[2]},
                 "latest_price": latest["latest_price"] if latest else material[6],
                 "previous_price": previous["latest_price"] if previous else None,
                 "change": _change(latest["latest_price"] if latest else material[6], previous["latest_price"] if previous else None),
@@ -1565,6 +1566,21 @@ class ProcurementStore:
                 items[material_id] = entry
             return {"previous_version": previous[1] if previous else None, **counts, "items": items, "added_material_ids": sorted(reported) if supplement else []}
 
+    def price_series(self):
+        with transaction(self.url) as db:
+            batches = {ident:dict(id=ident,version=version,published_at=published,price_date=date,items=[],snapshot_sources={})
+                       for ident,version,published,date in db.execute('SELECT id,version,published_at,price_date FROM procurement_price_batches ORDER BY version DESC')}
+            for batch_id,material_id,code,price,source_id,date,kind in db.execute("""
+                SELECT i.batch_id,i.material_id,i.code,i.latest_price,s.material_id,s.price_date,s.price_kind
+                FROM procurement_price_batch_items i LEFT JOIN procurement_snapshot_sources s
+                ON s.batch_id=i.batch_id AND s.material_id=i.material_id ORDER BY i.batch_id,i.code
+            """):
+                batch = batches[batch_id]
+                batch['items'].append(dict(material_id=material_id,code=code,latest_price=price))
+                if source_id is not None:
+                    batch['snapshot_sources'][material_id] = dict(price_date=date,price_kind=kind)
+            return {'batches':list(batches.values())}
+
     def get_batch(self, batch_id: str) -> dict[str, Any] | None:
         with transaction(self.url) as connection:
             batch = connection.execute(
@@ -2157,6 +2173,12 @@ def create_procurement_router(
         raise HTTPException(status_code=409, detail="请使用带版本核对的启用确认入口")
         user = actor(request, 4)
 
+    @router.get("/price-series")
+    def price_series(request:Request):
+        with transaction(store.url):
+            user = actor(request,2)
+            return visible_payload(store.price_series(),user)
+
     @router.get("/batches/{batch_id}")
     def get_batch(batch_id: str, request: Request) -> dict[str, Any]:
         with transaction(store.url) as connection:
@@ -2183,7 +2205,7 @@ def _parse_delimited(content: str) -> list[dict[str, Any]]:
         "code": ("编号", "原料编码", "编码"),
         "name": ("名称", "原料名称", "品名"),
         "unit": ("单位", "计量单位"),
-        "latest_price": ("最新价", "最新价格"),
+        "latest_price": ("行情价", "行情价格", "最新价", "最新价格"),
         "inventory_price": ("库存价", "库存价格"),
         "in_transit_price": ("在途价", "在途价格"),
         "previous_latest_price": ("上次最新价", "上次价格"),

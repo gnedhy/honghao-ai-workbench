@@ -51,6 +51,13 @@ try {
           if (url.origin !== new URL(origin).origin) { unexpected.push('external'); return route.abort(); }
           if (!url.pathname.startsWith('/api/')) return route.continue();
           requests++;
+          if(url.pathname==='/api/workbenches/research/pages/products'&&request.method()==='GET') {
+            const all=Array.from({length:policy.fixture.researchRows},(_,i)=>({id:'recipe:'+i,name:'P'+String(i).padStart(5,'0'),owner:'合成负责人',yield:'1',lines:0,revision:1,latest_cost:'4',inventory_cost:'12',status:'ready',change:{percent:null},has_draft:false}));
+            const matches=all.filter(row=>row.name.includes(url.searchParams.get('search')||''));
+            const number=Number(url.searchParams.get('page')||1),size=Number(url.searchParams.get('page_size')||50);
+            assert.ok(size>0&&size<=200);
+            return route.fulfill({json:{items:matches.slice((number-1)*size,number*size),total:matches.length,scope_total:all.length,page:number,page_size:size,owners:['合成负责人'],creation_owners:[],department_names:[],departments:[],pending:false}});
+          }
           const reply = {
             '/api/workbenches/procurement/preferences': { ledger_columns: ['unit','latest_price','inventory_price','change','status'], history_view: 'batches', ledger_view: 'paged', ledger_page_size: 50 },
             '/api/workbenches/research/overview': { products: Array.from({ length: policy.fixture.researchRows }, (_, i) => ({ id: 'recipe:'+i, name: 'P'+String(i).padStart(5,'0'), owner: '合成负责人', kind: 'recipe', yield: '1', lines: [], revision: 1, latest_cost: '4', inventory_cost: '12', status: 'ready', change: { percent: null, reason: '首次' }, has_draft: false })), pending: false, versions: [], formulas: [], owners: ['合成负责人'] },

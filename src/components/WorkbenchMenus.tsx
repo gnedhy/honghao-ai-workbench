@@ -34,8 +34,10 @@ export function TrendMaterialMenu({ materials, selected, onSelect, label = "趋�
   </details>;
 }
 
-export function PriceDateRangeMenu({ period, range, onChange, label = "排行日期范围" }: {
+export function PriceDateRangeMenu({ period, range, onChange, allSelected = false, onAll, label = "排行日期范围" }: {
   label?: string;
+  allSelected?: boolean;
+  onAll?: () => void;
   period: "14d" | "1m" | "3m" | { start: string; end: string };
   range: { start: string; end: string };
   onChange: (value: "14d" | "1m" | "3m" | { start: string; end: string }) => void;
@@ -52,11 +54,12 @@ export function PriceDateRangeMenu({ period, range, onChange, label = "排行日
     return () => document.removeEventListener("pointerdown", outside);
   }, []);
   const apply = (value: typeof period) => { onChange(value); close(true); };
-  return <details ref={menu} className={`${styles.columnMenu} ${styles.filterMenu} ${styles.moverDateMenu}`} onToggle={event => { if (event.currentTarget.open) { setCustom(typeof period !== "string"); setStart(range.start); setEnd(range.end); } }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) close(); }} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); } }}>
-    <summary aria-label={label} title={`${range.start} — ${range.end}`}><CalendarDays size={14} /><span>{typeof period === "string" ? labels[period] : "自定义日期"}</span><ChevronRight size={13} className={styles.moverDateChevron} /></summary>
+  return <details ref={menu} className={`${styles.columnMenu} ${styles.filterMenu} ${styles.moverDateMenu}`} onToggle={event => { if (event.currentTarget.open) { setCustom(!allSelected && typeof period !== "string"); setStart(range.start); setEnd(range.end); } }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) close(); }} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); } }}>
+    <summary aria-label={label} title={`${range.start} — ${range.end}`}><CalendarDays size={14} /><span>{allSelected ? "全部日期" : typeof period === "string" ? labels[period] : "自定义日期"}</span><ChevronRight size={13} className={styles.moverDateChevron} /></summary>
     <div><div className={styles.filterGroup}>
-      {(["14d", "1m", "3m"] as const).map(value => <button type="button" key={value} aria-pressed={period === value} onClick={event => { event.preventDefault(); apply(value); }}>{labels[value]}{period === value && <Check size={14} />}</button>)}
-      <button type="button" aria-expanded={custom} onClick={() => setCustom(true)}>自定义范围{typeof period !== "string" && <Check size={14} />}</button>
+      {onAll && <button type="button" aria-pressed={allSelected} onClick={()=>{onAll();close(true);}}>全部日期{allSelected && <Check size={14}/>}</button>}
+      {(["14d", "1m", "3m"] as const).map(value => <button type="button" key={value} aria-pressed={!allSelected && period === value} onClick={event => { event.preventDefault(); apply(value); }}>{labels[value]}{!allSelected && period === value && <Check size={14} />}</button>)}
+      <button type="button" aria-expanded={custom} onClick={() => setCustom(true)}>自定义范围{!allSelected && typeof period !== "string" && <Check size={14} />}</button>
     </div>
     {custom && <form className={styles.moverDateForm} onSubmit={event => { event.preventDefault(); if (start && end && start < end) apply({ start, end }); }}>
       <label>开始日期<input type="date" required value={start} max={end || undefined} onInput={event => setStart(event.currentTarget.value)} onChange={event => setStart(event.target.value)} /></label>

@@ -1,7 +1,7 @@
 import { ProcurementMaterials } from "./ProcurementMaterials";
 import { useUnsavedChanges } from "../components/Interaction";
 import { ProcurementMaterialDrawer } from "./ProcurementMaterialDrawer";
-import { ReadOnlyMaterialDrawer, ChartEmpty, ChangePrices, price, formatDate, formatShanghaiDateTime, formatPriceDate, shortDate, focusWithoutScroll, recordDialogKeys, updateEventLabel} from "./ProcurementMaterialView";
+import { ReadOnlyMaterialDrawer, ChartEmpty, ChangePrices, Price, price, formatDate, formatShanghaiDateTime, formatPriceDate, shortDate, focusWithoutScroll, recordDialogKeys, updateEventLabel} from "./ProcurementMaterialView";
 import { ReasonSelect } from "./procurementPriceEditing";
 import { DashboardPanel, WorkbenchLoading } from "../components/WorkbenchLayout";
 import { DecimalInput } from "../components/DecimalInput";
@@ -14,9 +14,9 @@ import { createPortal } from "react-dom";
 import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, CalendarDays, Check, ChevronRight, Clock3, FileUp, PackageCheck, RefreshCw, TrendingDown, TrendingUp, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { createProcurementMaterial, cancelProcurementSchedule, confirmProcurementImport, fetchProcurementBatch, fetchProcurementMaterial, fetchProcurementOverview, previewProcurementImport, publishProcurementUpdate} from "../api";
+import { fetchJson, createProcurementMaterial, cancelProcurementSchedule, confirmProcurementImport, fetchProcurementBatch, fetchProcurementMaterial, fetchProcurementOverview, previewProcurementImport, publishProcurementUpdate} from "../api";
 import type { ProcurementBatchDetail, ProcurementImportPreview, ProcurementMaterialDetail, ProcurementOverview, ProcurementPage, ProcurementUpdate} from "../types";
-import { buildPriceMovement, buildRangeDistribution, buildPublishedPriceMovement, buildVersionMovers, focusedTrendAxis, moverDateRange, sortBatchPrices } from "./procurementAnalytics";
+import { type PriceSeries, buildPriceMovement, buildRangeDistribution, buildPublishedPriceMovement, buildVersionMovers, focusedTrendAxis, moverDateRange, sortBatchPrices } from "./procurementAnalytics";
 import { defaultProcurementPage } from "./procurementWorkflow";
 import { summarizeUpdate } from "./procurementLedger";
 import { PRICE_REASONS, resolveReason, type ReasonSelection } from "./procurementReasons";
@@ -25,7 +25,7 @@ import { previewProcurementExcel, type ExcelPreview } from "../api";
 import { ProcurementDistribution, type DepartmentLedger } from "./ProcurementDistribution";
 import { ProcurementNews, type NewsData } from "./ProcurementNews";
 
-type MoverHistoryCache = { key: string; history: ProcurementBatchDetail[] } | null;
+type MoverHistoryCache = { key: string; history: PriceSeries[] } | null;
 
 export function ProcurementWorkbench({ accessLevel, view, page, onPageChange, onEnter }: { accessLevel: number; view: "preview" | "full"; page: ProcurementPage; onPageChange: (page: ProcurementPage) => void; onEnter: () => void }) {
   const moverHistory = useRef<MoverHistoryCache>(null);
@@ -114,9 +114,9 @@ function ProcurementMetrics({ data, movement }: { data: ProcurementOverview; mov
   const latestBatch = data.batches[0];
   const metrics = [
     ["跟踪原料", data.metrics.material_count, "当前台账"],
-    ["最新价格变动", movement.comparable ? `${movement.counts.rising} 涨 / ${movement.counts.falling} 降` : "暂无对比", movement.comparable ? "较上一版本" : "暂无可比较价格"],
+    ["行情价格变动", movement.comparable ? `${movement.counts.rising} 涨 / ${movement.counts.falling} 降` : "暂无对比", movement.comparable ? "较上一版本" : "暂无可比较价格"],
     ["待处理异常", data.metrics.open_issue_count, data.metrics.open_issue_count ? "需要进入工作台处理" : "当前无异常"],
-    ["最新价格版本", latestBatch ? `v${latestBatch.version}` : "—", latestBatch ? (latestBatch.price_date ?? "—") : "尚未形成价格基线"],
+    ["行情价格版本", latestBatch ? `v${latestBatch.version}` : "—", latestBatch ? (latestBatch.price_date ?? "—") : "尚未形成价格基线"],
   ] as const;
   return <div className={`${styles.metrics} workbench-metrics`}>{metrics.map(([label, value, note]) => <div key={label}><small>{label}</small><strong>{value}</strong><span>{note}</span></div>)}</div>;
 }
@@ -160,7 +160,7 @@ function PriceTrendPanel({ data, className = "" }: { data: ProcurementOverview; 
 
   return <DashboardPanel className={`${styles.dashboardPanel} ${styles.trendPanel}${className ? ` ${className}` : ""}`}>
     <div className={styles.panelHeading}><div><span>历史价格记录</span><h2>原料价格走势</h2></div><div className={styles.chartActions}><PriceDateRangeMenu label="走势日期范围" period={period} range={range} onChange={setPeriod} /><TrendMaterialMenu materials={data.materials} selected={selectedMaterial} onSelect={setSelectedMaterial} /></div></div>
-    {failed ? <ChartEmpty title="价格历史暂时不可用" detail="稍后重新进入该页面。" /> : history === null ? <WorkbenchLoading local title="正在读取采购价格趋势" /> : trend.length < 2 ? <ChartEmpty title="暂无可比较周期" detail="至少需要两期单值价格才会生成趋势线。" /> : <div className={styles.lineChart} aria-label={`${selectedMaterial}价格趋势`}><ResponsiveContainer width="100%" height="100%"><LineChart data={trend} accessibilityLayer margin={{ top: 8, right: 12, bottom: 4, left: 0 }}><CartesianGrid stroke="#edf0f1" vertical={false} /><XAxis dataKey="recordedAt" tickFormatter={shortDate} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis domain={axis.domain} ticks={axis.ticks} interval="preserveStartEnd" minTickGap={6} tickFormatter={value => Number(value).toFixed(2)} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} width={52} /><Tooltip labelFormatter={(value) => formatPriceDate(String(value))} formatter={(value) => [price(String(value)), "最新价"]} /><Line type="monotone" dataKey="value" stroke="#2f3337" strokeWidth={2} dot={{ r: 3, fill: "#fff", strokeWidth: 2 }} activeDot={{ r: 4 }} /></LineChart></ResponsiveContainer></div>}
+    {failed ? <ChartEmpty title="价格历史暂时不可用" detail="稍后重新进入该页面。" /> : history === null ? <WorkbenchLoading local title="正在读取采购价格趋势" /> : trend.length < 2 ? <ChartEmpty title="暂无可比较周期" detail="至少需要两期单值价格才会生成趋势线。" /> : <div className={styles.lineChart} aria-label={`${selectedMaterial}价格趋势`}><ResponsiveContainer width="100%" height="100%"><LineChart data={trend} accessibilityLayer margin={{ top: 8, right: 12, bottom: 4, left: 0 }}><CartesianGrid stroke="#edf0f1" vertical={false} /><XAxis dataKey="recordedAt" tickFormatter={shortDate} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis domain={axis.domain} ticks={axis.ticks} interval="preserveStartEnd" minTickGap={6} tickFormatter={value => Number(value).toFixed(2)} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} width={52} /><Tooltip labelFormatter={(value) => formatPriceDate(String(value))} formatter={(value) => [price(String(value)), "行情价格"]} /><Line type="monotone" dataKey="value" stroke="#2f3337" strokeWidth={2} dot={{ r: 3, fill: "#fff", strokeWidth: 2 }} activeDot={{ r: 4 }} /></LineChart></ResponsiveContainer></div>}
   </DashboardPanel>;
 }
 
@@ -217,7 +217,7 @@ function PriceDistributionPanel({ data }: { data: ProcurementOverview }) {
 function PriceMovers({ batches, cache, compact = false }: { batches: ProcurementOverview["batches"]; cache: React.RefObject<MoverHistoryCache>; compact?: boolean }) {
   const [selectedMaterial, setSelectedMaterial] = useState<string | null>(null);
   const materialTrigger = useRef<HTMLButtonElement | null>(null);
-  const [history, setHistory] = useState<ProcurementBatchDetail[] | null>(() => cache.current?.history ?? null);
+  const [history, setHistory] = useState<PriceSeries[] | null>(() => cache.current?.history ?? null);
   const historyKey = JSON.stringify(batches);
   const { period, range, setPeriod } = usePriceDateRange(batches);
   const rows = useMemo(() => history ? buildVersionMovers(history, { start: range.start, end: range.end }) : null, [history, range.start, range.end]);
@@ -234,14 +234,14 @@ function PriceMovers({ batches, cache, compact = false }: { batches: Procurement
     if (cache.current?.key === historyKey && retry === 0) return;
     const controller = new AbortController();
     setFailed(false);
-    Promise.all(batches.map(batch => fetchProcurementBatch(batch.id, controller.signal))).then(details => {
+    fetchJson<{batches:PriceSeries[]}>("/api/workbenches/procurement/price-series",{signal:controller.signal}).then(({batches:details}) => {
       if (controller.signal.aborted) return;
       cache.current = { key: historyKey, history: details };
       setHistory(details);
       setPage(0); setPreviousPage(null); setInstant(true);
     }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => controller.abort();
-  }, [historyKey, retry]);
+  }, [historyKey, retry, cache, setPage, setPreviousPage, setInstant]);
 
 
 
@@ -398,7 +398,7 @@ function Batches({ data, onRefresh, onNotice, onOpenUpdate }: { data: Procuremen
   const cancel = async (copyToDraft: boolean) => {
     if (!scheduled) return;
     setBusy(true);
-    try { await cancelProcurementSchedule(scheduled.id, cancelReason, copyToDraft); onNotice(copyToDraft ? "排期已撤销，并复制为新的本轮草稿。" : "排期已撤销，最新价格未受影响。"); closeSchedule(); onRefresh(); }
+    try { await cancelProcurementSchedule(scheduled.id, cancelReason, copyToDraft); onNotice(copyToDraft ? "排期已撤销，并复制为新的本轮草稿。" : "排期已撤销，行情价格未受影响。"); closeSchedule(); onRefresh(); }
     catch (reason) { onNotice(reason instanceof Error ? reason.message : "撤销排期失败"); }
     finally { setBusy(false); }
   };
@@ -406,7 +406,7 @@ function Batches({ data, onRefresh, onNotice, onOpenUpdate }: { data: Procuremen
     {data.current_update?.status === "revalidation_required" && <div className={styles.ledgerSchedule}><AlertTriangle size={15} /><span>{formatPriceDate(data.current_update.price_date)} 排期需要重新确认，暂不自动启用。</span><button type="button" onClick={onOpenUpdate}>前往台账重新确认</button></div>}
     {scheduled && <div className={styles.ledgerSchedule}><Clock3 size={15} /><span>待启用 · 价格日期 {formatPriceDate(scheduled.price_date)} · 将于 {formatShanghaiDateTime(scheduled.activate_at)} 启用</span><button ref={scheduleTrigger} type="button" onClick={() => setScheduleOpen(true)}>查看排期</button></div>}
     <PriceHistory published={data.batches} />
-    {scheduleOpen && scheduled && <div className={`${styles.drawerLayer} ${scheduleClosing ? styles.closing : ""}`} onKeyDown={recordDialogKeys} onMouseDown={event => { if (event.target === event.currentTarget) closeSchedule(); }}><aside className={styles.drawer} role="dialog" aria-modal="true" aria-label="待启用排期"><header className={styles.drawerHeader}><h2>待启用排期</h2><button ref={focusWithoutScroll} className="icon-button" type="button" aria-label="关闭详情" onClick={closeSchedule}><X size={17} /></button></header><div className={styles.drawerBody}><p>启用前，最新价格保持不变。</p>
+    {scheduleOpen && scheduled && <div className={`${styles.drawerLayer} ${scheduleClosing ? styles.closing : ""}`} onKeyDown={recordDialogKeys} onMouseDown={event => { if (event.target === event.currentTarget) closeSchedule(); }}><aside className={styles.drawer} role="dialog" aria-modal="true" aria-label="待启用排期"><header className={styles.drawerHeader}><h2>待启用排期</h2><button ref={focusWithoutScroll} className="icon-button" type="button" aria-label="关闭详情" onClick={closeSchedule}><X size={17} /></button></header><div className={styles.drawerBody}><p>启用前，行情价格保持不变。</p>
     {scheduled && <div className={styles.scheduledCard}><Clock3 size={18} /><span><strong>待启用：{formatPriceDate(scheduled.price_date)}</strong><small>{formatShanghaiDateTime(scheduled.activate_at)} · {scheduled.summary.coverage_count} 项原料</small></span><em>定时启用</em>{data.capabilities?.can_activate && <label><input value={cancelReason} maxLength={200} onChange={(event) => setCancelReason(event.target.value)} placeholder="撤销原因（4–200字）" /><button className="secondary-button" type="button" disabled={busy || cancelReason.trim().length < 4} onClick={() => void cancel(false)}>撤销排期</button><button className="secondary-button" type="button" disabled={busy || cancelReason.trim().length < 4} onClick={() => void cancel(true)}>撤销并复制草稿</button></label>}</div>}
     </div></aside></div>}
   </section>;
@@ -438,7 +438,7 @@ function PublishedBatchDrawer({ batchId, onClose }: { batchId: string; onClose: 
         {(["prices", "changes"] as const).map(value => <button key={value} id={`version-tab-${value}`} type="button" role="tab" aria-selected={tab === value} aria-controls={`version-panel-${value}`} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) { event.preventDefault(); const next = event.key === "Home" ? "prices" : event.key === "End" ? "changes" : tab === "prices" ? "changes" : "prices"; setTab(next); document.getElementById(`version-tab-${next}`)?.focus({ preventScroll: true }); } }}>{value === "prices" ? "价格" : "修改记录"}<span>{value === "prices" ? priceItems.length : detail.changes?.length ?? 0}</span></button>)}
       </div>
       <div className={styles.versionPane} id="version-panel-prices" role="tabpanel" aria-labelledby="version-tab-prices" tabIndex={0} hidden={tab !== "prices"}>
-      <div className={styles.changePrices}><table className={styles.table}><thead><tr>{header("code", "原料编号 / 来源")}{header("previous", "上版价格")}{header("current", "本版价格")}{header("change", "涨跌变化")}</tr></thead><tbody>{priceItems.map(item => { const comparison = detail.comparison?.items[item.material_id]; const source=detail.snapshot_sources?.[item.material_id]; return <tr key={item.material_id}><td><strong>{item.code} · {item.unit}</strong><span>{source?.price_date ?? "未定价"}{source?.sheet ? ` · ${source.sheet}!${source.cell ?? "—"}` : ""}</span></td><td>{price(comparison?.previous_raw ?? comparison?.previous)}</td><td><strong>{price(source?.raw_price ?? item.latest_price)}</strong>{source && source.price_kind!=="number" && source.price_kind!=="missing" && <small>原文异常，不参与精确涨跌</small>}</td><td><Movement value={comparison?.change == null ? null : comparison.change * 100} /></td></tr>; })}</tbody></table></div>
+      <div className={styles.changePrices}><table className={styles.table}><thead><tr>{header("code", "原料编号 / 来源")}{header("previous", "上版价格")}{header("current", "本版价格")}{header("change", "涨跌变化")}</tr></thead><tbody>{priceItems.map(item => { const comparison = detail.comparison?.items[item.material_id]; const source=detail.snapshot_sources?.[item.material_id]; return <tr key={item.material_id}><td><strong>{item.code} · {item.unit}</strong><span>{source?.price_date ?? "未定价"}{source?.sheet ? ` · ${source.sheet}!${source.cell ?? "—"}` : ""}</span></td><td>{<Price value={comparison?.previous_raw ?? comparison?.previous}/>}</td><td><strong>{<Price value={source?.raw_price ?? item.latest_price}/>}</strong>{source && source.price_kind!=="number" && source.price_kind!=="missing" && <small>原文异常，不参与精确涨跌</small>}</td><td><Movement value={comparison?.change == null ? null : comparison.change * 100} /></td></tr>; })}</tbody></table></div>
       </div>
       <div className={styles.versionPane} id="version-panel-changes" role="tabpanel" aria-labelledby="version-tab-changes" tabIndex={0} hidden={tab !== "changes"}>
         {!detail.changes?.length ? <p className={styles.batchMeta}>此版本没有可关联的逐次修改记录。</p> : <ol className={styles.changeTimeline}>{detail.changes.map(change => <li key={change.id}><div><strong>{updateEventLabel(change.event)}</strong><time>{formatShanghaiDateTime(change.created_at)}</time></div><p>{change.actor}</p>{change.reason && <p>{change.reason}</p>}<ChangePrices items={change.items ?? []} /></li>)}</ol>}
@@ -524,9 +524,9 @@ function ImportPanel({ current, onClose, onImported }: { current: ProcurementUpd
     <label>价格日期<div className={styles.dateField} onClick={(event) => { const input = event.currentTarget.querySelector("input"); input?.focus(); try { input?.showPicker?.(); } catch { /* Native input remains usable. */ } }}><input type="date" disabled={busy} value={effectiveDate} onChange={(event) => { setEffectiveDate(event.target.value); setPreview(null); }} /><CalendarDays size={15} /></div></label>
     <label className={styles.filePicker}><FileUp size={14} />选择 Excel、CSV 或 TXT<input type="file" accept=".xlsx,.csv,.txt" disabled={busy} onChange={event => void readFile(event.target.files?.[0])} /></label>
     {excel && <><label>工作表<select disabled={busy} value={sheet} onChange={e=>{setSheet(e.target.value); setPreview(null); setExcel({...excel,selection:undefined});}}>{excel.sheets.map(item=><option key={item.name}>{item.name}</option>)}</select></label><label>表内价格日期<select disabled={busy} value={effectiveDate} onChange={e=>{setEffectiveDate(e.target.value);setPreview(null);}}>{excel.sheets.find(s=>s.name===sheet)?.dates.map(date=><option key={date}>{date}</option>)}</select></label>{excel.selection && <><p>有效 {excel.selection.valid} · 空白 {excel.selection.unreported} · 异常或冲突 {excel.selection.blocked}。空白不清除现价。</p><div className={styles.previewRows}>{excel.selection.rows.map(row=><div key={row.row}><span>第{row.row}行 · {row.code} · {row.raw_price || "—"}</span><em>{({number:"有效",missing:"空白",range:"区间价，须更正",invalid:"异常，须更正",duplicate:"重复编号",unknown:"未知编号"} as Record<string,string>)[row.state] ?? row.state}</em></div>)}</div></>}</>}
-    {!excelFile && <label>CSV、TXT 或粘贴表格<textarea rows={8} disabled={busy} value={content} onChange={(event) => { setContent(event.target.value); setPreview(null); }} placeholder={'编号,名称,单位,最新价,库存价,在途价\nCF004,示例原料,kg,12.2,13,12.4'} /></label>}
+    {!excelFile && <label>CSV、TXT 或粘贴表格<textarea rows={8} disabled={busy} value={content} onChange={(event) => { setContent(event.target.value); setPreview(null); }} placeholder={'编号,名称,单位,行情价格,库存价,在途价\nCF004,示例原料,kg,12.2,13,12.4'} /></label>}
     {error && <p className={styles.error}>{error}<button type="button" disabled={busy} onClick={async () => {const fresh=await fetchProcurementOverview();if (!alive.current) return;setRevision({update_id:fresh.current_update?.id ?? null,updated_at:fresh.current_update?.updated_at ?? null});setPreview(null);setError("已刷新本轮，请重新检查数据；文件和输入已保留。");}}>读取最新本轮</button></p>}
-    {preview && <><div className={styles.preview}><strong>{preview.received_count} 行 · {preview.importable_count} 行可导入 · {preview.skipped_count} 行冲突</strong><span>空白保留现价；保存后仍需由有启用权的人员确认异常波动。</span></div><div className={styles.previewRows}>{preview.rows.map((row) => <div key={`${row.code}-${row.name}`}><span><strong>{row.code}</strong>{price(row.reference_price)} → {price(row.latest_price)} <Movement value={row.change == null ? null : row.change * 100} /></span><em>{row.issues.length ? row.issues.map(importIssueLabel).join("、") : "可导入"}</em></div>)}</div><ReasonSelect label="录价说明" options={PRICE_REASONS} placeholder="请选择说明" value={importReason} disabled={busy} onChange={setImportReason} /></>}
+    {preview && <><div className={styles.preview}><strong>{preview.received_count} 行 · {preview.importable_count} 行可导入 · {preview.skipped_count} 行冲突</strong><span>空白保留现价；保存后仍需由有启用权的人员确认异常波动。</span></div><div className={styles.previewRows}>{preview.rows.map((row) => <div key={`${row.code}-${row.name}`}><span><strong>{row.code}</strong>{<Price value={row.reference_price}/>} → {<Price value={row.latest_price}/>} <Movement value={row.change == null ? null : row.change * 100} /></span><em>{row.issues.length ? row.issues.map(importIssueLabel).join("、") : "可导入"}</em></div>)}</div><ReasonSelect label="录价说明" options={PRICE_REASONS} placeholder="请选择说明" value={importReason} disabled={busy} onChange={setImportReason} /></>}
     {unsaved.confirmation}
     </div>
     <footer className={styles.importActions}><button className="secondary-button" type="button" disabled={busy || (!excelFile && !content.trim()) || !effectiveDate} onClick={() => void run(false)}>检查数据</button><button className="primary-button" type="button" disabled={busy || !preview || preview.importable_count === 0 || preview.skipped_count > 0 || Boolean(excel?.selection?.blocked) || !effectiveDate || !resolveReason(importReason)} onClick={() => void run(true)}>确认并导入</button></footer>
@@ -551,9 +551,9 @@ function PublishConfirm({ update, publishing, onClose, onConfirm }: { update: Pr
         {counts.incomparable > 0 && <p>{counts.incomparable} 项暂无可比较价格，不计入持平。</p>}
         {counts.missing > 0 && <p className={styles.riskText}>{counts.missing} 项缺价</p>}
         <p>{risks.length ? `高波动 ${risks.length} 项，${risks.every(issue => issue.status === "reviewed") ? "均已确认" : "仍有待确认事项"}` : "无高波动"}</p>
-        <details className={styles.publishDetails}><summary>查看调整明细</summary><div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>原料</th><th>最新价格</th><th>待启用价</th><th>价格变化</th></tr></thead><tbody>{update.input_items.map(item => <tr key={item.material_id}><td>{item.code}</td><td>{price(item.published_price)}</td><td>{price(item.draft_price)}</td><td><span className={styles.updateChange}>{item.comparison_basis === "previous_inquiry" && <small>较上期询价</small>}<Movement value={item.change == null ? null : item.change * 100} /></span></td></tr>)}</tbody></table></div></details>
+        <details className={styles.publishDetails}><summary>查看调整明细</summary><div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>原料</th><th>行情价格</th><th>待启用价</th><th>价格变化</th></tr></thead><tbody>{update.input_items.map(item => <tr key={item.material_id}><td>{item.code}</td><td>{<Price value={item.published_price}/>}</td><td>{<Price value={item.draft_price}/>}</td><td><span className={styles.updateChange}>{item.comparison_basis === "previous_inquiry" && <small>较上期询价</small>}<Movement value={item.change == null ? null : item.change * 100} /></span></td></tr>)}</tbody></table></div></details>
       </div>
-      <p>启用后形成包含 <strong>{update.summary.coverage_count} 项原料</strong> 的完整价格基线，未调整原料沿用最新价格。</p>
+      <p>启用后形成包含 <strong>{update.summary.coverage_count} 项原料</strong> 的完整价格基线，未调整原料沿用行情价格。</p>
       <div className={styles.activateModes}><button type="button" disabled={publishing} aria-pressed={mode === "immediate"} onClick={() => setMode("immediate")}><strong>立即启用</strong><span>确认后立刻生效</span></button><button type="button" disabled={publishing} aria-pressed={mode === "scheduled"} onClick={() => setMode("scheduled")}><strong>定时启用</strong><span>在指定时间生效</span></button></div>
       {mode === "scheduled" && <><label className={styles.scheduleField}>启用时间<input type="datetime-local" disabled={publishing} value={activateAt} onChange={(event) => setActivateAt(event.target.value)} /></label><p>启用前如价格基线变化，排期会暂停并提示重新核对。</p></>}
       <div className={styles.panelActions}><button className="secondary-button" type="button" disabled={publishing} onClick={() => void close()}>返回台账</button><button className="primary-button" type="button" disabled={publishing || counts.missing > 0 || risks.some(issue => issue.status !== "reviewed") || (mode === "scheduled" && !activateAt)} onClick={() => void onConfirm(mode, mode === "scheduled" ? activateAt : undefined)}>{publishing ? "正在处理" : mode === "scheduled" ? "确认排期" : "确认启用"}</button></div>

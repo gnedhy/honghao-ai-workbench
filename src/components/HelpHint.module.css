@@ -1,0 +1,2 @@
+.root { display:inline-flex; align-items:center; gap:4px; vertical-align:middle; max-width:100%; font-weight:400; cursor:help; }
+.root:focus-visible { outline:2px solid var(--focus-ring); outline-offset:3px; border-radius:3px; }

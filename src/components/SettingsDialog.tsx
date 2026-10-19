@@ -366,13 +366,31 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
     </div>
     <h3 className="settings-section-label">更新日志</h3>
     <ol className="settings-timeline" tabIndex={0} aria-label="更新日志"><li>
+      <div className="changelog-date"><time dateTime="2026-10-19">2026年10月19日</time></div>
+      <div className="settings-timeline-content">
+        <div><strong>工作台读取提速</strong><p>优化列表分页、缓存和批量成本重算，减少重复读取，保留成本精度及部门权限校验。</p></div>
+        <div><strong>价格与成本查看</strong><p>统一行情、库存和双成本卡片，完善价格状态、历史查找、筛选与说明，采购、研发和销售保持一致。</p></div>
+        <div><strong>配方投料搜索</strong><p>新增或替换投料时，可按原料及产品内编快速查找，保留原有分类和核算规则。</p></div>
+      </div>
+    </li><li>
+      <div className="changelog-date"><time dateTime="2026-10-16">2026年10月16日</time></div>
+      <div className="settings-timeline-content">
+        <div><strong>采购行情更新</strong><p>已启用10月8日、13日两批行情，每批138项；研发成本、销售报价参考和测算工具同步更新。</p></div>
+        <div><strong>研发使用优化</strong><p>加快配方双成本试算，支持切换查看配方用料与全部在用原料。</p></div>
+      </div>
+    </li><li>
+      <div className="changelog-date"><time dateTime="2026-10-15">2026年10月15日</time><span className="changelog-updated">已正式更新</span></div>
+      <div className="settings-timeline-content">
+        <div><strong>ERP数据导入与成本核算</strong><p>导入原料库存、产品配方、负责人及收率，支持已确认的取价与双成本规则，缺价项目保留待完善状态。</p></div>
+        <div><strong>研发部门隔离</strong><p>覆盖七个研发部门，按部门配置查看、编辑及启用权限，保留已授权的全部门访问范围。</p></div>
+        <div><strong>销售与研发衔接</strong><p>销售默认展示研发产品，采购原料单独筛选；报价及测算同步读取研发成本。</p></div>
+        <div><strong>加载与价格提示优化</strong><p>加快研发加载和多人访问；原料涨跌独立追踪，不再因配方或收率更新而消失。统一价格与取价依据显示。</p></div>
+      </div>
+    </li><li>
       <div className="changelog-date"><time dateTime="2026-10-05">2026年10月5日</time></div>
       <div className="settings-timeline-content">
-        <div><strong>热门报价产品查看</strong><p>悬停或聚焦热门产品时显示进入箭头，点击可直接查看已有的产品报价与成本详情。</p></div>
-        <div><strong>成本历史日期与期数</strong><p>采购价格更新按所属行情日期和采购期号显示，库存与配方调整保留实际发生日期。各次成本记录完整保留，可查看对应投料和取价依据。</p></div>
-        <div><strong>投料价格变化</strong><p>投料核算单价上涨显示红色向上箭头，下降显示绿色向下箭头，可悬停查看前后单价。最新优先与库存优先分别按各自口径对比。</p></div>
-        <div><strong>原料详情穿透</strong><p>当前和历史投料中的原料编号可直接打开原料详情，查看当前价格、价格走势和历史版本。历史核算单价与当前原料价格分开说明。</p></div>
-        <div><strong>抽屉层级与返回</strong><p>详情按操作层级一次显示一个抽屉，标题左侧可返回上层，保留原来的取价口径、历史展开和滚动位置。补齐关闭与切换动效，并适配减少动态效果设置。</p></div>
+        <div><strong>成本历史与价格变化</strong><p>完善成本历史日期、期数及投料涨跌提示，支持查看历史取价依据。</p></div>
+        <div><strong>详情查看优化</strong><p>支持从热门报价与投料明细进入详情，完善抽屉返回和页面交互。</p></div>
       </div>
     </li><li>
       <div className="changelog-date"><time dateTime="2026-10-03">2026年10月3日</time></div>

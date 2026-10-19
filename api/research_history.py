@@ -7,7 +7,7 @@ SUMMARY_PAYLOAD = "summary_payload"
 
 
 def backfill(db):
-    from api.research import capture, evaluate, now, packed, signature, comparison
+    from api.research import capture, evaluate, now, packed, signatures, comparison
     if db.execute('SELECT 1 FROM research_backfill_runs').fetchone():
         count = db.execute('SELECT COUNT(DISTINCT purchase_version) FROM research_backfill_records').fetchone()[0]
         return {'status':'unchanged','versions':count}
@@ -32,6 +32,8 @@ def backfill(db):
                          inventory_basis='current_inventory_fallback')
         results = evaluate(inputs)
         lookup = {r['id']:r for r in inputs['package']['recipes']}
+        signed = signatures(inputs,results,include_basis=False)
+        positions = {key:i for i,key in enumerate(lookup)}
         def dependencies(key, found=None):
             found = set() if found is None else found
             if key not in found:
@@ -42,7 +44,7 @@ def backfill(db):
             return found
         for key, formula in lookup.items():
             left, right = results['latest'][key],results['inventory'][key]
-            sig = signature(inputs,results,key,include_basis=False)
+            sig = signed(key)
             old = previous.get(key)
             change = comparison(left['cost'],old)
             ids = dependencies(key)
@@ -50,8 +52,8 @@ def backfill(db):
                 effective_date=(price_date or published_at)[:10], recorded_at=date,event_id=f'backfill:{version}',
                 reason=f'采购 V{version} 历史回算（当前配方及补缺价格已冻结）',
                 latest_cost=left['cost'],inventory_cost=right['cost'],latest=left,inventory=right,
-                change=change,formula=formula,graph=[lookup[k] for k in lookup if k in ids],
-                calculations={p:{k:v for k,v in values.items() if k in ids} for p,values in results.items()},
+                change=change,formula=formula,graph=[lookup[k] for k in sorted(ids,key=positions.__getitem__)],
+                calculations={p:{k:values[k] for k in ids} for p,values in results.items()},
                 missing_materials=sorted(set(left['missing_materials']+right['missing_materials'])),
                 status='missing' if left['missing_materials'] or right['missing_materials'] else 'ready')
             db.execute('INSERT INTO research_backfill_records(purchase_version,product_id,signature,payload) VALUES(%s,%s,%s,%s)',(version,key,sig,packed(payload)))
@@ -88,16 +90,20 @@ def linked_history(db, key, periods=None):
     return linked_histories(db,[key],periods).get(key,[])
 
 
-def linked_histories(db, keys, periods=None, summary=False):
+def linked_histories(db, keys, periods=None, summary=False, series=False):
     """Project comparisons without ever editing original payloads or their signatures."""
     if not keys:
         return {}
     periods = purchase_periods(db) if periods is None else periods
     payload = SUMMARY_PAYLOAD if summary else 'payload'
     entries = {key:[] for key in keys}
-    for key,raw in db.execute(f'SELECT product_id,{payload} FROM research_backfill_records WHERE product_id=ANY(%s) ORDER BY purchase_version',(list(keys),)):
+    # Historical series need identity/scope and exact costs, not historical input lines.
+    slim = f"({payload}::jsonb - ARRAY['latest','inventory','lines'])::text"
+    backfill_payload = slim if series else payload
+    formal_payload = f"CASE WHEN sequence=max(sequence) OVER (PARTITION BY product_id) THEN {payload} ELSE {slim} END" if series else payload
+    for key,raw in db.execute(f'SELECT product_id,{backfill_payload} FROM research_backfill_records WHERE product_id=ANY(%s) ORDER BY purchase_version',(list(keys),)):
         entries[key].append(json.loads(raw))
-    for key,raw in db.execute(f'SELECT product_id,{payload} FROM research_cost_records WHERE product_id=ANY(%s) ORDER BY sequence',(list(keys),)):
+    for key,raw in db.execute(f'SELECT product_id,{formal_payload} FROM research_cost_records WHERE product_id=ANY(%s) ORDER BY sequence',(list(keys),)):
         row=json.loads(raw)
         row.update(record_type='formal',effective_date=row['recorded_at'][:10],product_id=key)
         period = periods.get(row['event_id'])
@@ -125,9 +131,9 @@ def _compare_history(entries):
     return list(reversed(rows))
 
 
-def version_history(db, event_id=None, access=None, product_id=None, summary=False, histories=None):
+def version_history(db, event_id=None, access=None, product_id=None, summary=False, histories=None, series=False):
     versions = {}
-    periods = purchase_periods(db)
+    periods = purchase_periods(db) if histories is None else None
     keys = [r[0] for r in db.execute("SELECT DISTINCT product_id FROM research_cost_records UNION SELECT DISTINCT product_id FROM research_backfill_records ORDER BY product_id")]
     visible = access.visible_ids(db) if access else set()
     if access:
@@ -144,12 +150,15 @@ def version_history(db, event_id=None, access=None, product_id=None, summary=Fal
                     continue
                 if summary or not event_id:
                     row={k:v for k,v in row.items() if k not in {"graph","calculations","formula","source_hashes"}}
-                row = access.project(row,visible)
+                if not series:
+                    row = access.project(row,visible)
             eid=row['event_id']
             if eid not in versions:
                 versions[eid]={k:row.get(k) for k in ('record_type','purchase_version','effective_date','recorded_at','reason')}
                 versions[eid].update(id=eid,products=[])
-            if summary or not event_id:
+            if series:
+                row={k:v for k,v in row.items() if k in {'id','latest_cost','inventory_cost','effective_date','recorded_at','record_type'}}
+            elif summary or not event_id:
                 row={k:v for k,v in row.items() if k not in {'graph','calculations','latest','inventory','formula','lines','source_hashes'}}
             versions[eid]['products'].append(row)
     ordered=sorted(versions.values(),key=lambda r:(r['effective_date'],r['record_type']=='formal',r['recorded_at'],r['purchase_version'] or 0),reverse=True)

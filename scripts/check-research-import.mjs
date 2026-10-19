@@ -18,6 +18,7 @@ delete products[4].department; // Existing legacy formula: backend scope remains
 const referenceCodes=['REF-A','REF-B','REF-MISSING'];
 const meanFormula={id:'synthetic-mean',name:'SYN-MEAN',kind:'recipe',source_kind:'erp_bom',yield:'1',yield_source:{kind:'user_confirmed',count:2},lines:[{kind:'material',ref:'ORIGINAL',code:'ORIGINAL',quantity:'1',ratio:'100',source_row:1,price_refs:referenceCodes}]};
 const meanResults=Object.fromEntries([['latest','12',['10','14',null]],['inventory','7',['6','8',null]]].map(([policy,cost,values])=>[policy,{cost,total_input:'1',output_quantity:'1',yield:'1',missing_materials:[],lines:[{...meanFormula.lines[0],unit_cost:cost,amount:cost,basis:'reference_mean',price_reference_values:referenceCodes.map((code,i)=>({code,unit_cost:values[i],basis:values[i]===null?'missing':policy}))}]}]));
+meanResults.latest.missing_materials=['SYN-MISSING'];meanResults.latest.cost=null;
 const meanMaterials=referenceCodes.map(code=>({id:code,code,name:code,unit:'kg'}));
 const meanMaterialDetails=Object.fromEntries(referenceCodes.map((code,i)=>[code,{material:meanMaterials[i],official_history:[],sources:[],adjustments:[],changes:[]}]));
 let browser;const evidence=[];
@@ -27,6 +28,13 @@ try{
  const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(['error','warning'].includes(m.type()))errors.push(m.text());});
  await page.route('**/api/**',route=>{
   const request=route.request();assert.equal(request.method(),'GET');const url=new URL(request.url());
+  if(['/api/workbenches/research/pages/products','/api/workbenches/research/pages/formulas'].includes(url.pathname)){
+   const query=url.searchParams,department=query.get('department'),search=query.get('search')||'';
+   const selected=products.filter(row=>(!department||(row.department||'研发五部')===department)&&row.name.includes(search));
+   const pageSize=Number(query.get('page_size')||50),number=Number(query.get('page')||1);
+   assert.ok(pageSize>0&&pageSize<=200&&number>=1);
+   return route.fulfill({json:{items:selected.slice((number-1)*pageSize,number*pageSize),total:selected.length,scope_total:products.length,page:number,page_size:pageSize,owners:['合成负责人'],creation_owners:['合成负责人'],department_names:departments,departments:[],pending:false}});
+  }
   const data={'/api/workbenches/research/overview':{products,pending:false,versions:[],formulas:products,owners:['合成负责人']},'/api/workbenches/research/material-prices':{materials:meanMaterials,batches:[]},...Object.fromEntries(referenceCodes.map(code=>['/api/workbenches/research/material-prices/'+code,meanMaterialDetails[code]]))}[url.pathname];
   assert.ok(data,'Unexpected isolated request: '+url.pathname);return route.fulfill({json:data});
  });
@@ -47,13 +55,16 @@ try{
  });
  await run('research-import-formula-department-filter',async()=>{
   await page.getByRole('button',{name:'查看配方管理',exact:true}).click();await page.locator('summary').filter({hasText:/^全部部门$/}).click();await page.getByRole('button',{name:'研发五部',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelectorAll('tbody tr').length===340&&document.querySelector('tbody').textContent.includes('SYN-0004'));
+  await page.waitForFunction(()=>document.querySelectorAll('tbody tr').length===50&&document.querySelector('tbody').textContent.includes('SYN-0004'));
+  assert.match(await page.locator('body').innerText(),/340/);
   await page.locator('summary').filter({hasText:/^研发五部$/}).click();await page.getByRole('button',{name:'浙江实验室',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelectorAll('tbody tr').length===340&&[...document.querySelectorAll('tbody tr')].every(r=>r.textContent.includes('浙江实验室')));
+  await page.waitForFunction(()=>document.querySelectorAll('tbody tr').length===50&&[...document.querySelectorAll('tbody tr')].every(r=>r.textContent.includes('浙江实验室')));
+  assert.match(await page.locator('body').innerText(),/340/);
   await page.screenshot({path:output+'/formulas.png'});await page.setViewportSize({width:390,height:844});await page.screenshot({path:output+'/mobile.png'});
  });
  await run('research-import-reference-mean-drilldown',async()=>{
   await page.setViewportSize({width:1440,height:1000});await page.getByRole('button',{name:'均价引用检查',exact:true}).click();
+  await page.getByText('最新优先缺少核算价格：SYN-MISSING。当前口径自动成本待完善。',{exact:true}).waitFor();
   const basis='参考原料有价算术平均 · REF-A／REF-B／REF-MISSING（2/3有价）';
   const hint=page.getByLabel(basis,{exact:true});await hint.waitFor();
   assert.equal(await hint.innerText(),'参考均价');assert.equal(await hint.getAttribute('title'),basis);assert.equal(await hint.locator('svg').count(),1);
@@ -66,8 +77,9 @@ try{
   assert.ok((await page.getByRole('dialog',{name:'REF-B',exact:true}).innerText()).includes('2/3有价'));
   await page.screenshot({path:output+'/mean-reference.png'});
   await page.getByRole('button',{name:'返回配方与成本',exact:true}).click();await page.getByRole('dialog',{name:'REF-B',exact:true}).waitFor({state:'hidden'});
-  await page.getByRole('button',{name:'库存优先',exact:true}).click();
+  await page.getByRole('tab',{name:/产品成本 · 库存优先/}).click();
   assert.ok((await page.locator('tbody tr').innerText()).includes('7.00'));
+  assert.equal(await page.getByText(/缺少核算价格：SYN-MISSING/).count(),0);
  });
  assert.deepEqual(errors,[]);writeFileSync(output+'/result.json',JSON.stringify(evidence));console.log(JSON.stringify(evidence));
 }finally{await browser?.close();await server.close();}

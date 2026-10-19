@@ -251,3 +251,8 @@ dialog:has(> .reasonFields) { width: min(480px, calc(100vw - 32px)); max-height:
 
 .priceBasis { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .priceBasis svg { color: var(--muted); flex: none; }
+
+.editor details.inputMenu > div { left:0; right:auto; top:34px; width:240px; max-height:280px; overflow:hidden; display:flex; flex-direction:column; }
+.inputMenu label input { height:auto; }
+.inputOptions { overflow-y:auto; min-height:0; }
+.inputMenu label { flex-shrink:0; }

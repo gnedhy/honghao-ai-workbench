@@ -6,6 +6,7 @@
 
 | 用途 | 实现入口 | 可适配内容／实际消费者 |
 | --- | --- | --- |
+| 价格与成本卡片 | `src/components/PriceCards.tsx` | 原料行情／库存、研发双成本、销售成本口径共用；受控切换联动业务内容，单项及报价参考只读展示。金额精度、成本计算、请求与权限由业务提供；支持方向键、窄屏及减少动态效果 |
 | 确认与放弃修改 | `src/components/Interaction.tsx` → `DiscardChangesDialog` | 标题、说明、按钮、危险／普通确认；设置、资料、反馈、采购、研发、销售 |
 | 未保存保护 | 同文件 → `useUnsavedChanges`；`interactionNavigation.ts` | 业务提供 dirty、busy；取消保留输入，确认后继续原导航 |
 | 抽屉 | `src/components/Drawer.tsx` | 标题、宽度、正文、关闭前检查；`backLabel` 显示标题左侧返回箭头，可用 `onBack` 注入上层配方导航，未提供时关闭子层。返回与关闭共用 busy／关闭前检查和完整退出动效；下层原生抽屉打开时隐藏上层抽屉及遮罩，退出后恢复，上层保持挂载以保留状态，退出下层后按现有抽屉节奏滑入；研发详情／编辑、采购版本／本轮记录、销售参数／历史 |
@@ -14,17 +15,21 @@
 | 开关 | `src/components/Switch.tsx` | 受控选中、禁用、忙碌；设置、授权、配方自动换算。确认及提交由业务提供 |
 | 数字输入 | `src/components/DecimalInput.tsx` | 保留输入字符串、单位由外层展示；采购编辑、研发比例／投料、销售费用／系数。精度与校验不在组件内处理 |
 | 台账与工具栏 | `src/components/WorkbenchLayout.tsx`；`WorkbenchSurface.module.css` | 结构与样式复用，列、宽度、筛选及权限由业务提供；采购／研发／销售 |
+| 表头排序 | `src/components/SortHeading.tsx` | 采购原料与研发产品列表共用图标、对齐和点击入口；业务维护排序状态及数值规则，表头保留 `aria-sort`，说明入口独立 |
+| 筛选摘要 | `src/components/FilterSummary.tsx` | 配方管理、销售产品／报价历史／测算选品展示条件、结果数量与清除入口；默认范围由业务恢复，销售保持研发产品，权限范围不变 |
 | 分页、记录筛选 | `LedgerPagination.tsx`、`RecordFilters.tsx` | 总数、页数、筛选状态；采购／研发／销售／反馈 |
-| 原料只读详情与价格单元格 | `src/workbenches/ProcurementMaterialView.tsx` → `ReadOnlyMaterialDrawer`、`ledgerCell` | 采购排行、研发 `ResearchMaterialPrices` 及 `ResearchProductView` 投料穿透；调用方注入各自只读 GET。提供 `backLabel` 时复用原生下层抽屉，只显示当前层，保留父层状态及焦点，`notice` 说明当前价格与冻结核算单价。采购台账与分流的可写详情在 `ProcurementMaterialDrawer.tsx`，共用 `MaterialPriceBody` |
+| 原料只读详情与价格单元格 | `src/workbenches/ProcurementMaterialView.tsx` → `ReadOnlyMaterialDrawer`、`ledgerCell` | 采购排行、研发 `ResearchMaterialPrices` 及 `ResearchProductView` 投料穿透；调用方注入各自只读 GET。提供 `backLabel` 时复用原生下层抽屉，只显示当前层，保留父层状态及焦点，`notice` 说明当前价格与冻结核算单价。普通刷新失败保留内容，401／403／404 清除旧详情。采购台账与分流的可写详情在 `ProcurementMaterialDrawer.tsx`，共用 `MaterialPriceBody` |
 | 表单操作栏 | `WorkbenchLayout.tsx` → `FormFooter` | 左侧状态，右侧操作，主操作最后；研发编辑。台账顶部保存不迁入底部 |
 | 客户报价编辑 | `src/workbenches/SalesQuoteEditor.tsx` → `salesQuoteSession.ts` | 销售内部展示／业务会话；状态、保存恢复、采用及退出由会话提供领域动作，复用 Drawer、DecimalInput、FormFooter 和 SalesProductPicker；公开工作台入口不变 |
 | 独立测算工作区 | `src/workbenches/SalesCalculator.tsx` → `salesCalculatorWorkspace.ts`／`SalesCalculatorPanel.tsx` | 工作区／请求属业务 Hook；分档、命名、展开和拖拽属面板，修改提议参与退出保护；复用金额输入、菜单、选品和确认；纯逻辑在 `salesCalculatorModel.ts` |
-| 研发详情与编辑 | `ResearchProductDrawer.tsx`／`ResearchFormulaEditor.tsx` → `researchEditSession.ts` | 业务内部维护产品身份、原因、可编辑基线、试算 token、draft revision、保存锁与冲突；复用共享退出契约、Drawer、金额输入和底部操作栏 |
-| 研发展示与读取 | `ResearchProductView.tsx`／`researchModel.ts`／`researchData.ts` | 原详情、投料、冻结历史及显示口径；根列表合并读取、聚焦与定时取消，权限和写回由业务承担 |
+| 研发详情与编辑 | `ResearchProductDrawer.tsx`／`ResearchFormulaEditor.tsx` → `researchEditSession.ts` | 业务内部维护产品身份、原因、可编辑基线、试算 token、draft revision、保存锁与冲突；投料选择复用现有单选菜单及搜索样式，候选仅来自业务授权数据；复用共享退出契约、Drawer、金额输入和底部操作栏 |
+| 研发展示与读取 | `ResearchProductView.tsx`／`researchModel.ts`／`researchData.ts` | 原详情、投料、冻结历史及显示口径；看板条件读取、产品与配方服务端分页。筛选与页码同步重置；后台失败保留当前列表，权限失效清空；聚焦和定时读取可取消，权限和写回由业务承担 |
 | 看板容器 | `WorkbenchLayout.tsx` → `DashboardPanel` | 标题、内容及尺寸由业务组合；共用 `dashboardPanel` 样式，不统一业务布局 |
 | 排行翻页 | `src/components/useMoverPaging.tsx` | 悬停、键盘、详情打开、后台和减少动态效果时暂停；采购／研发排行 |
 | 数值／页面状态 | `PriceMovement.tsx`、`WorkbenchLayout.tsx` → `PageState`、`WorkbenchLoading` | 涨跌与无对比展示；错误与重试分开，不把失败当空数据 |
 | 授权组合 | `src/components/ActivationGrants.tsx` | 采购／研发同界面，独立业务 scope；保留确认、权限查询和审计逻辑 |
+| 历史查找与分段展示 | `HistoryBrowser.tsx` | 原料行情、研发成本、销售报价详情复用工作台日期范围菜单与搜索样式进行筛选和每次10条展示；数据权限、排序和记录展开由原业务保留 |
+| 悬停说明 | `HelpHint.tsx` | 特殊取价依据、采购与研发表头说明；悬停显示完整说明，键盘焦点提供可访问描述，普通取价不显示重复说明 |
 | 历史记录 | `WorkbenchSurface.module.css` → `historyTimeline`、`historyDate` | 日期、事件和时间布局；采购／研发历史。子记录及冻结内容仍由业务负责 |
 
 公共样式原位迁移为 `WorkbenchSurface.module.css`，保留已验收选择器及级联顺序；业务专用研究样式留在 `ResearchWorkbench.module.css`。原料只读展示复用上表的现有业务入口，不把整页组件作为通用控件导出。

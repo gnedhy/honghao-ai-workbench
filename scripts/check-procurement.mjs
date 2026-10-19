@@ -64,9 +64,13 @@ try {
         }
         if (fault === 'readonly' && url.pathname.startsWith('/api/workbenches/research/material-prices/')) {
           detailReads++;
+          if (detailReads === 5) return route.fulfill({status:403,json:{detail:'研发原料权限已变更'}});
           if (detailReads === 1 || detailReads === 3) return route.fulfill({ status: 503, json: { detail: 'W6 合成详情失败' } });
         }
-        const response = await route.fetch({ url: new URL(url.pathname + url.search, api).href });
+        const headers = {...req.headers()};
+        // Deliver a fresh snapshot after the injected list failure to exercise dependent detail refresh.
+        if (fault === 'readonly' && url.pathname === '/api/workbenches/research/material-prices' && [4,5].includes(readonlyReads)) delete headers['if-none-match'];
+        const response = await route.fetch({ url: new URL(url.pathname + url.search, api).href, headers });
         if (adjusting) adjusted = true;
         const delayedOverview = fault === 'overview-slow' && url.pathname === base + '/overview' && ++overviewReads === 2;
         const delayedDetail = fault === 'drawer-refresh-slow' && adjusted && req.method() === 'GET' && url.pathname.startsWith(base + '/materials/');
@@ -135,7 +139,8 @@ try {
     assert.equal(await page.getByRole('textbox', { name: 'W6-000待发布价', exact: true }).inputValue(), '0');
     await page.getByRole('textbox', { name: 'W6-000待发布价', exact: true }).fill('');
     await page.getByRole('textbox', { name: '搜索原料', exact: true }).fill(code);
-    await page.getByRole('button', { name: '原料编号', exact: true }).click();
+    assert.equal(await page.getByRole('button', { name: '原料编号', exact: true }).count(), 0);
+    await page.getByRole('button', { name: '行情价格', exact: true }).click();
     await page.getByRole('textbox', { name: '搜索原料', exact: true }).fill('W6-000');
     assert.equal(await page.getByRole('textbox', { name: 'W6-000待发布价', exact: true }).inputValue(), '11');
     await page.getByRole('textbox', { name: 'W6-000待发布价', exact: true }).fill('0');
@@ -326,14 +331,22 @@ try {
     await drawer.getByRole('button', { name: '重新加载', exact: true }).click();
     await drawer.getByText('¥60.00', { exact: true }).first().waitFor();
     assert.equal(await drawer.getByRole('button', { name: '录入新价格', exact: true }).count(), 0);
-    await page.waitForTimeout(10500);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.getByText('价格刷新失败，仍显示上次读取的内容。', {exact:false}).waitFor();
+    assert.equal(await drawer.getByText('¥60.00', {exact:true}).first().isVisible(), true);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await drawer.getByText('价格更新失败，当前显示上次读取的内容。', { exact: false }).waitFor();
     await page.screenshot({ path: '.scratch/w6-20261003/browser/research-readonly-refresh-failed.png', fullPage: true });
     await drawer.getByRole('button', { name: '重试', exact: true }).click();
+    await drawer.getByText('价格更新失败，当前显示上次读取的内容。', {exact:false}).waitFor({state:'hidden'});
     await drawer.getByText('¥60.00', { exact: true }).first().waitFor();
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await drawer.getByText('研发原料权限已变更', {exact:true}).waitFor();
+    assert.equal(await drawer.getByText('¥60.00', {exact:true}).count(), 0);
     await drawer.getByRole('button', { name: '关闭详情', exact: true }).click(); await drawer.waitFor({ state: 'detached' });
     const before = reads.filter(path => path.startsWith('/api/workbenches/research/material-prices/')).length;
-    await page.waitForTimeout(10500);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.waitForTimeout(250);
     assert.equal(reads.filter(path => path.startsWith('/api/workbenches/research/material-prices/')).length, before);
     assert.deepEqual(writes, []);
     assert.equal(await page.getByRole('button', { name: 'A', exact: true }).evaluate(button => document.activeElement === button), true);
