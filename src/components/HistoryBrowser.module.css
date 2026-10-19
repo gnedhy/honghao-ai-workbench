@@ -1,0 +1,6 @@
+.filters { flex-wrap:wrap; margin:12px 0; }
+.filters > label { min-width:160px; }
+.count { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; margin:10px 0; color:var(--muted); font-size:12px; }
+.count button { background:none; color:var(--text); cursor:pointer; }
+.empty { font-size:13px; padding:18px 0; color:var(--muted); line-height:1.7; }
+.root > button { margin:12px 8px 0 0; }

@@ -113,7 +113,7 @@ test("取价简称保持四字，区分参考均价、浓度及库存兜底", ()
   assert.equal(basisLabel({basis:"cf232_inventory",price_ref:"CF232"}),"浓度折价");
   assert.equal(basisLabel({basis:"erp_inventory_fallback"}),"库存兜底");
   assert.equal(basisLabel({basis:"latest",price_ref:"CF001"}),"参考取价");
-  assert.equal(basisLabel({basis:"latest"}),"最新价格");
+  assert.equal(basisLabel({basis:"latest"}),"行情价格");
   assert.equal(basisLabel({basis:"unknown"}).length,4);
 });
 
@@ -123,4 +123,19 @@ test("旧配方部门显示及筛选沿用研发五部范围且不修改原字�
   assert.equal(researchDepartment({department: null}), "研发五部");
   assert.equal(researchDepartment({department: "浙江实验室"}), "浙江实验室");
   assert.equal(legacy.department, undefined);
+});
+
+
+import {indexCostHistory} from "../src/workbenches/researchAnalytics.ts";
+test("成本历史一次索引，保留精度、产品范围和同日回算顺序", () => {
+  const versions=[
+    {recorded_at:"2026-10-15",effective_date:"2026-10-13",products:[{id:"A",recorded_at:"",latest_cost:"1.234567",record_type:"formal"}]},
+    {recorded_at:"2026-10-14",effective_date:"2026-10-13",products:[{id:"A",recorded_at:"",latest_cost:"0",record_type:"backfill"},{id:"B",recorded_at:"",latest_cost:null,record_type:"backfill"}]},
+  ];
+  const original=JSON.stringify(versions), indexed=indexCostHistory(versions);
+  assert.deepEqual(indexed.get("A")?.map(row=>row.latest_cost),["0","1.234567"]);
+  assert.equal(indexed.get("B")?.length,1);
+  assert.equal(indexed.has("unauthorized"),false);
+  assert.equal(indexed.get("A")?.[1].effective_date,"2026-10-13");
+  assert.equal(JSON.stringify(versions),original);
 });

@@ -1,7 +1,9 @@
+import {HelpHint} from "../components/HelpHint";
+import {SortHeading} from "../components/SortHeading";
 import { useProcurementEditSession } from "./procurementEditSession";
 import { useProcurementMaterialQuery } from "./procurementMaterialQuery";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Check, ChevronRight, Clock3, Columns3, Ellipsis, FileUp, Info, PackageCheck, Pencil, Plus, Search, SlidersHorizontal, X } from "lucide-react";
+import { Check, ChevronRight, Clock3, Columns3, Ellipsis, FileUp, PackageCheck, Pencil, Plus, Search, SlidersHorizontal, X } from "lucide-react";
 import { fetchProcurementPreferences, saveProcurementPreferences } from "../api";
 import type { ProcurementMaterial, ProcurementOverview, ProcurementPage, ProcurementPreferences } from "../types";
 import { DecimalInput } from "../components/DecimalInput";
@@ -18,7 +20,7 @@ import styles from "../components/WorkbenchSurface.module.css";
 function Empty({title,detail}:{title:string;detail:string}) {return <div className={styles.empty}><PackageCheck size={21}/><strong>{title}</strong><p>{detail}</p></div>;}
 
 const LEDGER_COLUMNS = [
-  ["inventory_quantity", "库存量"], ["unit", "单位"], ["latest_price", "最新价格"], ["inventory_price", "库存价格"], ["change", "价格变化"],
+  ["inventory_quantity", "库存量"], ["unit", "单位"], ["latest_price", "行情价格"], ["inventory_price", "库存价格"], ["change", "价格变化"],
   ["price_date", "价格日期"], ["modifier", "修改人"], ["status", "状态"], ["previous_latest_price", "上版价格"], ["in_transit_price", "在途价"], ["suggested_price", "建议价"], ["data_source", "数据来源"],
 ] as const;
 const MATERIAL_COLUMN_WIDTH = 240;
@@ -96,15 +98,15 @@ export function ProcurementMaterials({ department, onOpenDepartmentMaterial, dat
   useEffect(()=>{if(locateCode)searchInput.current?.focus();},[locateCode]);
   const sortAllowed=sort==="code"||columns.includes(sort);
   useEffect(()=>{if(!sortAllowed)resetSort();},[sortAllowed,resetSort]);
-  const movementLabels: Record<string, string> = { all: "全部", up: "上涨", down: "下降", flat: "持平", missing: "未定价", incomparable: "不可比较" };
+  const movementLabels: Record<string, string> = { all: "全部", up: "上涨", down: "下降", flat: "持平", missing: "缺行情价格", incomparable: "不可比较" };
   const scopeLabels: Record<string, string> = { all: "全部原料", involved: "本轮已录入", missing: "待补价", risk: "待确认" };
   const sortHeader = (id: string, label: string) => {
     if (id === "change" && edit) label = "本次变化";
-    const sortable = ["code", "inventory_quantity", "latest_price", "previous_latest_price", "change", "price_date", "draft_price"].includes(id);
+    const sortable = ["inventory_quantity", "inventory_price", "latest_price", "previous_latest_price", "change", "price_date", "draft_price"].includes(id);
     return <th data-column={id === "code" ? "identity" : id} key={id} aria-sort={sortable && sort === id ? sortDirection : undefined}>
-      {sortable ? <button className={styles.sortHeading} type="button" onClick={() => { setSort(id); setSortDirection(sort === id ? sortDirection === "ascending" ? "descending" : "ascending" : id === "code" ? "ascending" : "descending"); }}>{label}{sort === id && (sortDirection === "ascending" ? <ArrowUp size={13} /> : <ArrowDown size={13} />)}</button> : label}
-      {id === "change" && <button type="button" className={styles.comparisonInfo} aria-label={edit ? "本次变化：待发布价与最新价格比较" : current ? "价格变化：待发布价与最新价格比较；未录入项比较最新价格与上版价格" : "价格变化：最新价格与上版正式价格比较；价格相同显示 0.0%，无可比较价格显示暂无对比"} title={edit ? "待发布价与最新价格比较" : current ? "待发布价与最新价格比较；未录入项比较最新价格与上版价格" : "最新价格与上版正式价格比较；价格相同显示 0.0%，无可比较价格显示暂无对比；补充新原料不重置已有原料的比较；悬停涨跌幅查看比较价格和版本"}><Info size={14} /></button>}
-      {id === "inventory_quantity" && <button type="button" className={styles.comparisonInfo} aria-label="库存量：仅显示整数部分，鼠标悬停数值可查看完整数值；排序使用原始数值" title="仅显示整数部分，鼠标悬停数值可查看完整数值；排序使用原始数值"><Info size={14} /></button>}
+      {sortable ? <SortHeading label={label} direction={sort === id ? sortDirection : undefined} onClick={() => { setSort(id); setSortDirection(sort === id ? sortDirection === "ascending" ? "descending" : "ascending" : id === "code" ? "ascending" : "descending"); }}/> : label}
+      {id === "change" && <HelpHint detail={edit ? "待发布价与行情价格比较" : current ? "待发布价与行情价格比较；未录入项比较行情价格与上版价格" : "行情价格与上版正式价格比较；价格相同显示 0.0%，无可比较价格显示暂无对比；补充新原料不重置已有原料的比较；悬停涨跌幅查看比较价格和版本"}/>}
+      {id === "inventory_quantity" && <HelpHint detail="仅显示整数部分，鼠标悬停数值可查看完整数值；排序使用原始数值"/>}
     </th>;
   };
 
@@ -135,7 +137,7 @@ export function ProcurementMaterials({ department, onOpenDepartmentMaterial, dat
   return <section className={`${styles.section} ${styles.ledgerSection} ${department ? styles.distributionLedger : ""}`}>
     {unsaved.confirmation}
     {!department && <div className={`${styles.sectionHeading} ${styles.ledgerHeading}`}>
-      <div><div className={styles.ledgerTitle}><h2>价格台账</h2><small>{rows.length} / {data.materials.length} 条</small></div><p className={styles.sectionDescription}>在台账内编辑价格，或导入报表批量更新；启用前，最新价格保持不变。</p></div>
+      <div><div className={styles.ledgerTitle}><h2>价格台账</h2><small>{rows.length} / {data.materials.length} 条</small></div><p className={styles.sectionDescription}>在台账内编辑价格，或导入报表批量更新；启用前，行情价格保持不变。</p></div>
       <div className={styles.ledgerActions}>
         {canEdit && edit && <><button ref={saveButton} className="primary-button" type="button" disabled={busy || !dirty || !validEdits} onClick={() => session.actions.openSave()}>保存修改{dirty ? `（${edits.length}）` : ""}</button><button className="secondary-button" type="button" disabled={busy} onClick={stopEditing}>取消编辑</button></>}
         {!edit && <>{canEdit && <button className={current ? "secondary-button" : "primary-button"} type="button" onClick={startEditing}><Pencil size={14} />编辑价格</button>}{!current && data.capabilities?.can_manage_catalog && <button className="secondary-button" type="button" onClick={onCreate}><Plus size={14} />新增原料</button>}{!current && canEdit && <button className="secondary-button" type="button" onClick={onImport}><FileUp size={14} />导入报表</button>}</>}
@@ -155,12 +157,12 @@ export function ProcurementMaterials({ department, onOpenDepartmentMaterial, dat
         </div>
         {pricePreview.data ? <PriceReview preview={pricePreview.data} /> : <p>{edits.length?pricePreview.error ?? "正在核对价格变化…":"本次价格已与最新本轮数据一致，无需重复保存。"}{pricePreview.error && <button type="button" onClick={pricePreview.refresh}>重新核对</button>}</p>}
         <div className={styles.ledgerEditBar}><label>录价说明<ReasonSelect label="录价说明" options={PRICE_REASONS} placeholder="请选择说明" value={editReason} disabled={busy} onChange={session.actions.chooseReason} /></label></div>
-        <p>{data.capabilities?.can_activate ? "确认并保存将同时确认以上高波动价格；启用前，最新价格保持不变。" : "保存后，最新价格保持不变；异常波动由有启用权的人员确认。"}</p>
+        <p>{data.capabilities?.can_activate ? "确认并保存将同时确认以上高波动价格；启用前，行情价格保持不变。" : "保存后，行情价格保持不变；异常波动由有启用权的人员确认。"}</p>
         {editError && <div className={styles.error} role="alert"><p>{editError}</p><button type="button" disabled={busy} onClick={() => void recover()}>读取最新数据核对（保留输入）</button></div>}
         <div className={styles.panelActions}><button className="secondary-button" type="button" disabled={busy} onClick={closeSave}>返回编辑</button><button className="primary-button" type="submit" disabled={busy || !dirty || !validEdits || !editDate || !resolveReason(editReason) || !pricePreview.data}>{busy ? "正在保存" : "确认并保存"}</button></div>
       </form>
     </dialog>}
-    {!department && data.scheduled_update && <div className={styles.ledgerSchedule}><Clock3 size={15} /><span>等待启用：{formatPriceDate(data.scheduled_update.price_date)} · {formatShanghaiDateTime(data.scheduled_update.activate_at)}，最新价格未改变。</span><button type="button" disabled={Boolean(edit)} onClick={() => onPageChange("batches")}>查看排期</button></div>}
+    {!department && data.scheduled_update && <div className={styles.ledgerSchedule}><Clock3 size={15} /><span>等待启用：{formatPriceDate(data.scheduled_update.price_date)} · {formatShanghaiDateTime(data.scheduled_update.activate_at)}，行情价格未改变。</span><button type="button" disabled={Boolean(edit)} onClick={() => onPageChange("batches")}>查看排期</button></div>}
     {current && !edit && <div ref={summary} className={styles.ledgerUpdate} aria-label="本轮更新摘要">
       <div><strong>本轮更新 · {formatPriceDate(current.price_date)}</strong><small>{current.source_name} · {current.status === "revalidation_required" ? "需要重新确认，原排期不会自动启用" : updateStatusLabel(current.status)}</small></div>
       <div className={styles.ledgerTaskCounts}><button type="button" onClick={() => filterTasks("involved")}>{current.input_items.length} 项涉及</button>{errors > 0 && <button type="button" onClick={() => filterTasks("missing")}>{errors} 项待补价</button>}{risks > 0 && <button type="button" onClick={() => filterTasks("risk")}>{risks} 项待确认</button>}</div>
@@ -185,12 +187,12 @@ export function ProcurementMaterials({ department, onOpenDepartmentMaterial, dat
       {department?.actions}
     </div>
     {department?.notice}
-    {(editor || activeFilterCount > 0) && <div className={styles.filterTags}>
+    {(query || editor || activeFilterCount > 0) && <div className={styles.filterTags} aria-label="当前筛选"><span>筛选结果 {rows.length} 项</span>{query && <span>搜索：{query}</span>}
       {source !== "all" && <span>来源：{source}<button type="button" aria-label="清除来源筛选" onClick={() => setSource("all")}><X size={13} /></button></span>}
       {editor && <span>人员：{selectedPerson}<button type="button" aria-label="清除人员筛选" onClick={() => setEditor("")}><X size={13} /></button></span>}
       {movement !== "all" && <span>价格 · {movementLabels[movement]}<button type="button" aria-label="清除价格筛选" onClick={() => setMovement("all")}><X size={13} /></button></span>}
       {current && scope !== "all" && <span>待发布 · {scopeLabels[scope]}<button type="button" aria-label="清除待发布筛选" onClick={() => setScope("all")}><X size={13} /></button></span>}
-      <button className={styles.clearFilters} type="button" onClick={() => { setEditor(""); setMovement("all"); setScope("all"); setSource("all"); }}>清除筛选</button>
+      <button className={styles.clearFilters} type="button" onClick={() => { setQuery(""); setEditor(""); setMovement("all"); setScope("all"); setSource("all"); }}>清除筛选</button>
     </div>}
     {filterNotice && <div role="status" className={styles.comparisonHelp}>{filterNotice}<button type="button" aria-label="关闭筛选提示" onClick={() => setFilterNotice("")}><X size={13} /></button></div>}
     {!rows.length ? <Empty title={editor && current && scope !== "all" ? "该人员暂无符合条件的待发布修改" : "没有符合条件的原料"} detail="可调整筛选条件或清除筛选。" /> : <div className={`${styles.tableWrap} ${styles.ledgerTableWrap}`}><table className={`${styles.table} ${styles.stickyTable} ${styles.decisionTable}`} style={{ minWidth: `${tableWidth}px` }}><colgroup>{department?.selection && <col style={{ width: 56 }} />}<col style={{ width: MATERIAL_COLUMN_WIDTH }} />{columns.map(id => <col key={id} style={{ width: columnWidth(id) }} />)}</colgroup><thead><tr>{department?.selection && <th data-column="selection">选择</th>}{sortHeader("code", "原料编号")}{columns.map(id => sortHeader(id, columnOptions.find(([column]) => column === id)?.[1] ?? id))}</tr></thead><tbody>{visibleRows.map(row => {

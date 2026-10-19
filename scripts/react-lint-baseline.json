@@ -67,13 +67,6 @@
       "message": "React Hook useEffect has a complex expression in the dependency array.",
       "anchor": "0b10f993272535d951ea6870b27d49e39dc3d64e87109245bda862a18bcb057c",
       "line": 214
-    },
-    {
-      "file": "src/workbenches/ProcurementWorkbench.tsx",
-      "rule": "react-hooks(exhaustive-deps)",
-      "message": "React Hook useEffect has missing dependencies: 'cache', 'batches', 'cache.current.key', 'setPreviousPage', 'setInstant', and 'setPage'",
-      "anchor": "a05ac9d747d360ad33870e316718660b25e6391ea7b832788e175dd9802cab12",
-      "line": 249
     }
   ]
 }

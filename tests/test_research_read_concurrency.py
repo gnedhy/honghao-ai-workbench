@@ -203,7 +203,12 @@ def test_queued_detail_uses_current_operation_permissions(departments, monkeypat
             name = IdentityStore(store.url).get_user(admin)['username']
             assert (await blocker.post('/api/login', json={'username':name,'password':TEST_ADMIN_PASSWORD})).status_code == 200
             path = '/api/workbenches/research/products/' + K
-            blockers = [asyncio.create_task(blocker.get(path)) for _ in range(2)]
+            # Different products occupy both read slots; identical requests now coalesce.
+            from api.research import digest
+            with transaction(store.url) as db:
+                keys = [row[0] for row in db.execute('SELECT id FROM research_formulas')]
+            second_key = next(key for key in keys if int(digest([admin,key]),16)%64 != int(digest([admin,K]),16)%64)
+            blockers = [asyncio.create_task(blocker.get('/api/workbenches/research/products/'+key)) for key in (K,second_key)]
             reader = None
             try:
                 assert await asyncio.to_thread(entered.wait, 3)
@@ -220,4 +225,20 @@ def test_queued_detail_uses_current_operation_permissions(departments, monkeypat
                     assert not response.json()['capabilities']['can_edit']
                     assert not response.json()['capabilities']['can_activate']
 
+    asyncio.run(requests())
+
+
+def test_parallel_details_build_once_and_return_identical_costs(ready, monkeypatch):
+    _, client, _, store = ready
+    calls = []
+    original = type(store).detail
+    def counted(self, key, actor=None):
+        calls.append(key)
+        return original(self,key,actor)
+    monkeypatch.setattr(type(store),'detail',counted)
+    async def requests():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=client.app),base_url='http://testserver',cookies=client.cookies) as transport:
+            responses=await asyncio.gather(*(transport.get('/api/workbenches/research/products/'+K) for _ in range(8)))
+            assert all(r.status_code==200 and r.content==responses[0].content for r in responses)
+            assert len(calls)==1
     asyncio.run(requests())

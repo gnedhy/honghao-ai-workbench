@@ -37,6 +37,11 @@ OVERVIEW_TABLES = (
     "research_activation_grants",
 )
 OVERVIEW_INSTANCE = str(uuid4())  # Reload open tabs after a service/program restart too.
+MATERIAL_TABLES = OVERVIEW_TABLES + (
+    "procurement_inventory", "procurement_material_sources", "procurement_snapshot_sources",
+    "procurement_saved_changes", "procurement_updates", "procurement_update_events",
+    "procurement_price_history", "procurement_imports",
+)
 
 
 def packed(value):
@@ -45,6 +50,15 @@ def packed(value):
 
 def digest(value):
     return hashlib.sha256(packed(value).encode()).hexdigest()
+
+
+def overview_summary(payload):
+    # Overview consumers only need series values; frozen formula evidence is fetched on opening history.
+    fields = {'id', 'latest_cost', 'inventory_cost', 'effective_date', 'recorded_at', 'record_type'}
+    return {**payload, 'versions': [
+        {**version, 'products': [{k:v for k,v in row.items() if k in fields} for row in version['products']]}
+        for version in payload['versions']
+    ]}
 
 
 def now():
@@ -88,7 +102,7 @@ def evaluate(inputs):
             for policy in ("latest", "inventory")}
 
 
-def signature(inputs, results, key, *, include_basis=True):
+def signatures(inputs, results, *, include_basis=True):
     recipes = {r["id"]: r for r in inputs["package"]["recipes"]}
     cache = {}
     def visit(ref):
@@ -115,7 +129,11 @@ def signature(inputs, results, key, *, include_basis=True):
             **({"owner": recipe.get("owner"), "ratios": [line.get("ratio") for line in recipe["lines"]], "ratio_linked": recipe.get("ratio_linked", True), "ratio_base": recipe.get("ratio_base")} if any("ratio" in line for line in recipe["lines"]) else {}),
             **({"department": recipe.get("department"), "source_kind": recipe["source_kind"], "yield_source": recipe.get("yield_source")} if recipe.get("source_kind") else {})})
         return cache[ref]
-    return visit(key)
+    return visit
+
+
+def signature(inputs, results, key, *, include_basis=True):
+    return signatures(inputs, results, include_basis=include_basis)(key)
 
 
 def record_signature(payload):
@@ -177,7 +195,7 @@ class ResearchStore:
 
     def process_events(self):
         processed = 0
-        # ponytail: one transaction writer processes the small RD5 graph; split workers only if throughput requires it.
+        # Commit each frozen event atomically so readers cannot observe mixed cost periods.
         while True:
             event_id = None
             try:
@@ -189,6 +207,13 @@ class ResearchStore:
                     inputs = json.loads(raw)
                     results = evaluate(inputs)
                     graph = inputs["package"]["recipes"]
+                    lookup = {r['id']:r for r in graph}
+                    positions = {r['id']:i for i,r in enumerate(graph)}
+                    signed = signatures(inputs, results)
+                    compared = signatures(inputs, results, include_basis=False)
+                    previous = dict(db.execute("SELECT DISTINCT ON (product_id) product_id,payload FROM research_cost_records ORDER BY product_id,sequence DESC"))
+                    inserts = []
+                    insert_sql = "INSERT INTO research_cost_records(event_id,product_id,signature,payload) VALUES(%s,%s,%s,%s)"
                     def dependency_ids(key, found=None):
                         found = set() if found is None else found
                         if key not in found:
@@ -199,20 +224,25 @@ class ResearchStore:
                         return found
                     for formula in graph:
                         key = formula["id"]
-                        sig = signature(inputs, results, key)
-                        old = db.execute("SELECT signature,payload FROM research_cost_records WHERE product_id=%s ORDER BY sequence DESC LIMIT 1", (key,)).fetchone()
-                        if old and record_signature(json.loads(old[1])) == signature(inputs,results,key,include_basis=False):
+                        sig = signed(key)
+                        old = json.loads(previous[key]) if key in previous else None
+                        if old and record_signature(old) == compared(key):
                             continue
                         left, right = results["latest"][key], results["inventory"][key]
                         dependencies = dependency_ids(key)
                         payload = {**formula, "latest_cost": left["cost"], "inventory_cost": right["cost"],
-                            "latest": left, "inventory": right, "change": comparison(left["cost"], json.loads(old[1]) if old else None),
+                            "latest": left, "inventory": right, "change": comparison(left["cost"], old),
                             "recorded_at": recorded_at, "reason": reason, "event_id": event_id,
                             "missing_materials": sorted(set(left["missing_materials"] + right["missing_materials"])),
                             "status": "missing" if left["missing_materials"] or right["missing_materials"] else "ready",
-                            "formula": formula, "graph": [r for r in graph if r["id"] in dependencies],
-                            "calculations": {p:{k:v for k,v in values.items() if k in dependencies} for p,values in results.items()}}
-                        db.execute("INSERT INTO research_cost_records(event_id,product_id,signature,payload) VALUES(%s,%s,%s,%s)", (event_id,key,sig,packed(payload)))
+                            "formula": formula, "graph": [lookup[k] for k in sorted(dependencies,key=positions.__getitem__)],
+                            "calculations": {p:{k:values[k] for k in dependencies} for p,values in results.items()}}
+                        inserts.append((event_id,key,sig,packed(payload)))
+                        if len(inserts) == 200:
+                            db.cursor().executemany(insert_sql,inserts)
+                            inserts.clear()
+                    if inserts:
+                        db.cursor().executemany(insert_sql,inserts)
                     db.execute("UPDATE research_events SET status='done',attempts=attempts+1,error=NULL WHERE id=%s", (event_id,))
                     processed += 1
             except (ValueError, KeyError, ArithmeticError, psycopg.Error) as error:
@@ -238,7 +268,7 @@ class ResearchStore:
 
     def _rows(self, db, actor=None, key=None, histories=None):
         from api.research_history import purchase_periods,linked_histories,SUMMARY_PAYLOAD
-        periods = purchase_periods(db)
+        periods = purchase_periods(db) if histories is None else None
         access = ResearchAccess(db, actor)
         visible = access.visible_ids(db) if not access.admin else set()
         params = ((key,) if key is not None else ()) + ((list(visible),) if not access.admin else ())
@@ -279,28 +309,28 @@ class ResearchStore:
         with transaction(self.url) as db:
             return self._rows(db, actor, histories=histories)
 
-    def overview(self, actor=None):
-        from api.research_history import linked_histories
+    def overview(self, actor=None, series=False):
+        from api.research_history import linked_histories, version_history
         with transaction(self.url) as db:
             access=ResearchAccess(db,actor)
             visible=access.visible_ids(db) if not access.admin else None
             keys=[r[0] for r in db.execute('SELECT product_id FROM research_cost_records UNION SELECT product_id FROM research_backfill_records') if visible is None or r[0] in visible]
-            histories=linked_histories(db,keys,summary=True)
-            result={**self.listing(actor,histories),**self.history(actor=actor,histories=histories),**self.formulas(actor)}
+            histories=linked_histories(db,keys,summary=True,series=series)
+            history = version_history(db,access=None if access.admin else access,histories=histories,series=True) if series else self.history(actor=actor,histories=histories)
+            result={**self.listing(actor,histories),**history,**self.formulas(actor)}
             # Lists need input counts; full inputs remain in permission-checked product details.
             for row in result['products']+result['formulas']:
                 if isinstance(row.get('lines'),list):row['lines']=len(row['lines'])
             return result
 
-    def overview_etag(self, actor):
+    def overview_etag(self, actor, tables=OVERVIEW_TABLES):
         with transaction(self.url) as db:
             access = ResearchAccess(db, actor)
             if not access.admin and access.level < 2:
                 raise PermissionError("没有此项研发操作权限")
-            versions = db.execute(" UNION ALL ".join(
-                f"SELECT '{table}',md5(COALESCE(string_agg(ctid::text || ':' || xmin::text, ',' ORDER BY ctid),'')) FROM {table}"
-                for table in OVERVIEW_TABLES
-            )).fetchall()
+            versions = db.execute("SELECT table_name,version FROM honghao_meta.read_versions WHERE table_name=ANY(%s)", (list(tables),)).fetchall()
+            if len(versions) != len(tables):
+                raise RuntimeError("读取版本标记不完整，请检查数据库迁移")
             # Equal live scopes have the same representation; identity never substitutes for authorization.
             return 'W/"' + digest([OVERVIEW_INSTANCE, access.admin, access.level, access.departments, sorted(versions)]) + '"'
 
@@ -308,7 +338,7 @@ class ResearchStore:
         from api.procurement import ProcurementStore
 
         procurement = ProcurementStore(self.url)
-        # ponytail: reuse procurement's official snapshot; split a focused query only if 10-second polling becomes costly.
+        # Reuse procurement's official snapshot after the conditional read detects a change.
         overview = procurement.overview()
         with transaction(self.url) as db:
             package = capture(db)["package"]
@@ -474,6 +504,15 @@ class ResearchStore:
             db.execute("UPDATE research_drafts SET revision=(SELECT draft_sequence FROM research_formulas WHERE id=%s),simulation_token='' WHERE id=%s",(key,key))
             enqueue(db,'配方停用：'+formula['name'])
             return {'status':'inactive'}
+
+    def detail_etag(self, key, actor):
+        with transaction(self.url) as db:
+            row = db.execute("SELECT formula FROM research_formulas WHERE id=%s", (key,)).fetchone()
+            if not row:
+                raise KeyError("产品不存在")
+            ResearchAccess(db, actor).require(json.loads(row[0]))
+            # Detail includes actor-specific activation capabilities and current inventory inputs.
+            return 'W/"' + digest([key, actor['id'], self.overview_etag(actor, MATERIAL_TABLES)]) + '"'
 
     def detail(self, key, actor=None):
         with transaction(self.url) as db:
@@ -732,6 +771,8 @@ def create_research_router(store, settings):
     overview_locks = [Lock() for _ in range(64)]
     overview_cache_lock = Lock()
     overview_cache = OrderedDict()
+    detail_cache = OrderedDict()
+    detail_cache_bytes = 0
     read_slots = Semaphore(2)  # Leave connections for authentication and cost writers.
     def actor(request, level=2):
         if settings.workbench_modes["research"] != "active":
@@ -775,9 +816,14 @@ def create_research_router(store, settings):
         return store.listing(actor(request))
     @router.get("/material-prices")
     def material_prices(request:Request,response:Response):
-        user=actor(request)
-        response.headers["Cache-Control"] = "no-store"
-        return run(store.material_prices,user)
+        with transaction(store.url):
+            user=read_actor(request)
+            tag=run(store.overview_etag,user,MATERIAL_TABLES)
+            headers={"ETag":tag,"Cache-Control":"no-store","Vary":"Cookie"}
+            if tag in [value.strip() for value in request.headers.get("if-none-match", "").split(",")]:
+                return Response(status_code=304,headers=headers)
+            payload=run(store.material_prices,user)
+        return JSONResponse(payload,headers=headers)
     @router.get("/material-prices/{material_id}")
     def material_price_detail(material_id:str,request:Request,response:Response):
         actor(request)
@@ -802,8 +848,46 @@ def create_research_router(store, settings):
     def deactivate(key:str,body:RevisionBody,request:Request):
         user=actor(request,4)
         return run(store.deactivate,key,body.model_dump(),user['id'])
+    @router.get("/pages/{kind}")
+    def pages(request:Request, kind:str, page:int=Query(1,ge=1), page_size:int=Query(50,ge=1,le=200),
+              search:str=Query('',max_length=200), owner:str=Query('',max_length=200), department:str=Query('',max_length=200),
+              status:str=Query('',pattern='^(|ready|missing|updating|failed|active|draft|inactive)$'),
+              draft:str=Query('',pattern='^(|yes|no)$'), movement:str=Query('',pattern='^(|up|down|flat|none)$'),
+              yield_warning:bool=False, sort:str=Query('name',pattern='^(name|department|owner|status|latest_cost|inventory_cost|change|yield|lines)$'), asc:bool=True):
+        from api.research_pages import page_rows
+        if kind not in ('products','formulas'):
+            raise HTTPException(404,'列表不存在')
+        user=actor(request)
+        query=dict(kind=kind,page=page,page_size=page_size,search=search,owner=owner,department=department,status=status,draft=draft,movement=movement,yield_warning=yield_warning,sort=sort,asc=asc)
+        # Coalesce snapshot rebuilds; queued readers recheck live authorization before using cached data.
+        scope=[kind,user['is_system_admin'],user['scope_levels'].get('research',0),sorted((d['id'],d['is_primary']) for d in user.get('departments',[]) if d['name'].startswith('研发') or d['name']=='浙江实验室')]
+        with overview_locks[int(digest(scope),16) % len(overview_locks)], read_slots:
+            with transaction(store.url):
+                user=read_actor(request)
+                version=run(store.overview_etag,user)
+                tag='W/"'+digest([version,query])+'"'
+                headers={'ETag':tag,'Cache-Control':'no-store','Vary':'Cookie'}
+                if tag in [v.strip() for v in request.headers.get('if-none-match','').split(',')]:
+                    return Response(status_code=304,headers=headers)
+                cache_key=version+':page:'+kind
+                with overview_cache_lock:
+                    body=overview_cache.get(cache_key)
+                if body is None:
+                    # shortcut: rebuild the scoped list per revision; use indexed projections if cold reads exceed budget.
+                    payload=store.formulas(user) if kind=='formulas' else store.listing(user)
+                    for row in payload[kind]:
+                        if isinstance(row.get('lines'),list): row['lines']=len(row['lines'])
+                    body=JSONResponse(payload).body
+                    with overview_cache_lock:
+                        overview_cache[cache_key]=body
+                        while len(overview_cache)>16 or sum(len(v) for v in overview_cache.values())>64*1024*1024:
+                            overview_cache.popitem(last=False)
+                payload=json.loads(body)
+                result=page_rows(payload[kind],**query)
+                result.update(pending=payload.get('pending',False),departments=payload.get('departments',[]),creation_owners=payload.get('owners',[]))
+        return JSONResponse(result,headers=headers)
     @router.get("/overview")
-    def overview(request:Request):
+    def overview(request:Request,summary:bool=False):
         user=actor(request)
         validators = [tag.strip() for tag in request.headers.get("if-none-match", "").split(",")]
         if request.headers.get("if-none-match"):
@@ -811,6 +895,7 @@ def create_research_router(store, settings):
             with transaction(store.url):
                 user = read_actor(request)
                 etag = run(store.overview_etag,user)
+                if summary:etag = etag[:-1] + ":summary\""
                 if etag in validators:
                     return Response(status_code=304, headers={"ETag":etag,"Cache-Control":"no-store","Vary":"Cookie"})
         scope = [user['is_system_admin'],user['scope_levels'].get('research',0),sorted((d['id'],d['is_primary']) for d in user.get('departments',[]) if d['name'].startswith('研发') or d['name']=='浙江实验室')]
@@ -820,6 +905,7 @@ def create_research_router(store, settings):
             with transaction(store.url):
                 user = read_actor(request)
                 etag = run(store.overview_etag,user)
+                if summary:etag = etag[:-1] + ":summary\""
                 headers = {"ETag": etag, "Cache-Control": "no-store", "Vary": "Cookie"}
                 if etag in validators:
                     return Response(status_code=304, headers=headers)
@@ -827,14 +913,14 @@ def create_research_router(store, settings):
                     body = overview_cache.get(etag)
                     if body is not None:overview_cache.move_to_end(etag)
                 if body is None:
-                    payload = store.overview(user)
+                    payload = store.overview(user,series=True) if summary else store.overview(user)
             if body is None:
                 # Store output is already JSON-native; encode after releasing the read snapshot.
                 body = JSONResponse(payload).body
                 with overview_cache_lock:
                     overview_cache[etag] = body
                     overview_cache.move_to_end(etag)
-                    if len(overview_cache) > 16:
+                    while len(overview_cache) > 16 or sum(len(value) for value in overview_cache.values()) > 64*1024*1024:
                         overview_cache.popitem(last=False)
         return Response(body, media_type="application/json", headers=headers)
     @router.delete("/products/{key}")
@@ -843,12 +929,37 @@ def create_research_router(store, settings):
         return run(store.delete_formula,key,body.model_dump(),user["id"])
     @router.get("/products/{key}")
     def detail(key:str,request:Request):
+        nonlocal detail_cache_bytes
         user=actor(request)
-        with read_slots:
+        validators = [tag.strip() for tag in request.headers.get("if-none-match", "").split(",")]
+        if validators:
             with transaction(store.url):
                 user = read_actor(request)
-                payload = {**run(store.detail,key,user),"capabilities":activation_grants.capabilities(store.url,user,"research")}
-            return JSONResponse(payload)
+                etag = run(store.detail_etag,key,user)
+                if etag in validators:
+                    return Response(status_code=304,headers={"ETag":etag,"Cache-Control":"no-store","Vary":"Cookie"})
+        # Coalesce one actor/product rebuild without holding a database connection while waiting.
+        with overview_locks[int(digest([user['id'],key]),16) % len(overview_locks)], read_slots:
+            with transaction(store.url):
+                user = read_actor(request)
+                etag = run(store.detail_etag,key,user)
+                headers = {"ETag":etag,"Cache-Control":"no-store","Vary":"Cookie"}
+                with overview_cache_lock:
+                    body = detail_cache.get(etag)
+                    if body is not None:detail_cache.move_to_end(etag)
+                if body is None:
+                    payload = {**run(store.detail,key,user),"capabilities":activation_grants.capabilities(store.url,user,"research")}
+            if body is None:
+                body = JSONResponse(payload).body
+                with overview_cache_lock:
+                    # Bound bytes as well as entries: long formula histories must not grow process memory indefinitely.
+                    if len(body) <= 16 * 1024 * 1024:
+                        detail_cache[etag] = body
+                        detail_cache_bytes += len(body)
+                        while len(detail_cache)>32 or detail_cache_bytes>16*1024*1024:
+                            _, removed = detail_cache.popitem(last=False)
+                            detail_cache_bytes -= len(removed)
+        return Response(body,media_type="application/json",headers=headers)
     @router.get("/history")
     def history(request:Request):
         return store.history(actor=actor(request))

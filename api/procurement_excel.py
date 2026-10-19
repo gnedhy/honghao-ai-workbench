@@ -116,7 +116,7 @@ def selected_prices(content: bytes, sheet: str, price_date: str, known: dict) ->
             csv_rows.append([code, item["name"], item["unit"], value])
     stream = io.StringIO()
     writer = csv.writer(stream)
-    writer.writerow(["编号", "名称", "单位", "最新价"])
+    writer.writerow(["编号", "名称", "单位", "行情价格"])
     writer.writerows(csv_rows)
     return {"rows": result, "content": stream.getvalue(), "valid": len(csv_rows),
             "blocked": sum(r["state"] in {"duplicate", "unknown", "range", "invalid"} for r in result),

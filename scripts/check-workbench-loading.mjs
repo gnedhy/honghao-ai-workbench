@@ -20,8 +20,10 @@ const server = await createServer({ configFile: false, cacheDir: '.scratch/w3-lo
 import {createRoot} from 'react-dom/client';
 import {ProcurementWorkbench} from '/src/workbenches/ProcurementWorkbench';
 import {ResearchWorkbench} from '/src/workbenches/ResearchWorkbench';
+import {ResearchMaterialPrices} from '/src/workbenches/ResearchMaterialPrices';
 import {ResearchProductDrawer} from '/src/workbenches/ResearchProductDrawer';
 import {FormulaDetails} from '/src/workbenches/ResearchProductView';
+import {Price,ChangePrices} from '/src/workbenches/ProcurementMaterialView';
 import {ProcurementNews} from '/src/workbenches/ProcurementNews';
 import {ProcurementDistribution} from '/src/workbenches/ProcurementDistribution';
 import {SalesWorkbench} from '/src/workbenches/SalesWorkbench';
@@ -31,7 +33,7 @@ const props={accessLevel:2,view:'preview',page:'dashboard',userId:'test',onPageC
 const sales={...props,view:kind==='sales-preview'?'preview':'full',page:kind==='calculator'?'estimator':kind?.startsWith('sales-')?'dashboard':'calculate',currentUser:{id:'loading-test',scope_levels:{sales:2}}};
 const busyLines=[{kind:'material',ref:'CF132',code:'CF132',quantity:'10',unit_cost:'10.6',amount:'106',basis:'latest'},{kind:'recipe',ref:'recipe:nested',code:'K10-K',quantity:'10',unit_cost:'12.55',amount:'125.5',basis:'recipe'}];
 const busyCost={cost:'11.57',yield:'1',total_input:'20',output_quantity:'20',missing_materials:[],lines:busyLines};
-createRoot(document.getElementById('root')).render(kind==='research-busy'?h(FormulaDetails,{busy:true,formula:{id:'recipe:busy',name:'合成配方',yield:'1',lines:busyLines},latest:busyCost,inventory:busyCost,policy:'latest',onPolicyChange:()=>{},onRef:()=>{throw Error('Busy navigation must not run')}}):kind==='research-detail'?h(ResearchProductDrawer,{id:'recipe:feedback',accessLevel:2,onClose:()=>{},onChanged:()=>{}}):kind==='research'?h(ResearchWorkbench,props):kind==='news'?h(ProcurementNews,{cache:{current:null}}):kind==='distribution'?h(ProcurementDistribution,{revision:0,renderLedger:()=>null}):kind?.startsWith('sales')||kind==='calculator'?h(SalesWorkbench,sales):h(ProcurementWorkbench,props));`; },
+createRoot(document.getElementById('root')).render(kind==='price-display'?h('div',null,h(Price,{value:'待核价'}),h('span',null,h(Price,{value:null})),h(ChangePrices,{items:[{id:'sample',code:'PRICE',unit:'kg',before_recorded:true,before:'10.1234',after:'0',change:-1}]})):kind==='material-prices'?h(ResearchMaterialPrices,{userId:'test'}):kind==='research-busy'?h(FormulaDetails,{busy:true,formula:{id:'recipe:busy',name:'合成配方',yield:'1',lines:busyLines},latest:busyCost,inventory:busyCost,policy:'latest',onPolicyChange:()=>{},onRef:()=>{throw Error('Busy navigation must not run')}}):kind==='research-detail'?h(ResearchProductDrawer,{id:'recipe:feedback',accessLevel:2,onClose:()=>{},onChanged:()=>{}}):kind==='research-pages'?h(ResearchWorkbench,{...props,view:'full',page:'products'}):kind==='research'?h(ResearchWorkbench,props):kind==='news'?h(ProcurementNews,{cache:{current:null}}):kind==='distribution'?h(ProcurementDistribution,{revision:0,renderLedger:()=>null}):kind?.startsWith('sales')||kind==='calculator'?h(SalesWorkbench,sales):h(ProcurementWorkbench,props));`; },
 }], server: { host: '127.0.0.1', port: 0, hmr: false } });
 let browser;
 const gate = () => { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; };
@@ -59,6 +61,8 @@ try {
     const salesPaths = ['products', 'batches', 'history', 'records'].map(path => 'GET /api/workbenches/sales/' + path);
     const expected = kind.startsWith('sales') ? salesPaths : kind === 'calculator' ? [...salesPaths, 'GET /api/workbenches/sales/calculator/saved', 'POST /api/workbenches/sales/calculator/evaluate']
       : kind === 'research-detail' ? ['GET /api/workbenches/research/products/recipe%3Afeedback', 'GET /api/workbenches/research/products/recipe%3Anested', 'GET /api/workbenches/research/material-prices', ...['CF004','CF132','CF014'].map(code=>'GET /api/workbenches/research/material-prices/material-'+code)]
+      : kind === 'material-prices' ? ['GET /api/workbenches/research/material-prices', ...['BOTH','MARKET','STOCK','NONE','INFO'].map(code=>'GET /api/workbenches/research/material-prices/'+code)]
+      : kind === 'research-pages' ? ['GET /api/workbenches/research/pages/products']
       : kind === 'research' ? ['overview', 'products/recipe%3Atest'].map(path => 'GET /api/workbenches/research/' + path)
       : ['GET /api/workbenches/procurement/' + (kind === 'news' ? 'news' : 'overview')];
     await page.route('**/*', async route => {
@@ -72,9 +76,99 @@ try {
       } catch (error) { errors.push(error.message); await route.abort().catch(() => {}); }
     });
     try {
+      if(kind==='material-prices')await page.clock.install();
       await page.goto(origin + 'loading-check?kind=' + kind); await check(page);
       assert.deepEqual(errors, []); assert.deepEqual(unexpected, []); console.log('PASS', name);
     } finally { await page.close(); }
+  }
+  let delayedPage=gate(),slowStarted=gate(),denyPage=false;
+  await run('research-server-pages-abort-stale-and-clear-denied','research-pages',async route=>{
+    const query=new URL(route.request().url()).searchParams;
+    const search=query.get('search'), page=Number(query.get('page'));
+    if(search==='slow'){slowStarted.release();await delayedPage.promise;}
+    if(denyPage)return route.fulfill({status:403,json:{detail:'没有研发权限'}});
+    const id=search==='fast'?'FAST':search==='slow'?'SLOW':`PAGE-${page}`;
+    return route.fulfill({headers:{ETag:`W/"${id}"`},json:{items:[{id,name:id,owner:'测试负责人',department:'研发一部',yield:'1',lines:2,status:'ready',latest_cost:'1.123456',inventory_cost:'2.234567',change:{percent:null},has_draft:false}],total:150,scope_total:150,page,page_size:50,owners:['测试负责人'],department_names:['研发一部'],departments:[],creation_owners:[],pending:false}});
+  },async page=>{
+    await page.getByRole('button',{name:'PAGE-1',exact:true}).waitFor();
+    await page.getByRole('button',{name:'下一页',exact:true}).click();
+    await page.getByRole('button',{name:'PAGE-2',exact:true}).waitFor();
+    const search=page.getByRole('textbox',{name:'搜索产品内编',exact:true});
+    await search.fill('slow');await slowStarted.promise;
+    await search.fill('fast');await page.getByRole('button',{name:'FAST',exact:true}).waitFor();
+    delayedPage.release();
+    assert.equal(await page.getByRole('button',{name:'SLOW',exact:true}).count(),0);
+    denyPage=true;await search.fill('denied');await page.getByRole('alert').filter({hasText:'没有研发权限'}).waitFor();
+    assert.equal(await page.getByRole('button',{name:'FAST',exact:true}).count(),0);
+  });
+  {
+  await run('price-display-preserves-precision-and-abnormal-text','price-display',async route=>route.abort(),async page=>{
+    await page.getByText('待核价',{exact:true}).waitFor();
+    assert.equal(await page.locator('[title="¥10.1234"]').innerText(),'¥10.12');
+    assert.equal(await page.locator('[title="¥0"]').innerText(),'¥0.00');
+    await page.getByText('—',{exact:true}).waitFor();
+  });
+  let materialReads=0, detailReads=0, materialVersion=1, denied=false;
+  const materialRows=['BOTH','MARKET','STOCK','NONE','INFO'].map(code=>({id:code,code,unit:'kg',in_formula_scope:true,published_price:['BOTH','MARKET','INFO'].includes(code)?'10.1234':null,inventory_price:['BOTH','STOCK'].includes(code)?'0':null,inventory_quantity:code==='INFO'?'123.4567':null}));
+  await run('material-price-states-and-conditional-refresh','material-prices',async(route,path)=>{
+    if(path.endsWith('/material-prices')) {
+      materialReads++;
+      if(denied)return route.fulfill({status:403,json:{detail:'权限已撤销'}});
+      const tag='"materials-'+materialVersion+'"';
+      if(route.request().headers()['if-none-match']===tag)return route.fulfill({status:304,headers:{ETag:tag}});
+      return route.fulfill({headers:{ETag:tag},json:{materials:materialRows,batches:[],batch:null,ledger_comparison:null}});
+    }
+    detailReads++;
+    const row=materialRows.find(row=>path.endsWith('/'+row.code));
+    return route.fulfill({json:{material:row,comparison:null,sources:[],adjustments:[],official_history:row.published_price==null?[]:Array.from({length:row.code==='BOTH'?30:1},(_,i)=>({id:'period-'+i,version:i+1,version_date:'2026-10-13',latest_price:row.published_price}))}});
+  },async page=>{
+    await page.getByRole('button',{name:'BOTH',exact:true}).waitFor();
+    await page.getByRole('button',{name:'BOTH',exact:true}).click();
+    const dialog=page.getByRole('dialog');
+    await page.clock.fastForward(500);
+    const beforeSwitch=await dialog.getByRole('tablist',{name:'价格口径'}).evaluate(el=>({x:el.offsetLeft,width:el.offsetWidth}));
+    await dialog.getByRole('tab',{name:/库存价格/}).click();
+    const afterSwitch=await dialog.getByRole('tablist',{name:'价格口径'}).evaluate(el=>({x:el.offsetLeft,width:el.offsetWidth}));
+    assert.equal(afterSwitch.x,beforeSwitch.x); assert.equal(afterSwitch.width,beforeSwitch.width);
+    await dialog.getByRole('heading',{name:'库存信息'}).waitFor();
+    await dialog.getByRole('heading',{name:'库存价格走势',exact:true}).waitFor();
+    await dialog.getByText('仅有一期库存记录，暂无走势。',{exact:true}).waitFor();
+    assert.equal(await dialog.getByRole('heading',{name:'行情价格走势',exact:true}).count(),0);
+    await dialog.getByRole('tab',{name:/行情价格/}).click();
+    await dialog.getByRole('heading',{name:'行情价格走势',exact:true}).waitFor();
+    assert.equal(await dialog.getByRole('heading',{name:'库存价格走势',exact:true}).count(),0);
+    await dialog.getByRole('tab',{name:/库存价格/}).click();
+    assert.equal(await dialog.locator('[title="¥0"]').innerText(),'¥0.00');
+    await page.clock.fastForward(10000); assert.equal(materialReads,1); assert.equal(detailReads,1);
+    const unchanged=page.waitForResponse(r=>r.status()===304);
+    await page.clock.fastForward(50000); await unchanged;
+    assert.equal(detailReads,1);
+    materialVersion++;
+    const reloaded=page.waitForResponse(r=>r.url().endsWith('/BOTH'));
+    await page.clock.fastForward(60000); await reloaded;
+    assert.equal(detailReads,2);
+    for(const code of ['MARKET','STOCK','NONE']) {
+      await page.getByRole('button',{name:'关闭详情',exact:true}).click(); await page.clock.fastForward(300);
+      await page.getByRole('button',{name:code,exact:true}).click();
+      await dialog.getByRole('heading',{name:code,exact:true}).waitFor();
+      await dialog.getByText(code==='MARKET'?'暂无库存价格':code==='STOCK'?'暂无行情价格':'暂无行情价格和库存价格',{exact:true}).waitFor();
+      assert.equal(await dialog.getByRole('group',{name:'价格口径'}).getByRole('button').count(),0);
+    }
+    await page.getByRole('button',{name:'关闭详情',exact:true}).click(); await page.clock.fastForward(300);
+    await page.getByRole('button',{name:'INFO',exact:true}).click();
+    await dialog.getByRole('tab',{name:/库存价格.*暂无库存价/}).click();
+    await dialog.getByRole('heading',{name:'库存信息'}).waitFor();
+    assert.equal(await dialog.locator('[title="123.4567"]').innerText(),'123.46');
+    await dialog.getByText('暂无有效库存价格记录。',{exact:true}).waitFor();
+    await dialog.getByRole('tab',{name:/库存价格/}).press('ArrowLeft');
+    assert.equal(await dialog.getByRole('tab',{name:/行情价格/}).getAttribute('aria-selected'),'true');
+    assert.equal(await dialog.locator('[title="¥10.1234"]').first().innerText(),'¥10.12');
+    denied=true;
+    const revoked=page.waitForResponse(r=>r.status()===403);
+    await page.clock.fastForward(60000); await revoked;
+    await dialog.waitFor({state:'detached'});
+    assert.equal(await page.getByRole('button',{name:'BOTH',exact:true}).count(),0);
+  });
   }
   for (const kind of ['procurement', 'research', 'news', 'distribution']) {
     const pending = gate();
@@ -89,13 +183,22 @@ try {
       await page.getByText(/暂时不可用|暂时无法读取|读取失败|合成读取失败/).first().waitFor();
     });
   }
-  const trend = gate();
-  await run('research trend: pending distinct from empty', 'research', async (route, path) => {
-    if (path.endsWith('/overview')) return route.fulfill({ json: { products: [{ id: 'recipe:test', name: '测试产品', status: 'ready', yield: '100', change: null, latest_cost: '1', inventory_cost: '1' }], pending: false, versions: [], formulas: [], owners: [] } });
-    await trend.promise; await route.fulfill({ json: { history: [] } });
+  const trendPending=gate();
+  await run('research trend: pending distinct from empty', 'research', async (route,path)=>{
+    assert.ok(path.endsWith('/overview'));
+    await trendPending.promise;
+    return route.fulfill({json:{products:[{id:'recipe:test',name:'测试产品',status:'ready',yield:'100',change:null,latest_cost:'1',inventory_cost:'1'}],pending:false,versions:[],formulas:[],owners:[]}});
+  },async page=>{
+    await page.locator('[role="status"]').first().waitFor();
+    assert.equal(await page.getByText('当前范围没有成本记录',{exact:true}).count(),0);
+    trendPending.release();await page.getByText('当前范围没有成本记录',{exact:true}).waitFor();
+  });
+  await run('research trend reuses authorized overview without detail request', 'research', async (route, path) => {
+    assert.ok(path.endsWith('/overview'), 'Chart must not load formula, editing options or full history graphs');
+    return route.fulfill({ json: { products: [{ id: 'recipe:test', name: '测试产品', status: 'ready', yield: '100', change: null, latest_cost: '1', inventory_cost: '1' }], pending: false, versions: [], formulas: [], owners: [] } });
   }, async page => {
-    await page.getByText('正在读取研发成本走势', { exact: true }).waitFor(); assert.equal(await page.getByText('当前范围没有成本记录', { exact: true }).count(), 0);
-    trend.release(); await page.getByText('当前范围没有成本记录', { exact: true }).waitFor(); assert.equal(await page.getByText('正在读取研发成本走势', { exact: true }).count(), 0);
+    await page.getByText('当前范围没有成本记录', { exact: true }).waitFor();
+    assert.equal(await page.getByText('正在读取研发成本走势', { exact: true }).count(), 0);
   });
   const sales = [gate(), gate()]; let retry = false;
   const blockedRead=gate();let readCalls=0,readRecovered=false;
@@ -210,8 +313,11 @@ try {
     assert.equal(await row('CF004').getByRole('img').count(),0);
     assert.equal(await row('CF132').getByRole('img').evaluate(e=>getComputedStyle(e).color),'rgb(24, 119, 100)');
     assert.equal(await row('CF014').getByRole('img').evaluate(e=>getComputedStyle(e).color),'rgb(180, 35, 24)');
+    const plainBasis = row('CF004').getByText('行情价格',{exact:true});
+    assert.equal(await plainBasis.getAttribute('title'),null);
+    assert.equal(await plainBasis.locator('svg').count(),0);
     await page.waitForTimeout(220); await page.screenshot({path:'.scratch/dashboard-feedback/research-latest.png'});
-    await drawer.getByRole('button',{name:'库存优先',exact:true}).click();
+    await drawer.getByRole('tab',{name:/产品成本 · 库存优先/}).click();
     await row('CF004').getByRole('img',{name:'核算单价下降：¥15.50 → ¥13.50 元/kg',exact:true}).waitFor();
     assert.equal(await row('CF132').getByRole('img').count(),0); assert.equal(await row('CF014').getByRole('img').count(),0);
     await page.setViewportSize({width:390,height:844}); await page.emulateMedia({reducedMotion:'reduce'});
@@ -229,7 +335,7 @@ try {
       if(delayMaterial) await delayMaterial.promise;
       if(failMaterial) return route.fulfill({status:503,json:{detail:'合成原料读取失败'}});
       const code=path.split('material-').at(-1);
-      return route.fulfill({json:{material:{id:'material-'+code,code},comparison:null,sources:[],adjustments:[],official_history:[{id:'price-23',version:23,version_date:'2026-09-21',price_date:'2026-09-21',latest_price:'10.80',modifier:null},{id:'price-24',version:24,version_date:'2026-09-28',price_date:'2026-09-28',latest_price:'10.60',modifier:null}]}});
+      return route.fulfill({json:{material:{id:'material-'+code,code,unit:'kg',inventory_price:'8.801234',inventory_quantity:'123.456789',inventory_source:{source:'ERP 库存',catalog_source:'ERP 库存',as_of:'2026-10-07',imported_at:'2026-10-15T04:03:00Z'}},comparison:null,sources:[],adjustments:[],official_history:[{id:'price-23',version:23,version_date:'2026-09-21',price_date:'2026-09-21',latest_price:'10.80',modifier:null},{id:'price-24',version:24,version_date:'2026-09-28',price_date:'2026-09-28',latest_price:'10.60',modifier:null}]}});
     }
     return route.fulfill({json:{product:{...formula,status:'ready',lifecycle:'active'},recipes:[formula],latest,inventory,history:feedbackHistory,draft:null,draft_revision:0,options:{owners:[],materials:[],recipes:[],composites:[]}}});
   }, async page => {
@@ -239,7 +345,7 @@ try {
     assert.equal(await page.locator('vite-error-overlay').count(),0);
     const singleDrawer=async name=>assert.deepEqual(await page.locator('dialog[open]').evaluateAll(dialogs=>dialogs.filter(d=>getComputedStyle(d).visibility==='visible').map(d=>d.getAttribute('aria-label'))),[name],'Only the active drawer is visible');
     const parent=page.getByRole('dialog',{name:'RH-13',exact:true}); await parent.waitFor(); await singleDrawer('RH-13');
-    await parent.getByRole('button',{name:'库存优先',exact:true}).click();
+    await parent.getByRole('tab',{name:/产品成本 · 库存优先/}).click();
     const history=parent.getByRole('button').filter({hasText:'2026-09-21'});
     await history.click();
     const expanded=parent.locator('[class*="expandedRecord"]');
@@ -253,8 +359,12 @@ try {
     await link.focus(); await page.keyboard.press('Enter');
     const child=page.getByRole('dialog',{name:'CF132',exact:true}); await child.waitFor();
     await child.getByText('2026-09-21 历史成本中的核算单价为 ¥8.80 元/kg（库存价格）。',{exact:false}).waitFor();
-    await child.getByRole('heading',{name:'有效价格走势',exact:true}).waitFor();
+    await child.getByRole('heading',{name:'行情价格走势',exact:true}).waitFor();
     await child.getByText('2 期有效价格',{exact:true}).waitFor();
+    await child.getByRole('tab',{name:/库存价格/}).click();
+    await child.getByRole('heading',{name:'库存信息',exact:true}).waitFor();
+    assert.equal(await child.locator('[title="¥8.801234"]').innerText(),'¥8.80');
+    assert.equal(await child.locator('[title="123.456789"]').innerText(),'123.46');
     await singleDrawer('CF132');
     assert.deepEqual(await page.locator('dialog[aria-label="RH-13"]').evaluate(e=>[getComputedStyle(e).visibility,getComputedStyle(e,'::backdrop').visibility]),['hidden','hidden']);
     assert.ok(await child.evaluate(e=>e.matches(':modal')));
@@ -265,8 +375,8 @@ try {
     await drawerMotion(child.getByRole('button',{name:'返回配方与成本',exact:true}), 'CF132', 'RH-13'); await child.waitFor({state:'detached'});
     await singleDrawer('RH-13');
     assert.equal(await history.getAttribute('aria-expanded'),'true');
-    assert.equal(await parent.getByRole('button',{name:'库存优先',exact:true}).first().getAttribute('aria-pressed'),'true');
-    assert.equal(await expanded.getByRole('button',{name:'库存优先',exact:true}).getAttribute('aria-pressed'),'true');
+    assert.equal(await parent.getByRole('tab',{name:/产品成本 · 库存优先/}).first().getAttribute('aria-selected'),'true');
+    assert.equal(await expanded.getByRole('tab',{name:/产品成本 · 库存优先/}).getAttribute('aria-selected'),'true');
     assert.equal(await link.evaluate(e=>e===document.activeElement),true);
     assert.ok(Math.abs(await parent.locator(':scope > [class*="drawerBody"]').evaluate(e=>e.scrollTop)-scroll)<2);
     await link.click(); await child.getByText('2 期有效价格',{exact:true}).waitFor();
@@ -294,12 +404,12 @@ try {
     delayMaterial.release(); delayMaterial=null;
     assert.equal(await history.getAttribute('aria-expanded'),'true');
     await history.click(); await page.setViewportSize({width:1280,height:900}); await page.emulateMedia({reducedMotion:'no-preference'});
-    await parent.getByRole('button',{name:'最新优先',exact:true}).click();
+    await parent.getByRole('tab',{name:/产品成本 · 最新优先/}).click();
     const currentLink=parent.getByRole('button',{name:'CF132',exact:true});
     omitMaterial=true; await currentLink.click(); await child.getByRole('alert').getByText('此投料未关联当前原料价格目录',{exact:true}).waitFor(); await singleDrawer('CF132');
-    assert.equal(await child.getByRole('heading',{name:'有效价格走势',exact:true}).count(),0);
+    assert.equal(await child.getByRole('heading',{name:'行情价格走势',exact:true}).count(),0);
     omitMaterial=false; await child.getByRole('button',{name:'重新加载',exact:true}).click();
-    await child.getByText('本层成本中的核算单价为 ¥10.60 元/kg（最新价格）。',{exact:false}).waitFor();
+    await child.getByText('本层成本中的核算单价为 ¥10.60 元/kg（行情价格）。',{exact:false}).waitFor();
     assert.equal(await child.getByText('历史成本中的',{exact:false}).count(),0);
     await child.getByRole('button',{name:'返回配方与成本',exact:true}).click(); await child.waitFor({state:'detached'});
     await singleDrawer('RH-13');

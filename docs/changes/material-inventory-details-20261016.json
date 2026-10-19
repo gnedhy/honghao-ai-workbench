@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "工作台行情库存详情、双成本卡片及查询交互统一，读取版本、分页与批量重算优化。",
+  "modules": [
+    "procurement",
+    "research",
+    "sales"
+  ],
+  "files": [
+    "api/procurement.py",
+    "api/procurement_excel.py",
+    "api/research_export.py",
+    "src/types.ts",
+    "src/workbenchRegistry.ts",
+    "src/workbenches/ProcurementDistribution.tsx",
+    "src/workbenches/ProcurementMaterialDrawer.tsx",
+    "src/workbenches/ProcurementMaterialView.tsx",
+    "src/workbenches/ProcurementMaterials.tsx",
+    "src/workbenches/ProcurementWorkbench.tsx",
+    "src/workbenches/ResearchMaterialPrices.tsx",
+    "src/workbenches/ResearchWorkbench.tsx",
+    "src/workbenches/procurementLedger.ts",
+    "src/workbenches/procurementPriceEditing.tsx",
+    "src/workbenches/researchAnalytics.ts",
+    "src/workbenches/researchModel.ts",
+    "api/research.py",
+    "src/components/WorkbenchSurface.module.css",
+    "src/workbenches/ResearchProductView.tsx",
+    "src/components/SettingsDialog.tsx",
+    "api/research_pages.py",
+    "api/research_history.py",
+    "api/operations.py",
+    "api/migrations/postgresql/0006_read_versions.sql",
+    "src/workbenches/ResearchFormulaEditor.tsx",
+    "src/workbenches/ResearchProductDrawer.tsx",
+    "src/workbenches/SalesWorkbench.tsx",
+    "src/workbenches/SalesProductPicker.tsx",
+    "src/workbenches/researchData.ts",
+    "src/components/WorkbenchMenus.tsx",
+    "src/components/HistoryBrowser.tsx",
+    "src/components/HelpHint.tsx",
+    "src/components/PriceCards.tsx",
+    "src/components/FilterSummary.tsx",
+    "src/components/SortHeading.tsx",
+    "src/workbenches/ResearchWorkbench.module.css",
+    "src/workbenches/procurementAnalytics.ts",
+    "src/components/HelpHint.module.css",
+    "src/components/HistoryBrowser.module.css",
+    "src/components/PriceCards.module.css"
+  ],
+  "consumers": [
+    "src/workbenches/ProcurementMaterialDrawer.tsx",
+    "src/workbenches/ResearchMaterialPrices.tsx",
+    "src/workbenches/ResearchProductView.tsx",
+    "src/workbenches/ProcurementWorkbench.tsx"
+  ],
+  "permissions": "沿用采购和研发详情的鉴权入口与实时部门范围，库存只读，不开放新写入口。",
+  "data": "新增0006_read_versions事务级读取版本标记；业务值、冻结历史与取价规则保留。列表分页复用按版本和权限范围隔离的计算快照。",
+  "lifecycle": "原料表可见时每分钟及恢复焦点时条件读取，304保留当前数据；变化后刷新详情，鉴权失败清空。详情双价切换，单价直接展示。",
+  "exits": "沿用Drawer及采购原料草稿退出保护。",
+  "compatibility": "接口键和成本policy保持；新增字段向后兼容；行情CSV模板保留旧最新价列名导入兼容。",
+  "recovery": "发布前备份并在隔离库恢复验证；迁移6发布后回退须匹配迁移链，不能直接用迁移5程序启动新库。",
+  "verification": {
+    "api": [
+      "tests/test_procurement_inventory.py::test_inventory_detail_matches_ledger_without_filling_market_price",
+      "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements",
+      "tests/test_research_conditional.py::test_material_prices_conditional_inventory_and_permission",
+      "tests/test_research_conditional.py::test_material_validator_follows_department_and_scope"
+    ],
+    "node": [
+      {
+        "file": "tests_ui/procurementLedger.test.ts",
+        "id": "行情和库存状态分别判断，零价有效，缺行情筛选仍含仅库存原料"
+      }
+    ],
+    "browser": [
+      {
+        "file": "scripts/check-workbench-loading.mjs",
+        "id": "research-history-periods-and-material-price-arrows",
+        "apiTest": "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+      }
+    ]
+  }
+}

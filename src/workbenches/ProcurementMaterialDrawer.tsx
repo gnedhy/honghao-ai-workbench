@@ -97,12 +97,12 @@ export function ProcurementMaterialDrawer({ batches, materialId, canEdit, canMan
           {discardTarget && <DiscardChangesDialog description="尚未保存的价格或资料修改将被放弃。" disabled={saving} onCancel={() => setDiscardTarget(null)} onDiscard={() => discardTarget === "drawer" ? close(true) : closePanel(true)}/>}
           {editing && <form className={styles.adjustmentForm} onSubmit={(event) => { event.preventDefault(); void save(); }}>
             <div className={styles.panelHeading}><strong>{editing === "new" ? "录入新价格" : "修正历史记录"}</strong><button type="button" aria-label="取消修正" onClick={() => closePanel()}><X size={14} /></button></div>
-            <p className={styles.fieldHint}>录入后加入本轮更新，启用前，最新价格保持不变。</p>
+            <p className={styles.fieldHint}>录入后加入本轮更新，启用前，行情价格保持不变。</p>
             <label>价格<input autoFocus type="number" min="0" step="0.01" disabled={saving} value={priceValue} onChange={(event) => setPriceValue(event.target.value)} /></label>
             <label>价格日期<div className={styles.dateField} onClick={openDatePicker}><input ref={dateInput} type="date" disabled={saving} value={effectiveDate} onChange={(event) => setEffectiveDate(event.target.value)} /><CalendarDays size={15} /></div></label>
             <div className={styles.reasonField}><span>录价说明</span><ReasonSelect label="录价说明" options={PRICE_REASONS} placeholder="请选择说明" value={reason} disabled={saving} onChange={setReason} /></div>
             {pricePreview.data ? <PriceReview preview={pricePreview.data} /> : <p>{pricePreview.error ?? "填写价格后核对价格变化"}{pricePreview.error && <button type="button" onClick={pricePreview.refresh}>重新核对</button>}</p>}
-            {error && <p className={styles.error}>{error}<button type="button" onClick={() => { void load(); pricePreview.refresh(); }}>读取最新价格核对（保留输入）</button></p>}
+            {error && <p className={styles.error}>{error}<button type="button" onClick={() => { void load(); pricePreview.refresh(); }}>读取行情价格核对（保留输入）</button></p>}
             <button className="primary-button" type="submit" disabled={saving || !priceValue || !effectiveDate || !resolveReason(reason) || !pricePreview.data}>{saving ? "正在写入" : "确认并保存"}</button>
           </form>}
           {identityStep === "edit" && <form className={styles.adjustmentForm} onSubmit={(event) => { event.preventDefault(); setIdentityStep("confirm"); setError(""); }}>

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildLedgerRows, collectPriceEdits, draftLedgerChange, editedPriceChange, filterLedgerRows, formalLedgerChange, summarizeUpdate } from "../src/workbenches/procurementLedger.ts";
+import { buildLedgerRows, collectPriceEdits, draftLedgerChange, editedPriceChange, filterLedgerRows, materialPriceStatus, formalLedgerChange, summarizeUpdate } from "../src/workbenches/procurementLedger.ts";
 import type { ProcurementBatch, ProcurementMaterial, ProcurementUpdate } from "../src/types.ts";
 
 const material = (id: string, extra: Partial<ProcurementMaterial> = {}): ProcurementMaterial => ({ id, code: id, name: id, unit: "kg", price_date: "2026-09-08", updated_at: "", ...extra });
@@ -185,4 +185,12 @@ test("待发布价排序使用表内输入，空白与非法数字不当成零�
   assert.deepEqual(ids(materials, { ...options, sortDirection: "descending" }), ["original", "two", "zero", "bad", "blank", "scientific"]);
   assert.equal(options.values.blank, "");
   assert.deepEqual(ids(materials, { sort: "draft_price", current }).slice(0, 2), ["zero", "bad"]);
+});
+
+
+test("行情和库存状态分别判断，零价有效，缺行情筛选仍含仅库存原料", () => {
+  const rows = [material("inventory", {inventory_price: "1.6789"}), material("none"), material("market", {published_price: "0"}), material("zero-stock", {inventory_price: "0"})];
+  assert.deepEqual(rows.map(materialPriceStatus), ["仅库存价", "未定价", "有效", "仅库存价"]);
+  assert.deepEqual(ids(rows, {movement: "missing"}), ["inventory", "none", "zero-stock"]);
+  assert.equal(formalLedgerChange(rows[0]), null);
 });

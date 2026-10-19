@@ -240,7 +240,7 @@ export type ProcurementMaterialDetail = {
   official_history: Array<{id: string; version: number; version_date: string; latest_price?: string | null; price_date: string | null; raw_price?: string | null; price_kind: string; sheet: string | null; cell: string | null; modifier?: PriceModifier | null}>;
   sources: Array<{sheet: string; row: number; purchaser: string | null; filename: string}>;
   changes?: ProcurementBatchDetail["changes"];
-  material: { id: string; code: string; name: string; unit: string; archived: boolean; updated_at: string; inventory_source?: ProcurementMaterial['inventory_source'] };
+  material: { id: string; code: string; name: string; unit: string; archived: boolean; updated_at: string; inventory_quantity?: string | null; inventory_price?: string | null; inventory_source?: ProcurementMaterial['inventory_source'] };
   latest_price?: string | null;
   previous_price?: string | null;
   change?: number | null;

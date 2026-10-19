@@ -401,7 +401,7 @@ def readiness_checks(settings: Settings) -> dict[str, str]:
         versions = _schema_versions(settings.database_url)
         with transaction(settings.database_url) as db:
             required = {name.strip('"') for _, _, _, content in _migration_files() for name in
-                        re.findall(r'CREATE\s+(?:UNIQUE\s+)?(?:TABLE|INDEX|VIEW)\s+([\w."]+)', content, re.IGNORECASE)}
+                        re.findall(r'CREATE\s+(?:UNIQUE\s+)?(?:TABLE|INDEX|VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w."]+)', content, re.IGNORECASE)}
             names = [name if '.' in name else 'public.' + name for name in required]
             objects_ready = db.execute('SELECT bool_and(to_regclass(name) IS NOT NULL) FROM unnest(%s::text[]) AS object(name)', (names,)).fetchone()[0]
         if not _core_schema_versions_valid(versions) or not objects_ready:

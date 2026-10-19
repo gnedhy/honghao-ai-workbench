@@ -41,6 +41,10 @@ export function buildLedgerRows(materials: ProcurementMaterial[], update: Procur
   });
 }
 
+export function materialPriceStatus(item: ProcurementMaterial) {
+  return item.published_price != null ? "有效" : item.inventory_price != null ? "仅库存价" : "未定价";
+}
+
 export function formalLedgerChange(item: ProcurementMaterial, comparison?: ProcurementBatch["comparison"]) {
   const entry = comparison?.items[item.id];
   if (entry) return entry.change == null ? null : entry.change * 100;
@@ -68,7 +72,7 @@ export function filterLedgerRows(rows: ReturnType<typeof buildLedgerRows>, optio
     if (sort === "price_date") return item.published_price_date || null;
     if (sort === "unit") return item.unit;
     if (sort === "modifier") return item.price_modifier?.name || null;
-    if (sort === "status") return item.published_price == null ? "未定价" : "有效";
+    if (sort === "status") return materialPriceStatus(item);
     if (sort === "change") {
       const change = edit ? draftLedgerChange(item, values[item.id] ?? edit.originals[item.id] ?? "", comparison) : row.input ? draftLedgerChange(item, row.input.draft_price ?? "", comparison) : formalLedgerChange(item, comparison);
       return typeof change === "number" ? change : null;

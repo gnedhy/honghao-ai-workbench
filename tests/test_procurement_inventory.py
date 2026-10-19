@@ -188,3 +188,41 @@ def test_inventory_schema_verification_preserves_preferences_and_only_migrates_o
     store.save_preferences(admin, ['unit', 'latest_price'], 'materials', 'paged', 25)
     assert migrate(os.environ['HONGHAO_TEST_MIGRATION_URL'], 'test') == len(_migration_files())
     assert store.preferences(admin)['ledger_columns'] == ['unit', 'latest_price']
+
+
+def test_inventory_detail_matches_ledger_without_filling_market_price(inventory_data):
+    settings, client, _, _ = inventory_data
+    apply(inventory_data)
+    store = ProcurementStore(settings.database_url)
+    for item in overview(client)['materials']:
+        detail = store.material_detail(item['id'])
+        assert detail['material']['inventory_quantity'] == item['inventory_quantity']
+        assert detail['material']['inventory_price'] == item['inventory_price']
+        assert detail['material']['inventory_source'] == item.get('inventory_source')
+    with transaction(settings.database_url, write=True) as db:
+        material_id = db.execute("SELECT id FROM procurement_materials WHERE code='A'").fetchone()[0]
+        db.execute("UPDATE procurement_price_batch_items SET latest_price=NULL WHERE material_id=%s", (material_id,))
+    detail = store.material_detail(material_id)
+    assert detail['material']['inventory_price'] == '4.5'
+    assert all(item['latest_price'] is None for item in detail['official_history'])
+    assert store.material_detail('not-a-material') is None
+
+
+def test_price_series_matches_frozen_batch_prices_and_provenance(inventory_data):
+    settings, client, _, _ = inventory_data
+    store = ProcurementStore(settings.database_url)
+    response = client.get('/api/workbenches/procurement/price-series')
+    assert response.status_code == 200
+    series = response.json()['batches']
+    assert len(series) == 2
+    for compact in series:
+        full = store.get_batch(compact['id'])
+        for field in ('id','version','published_at','price_date'):
+            assert compact[field] == full[field]
+        assert compact['items'] == [{k:row[k] for k in ('material_id','code','latest_price')} for row in full['items']]
+        assert compact['snapshot_sources'] == {mid:{k:row[k] for k in ('price_date','price_kind')} for mid,row in full['snapshot_sources'].items()}
+    IdentityStore(settings.database_url).create_user(username='series-sales',display_name='Series sales',department='销售',password=PASSWORD,scope_levels={'sales':4})
+    sign_in(client,'series-sales')
+    assert client.get('/api/workbenches/procurement/price-series').status_code == 403
+    client.post('/api/logout')
+    assert client.get('/api/workbenches/procurement/price-series').status_code == 401

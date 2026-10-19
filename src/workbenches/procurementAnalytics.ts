@@ -1,5 +1,7 @@
 import type { ProcurementBatchDetail } from "../types";
 
+export type PriceSeries = Pick<ProcurementBatchDetail,"id"|"version"|"published_at"|"price_date"> & {items: Pick<ProcurementBatchDetail["items"][number],"material_id"|"code"|"latest_price">[]; snapshot_sources?: Record<string,{price_date: string|null;price_kind:string}>};
+
 type PriceMaterial = {
   code: string;
   latest_price?: string | null;
@@ -130,14 +132,14 @@ export function moverDateRange(end: string, preset: "14d" | "1m" | "3m") {
   return { start: start.toISOString().slice(0, 10), end };
 }
 
-export function buildVersionMovers(batches: ProcurementBatchDetail[], months: 0 | 1 | 3 | { start: string; end: string } = 0) {
+export function buildVersionMovers(batches: PriceSeries[], months: 0 | 1 | 3 | { start: string; end: string } = 0) {
   const custom = typeof months === "object" ? months : null;
   const end = custom?.end ?? batches.map(batch => (batch.price_date || batch.published_at).slice(0, 10)).sort().at(-1);
   if (custom && (!/^\d{4}-\d{2}-\d{2}$/.test(custom.start) || !/^\d{4}-\d{2}-\d{2}$/.test(custom.end) || custom.start >= custom.end)) return [];
   let cutoff = "";
   if (custom) cutoff = custom.start;
   else if (months && end) cutoff = moverDateRange(end, months === 1 ? "1m" : "3m").start;
-  const histories = new Map<string, Array<{ batchId: string; version: number; date: string; item: ProcurementBatchDetail["items"][number]; value: number }>>();
+  const histories = new Map<string, Array<{ batchId: string; version: number; date: string; item: PriceSeries["items"][number]; value: number }>>();
   for (const batch of [...batches].sort((a, b) => b.version - a.version)) {
     if (end && (batch.price_date || batch.published_at).slice(0, 10) > end) continue;
     for (const item of batch.items) {

@@ -1,3 +1,4 @@
+import {FilterSummary} from "../components/FilterSummary";
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Plus, Search } from "lucide-react";
 
@@ -91,6 +92,7 @@ export function SalesProductPicker({ products, selected, basis, cost, add = fals
           options={[{value:"",label:"全部来源"},{value:"research",label:"研发产品"},{value:"procurement",label:"采购原料"}]}
           onSelect={value => {setSource(value);setPage(1);}} className={s.departmentMenu} />
       </div>
+      <FilterSummary count={matches.length} items={[query && `搜索：${query}`,department && `部门：${department}`,source !== "research" ? `来源：${source === "procurement" ? "采购原料" : "全部来源"}` : ""]} onClear={()=>{setQuery("");setDepartment("");setSource("research");setPage(1);}}/>
       <div className={s.options}>
         {shown.map(product => <div className={s.option} key={product.id}>
           <div className={s.identity}><strong title={product.code}>{product.code}</strong>{product.name && product.name !== product.code && <small title={product.name}>{product.name}</small>}<small title={product.department}>{product.department}</small></div>
