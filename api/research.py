@@ -158,7 +158,7 @@ def comparison(current, previous):
     if old == 0:
         return {"percent": None, "reason": "上期成本为零，无法计算百分比"}
     return {"percent": float((current - old) / old * 100),
-            "reason": f"最新优先成本（按两位小数比较）：{old:.2f} → {current:.2f}"}
+            "reason": f"行情优先成本（按两位小数比较）：{old:.2f} → {current:.2f}"}
 
 
 class ResearchStore:

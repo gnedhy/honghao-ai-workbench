@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "kind": "presentation",
+  "summary": "产品详情增加顶部口径联动成本走势，历史列表按价格所属日期倒序展示；已于2026-10-20正式发布。",
+  "modules": ["research"],
+  "files": ["src/workbenches/ResearchCostTrend.tsx", "src/workbenches/ResearchProductDrawer.tsx", "src/workbenches/ResearchProductView.tsx", "src/workbenches/researchAnalytics.ts", "src/workbenches/ResearchWorkbench.module.css"],
+  "consumers": ["src/workbenches/ResearchProductDrawer.tsx", "src/workbenches/ResearchProductView.tsx", "src/workbenches/ResearchWorkbench.tsx"],
+  "permissions": "只使用原详情响应，不增加请求、扩大授权或更改接口；失权清空整个详情及走势。",
+  "data": "不改后端、数据库或成本。日期排序只用于列表展示，保留原历史条数、当前公式、当前价格、投料涨跌基准及冻结历史。历史金额仍为原最新优先口径并标注。",
+  "lifecycle": "顶部口径驱动标题和单条曲线，初始近三个月；口径切换保留范围，切换产品重置。按所属日期绘制，同日优先正式记录再取最新生成记录，所有条目仍保留在历史中。缺价不补零、不连线；一有效日期及空历史均明确提示。",
+  "exits": "沿用原抽屉、编辑退出和子层导航，暂无新写入流程。",
+  "compatibility": "复用采购日期范围、聚焦坐标轴和 Recharts；FormulaDetails 仅新增可选插槽，冻结详情不重复插入走势图。",
+  "recovery": "前版程序保留；回退本次展示组件和排序不需要恢复数据库。",
+  "verification": {
+    "api": [],
+    "node": [
+      {"file": "tests_ui/researchDetailTrend.test.ts", "id": "成本详情按所属日期倒序，同日正式优先且不改冻结记录及涨跌"},
+      {"file": "tests_ui/researchDetailTrend.test.ts", "id": "同日走势优先正式记录且保留缺价，不以回算或零价补位"}
+    ],
+    "browser": [
+      {"file": "scripts/check-research-detail-trend.mjs", "id": "detail-trend-policy-dates-tooltip-and-frozen-history"},
+      {"file": "scripts/check-research-detail-trend.mjs", "id": "inventory-gap-retains-fixed-reference-caption"},
+      {"file": "scripts/check-research-detail-trend.mjs", "id": "single-effective-period-does-not-invent-trend"},
+      {"file": "scripts/check-research-detail-trend.mjs", "id": "empty-history-is-not-zero-cost"},
+      {"file": "scripts/check-research-detail-trend.mjs", "id": "revoked-detail-clears-trend-and-history"},
+      {"file": "scripts/check-research-detail-trend.mjs", "id": "mobile-keyboard-range-and-reduced-motion"}
+    ]
+  }
+}

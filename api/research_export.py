@@ -142,7 +142,7 @@ def build_cost_workbook(rows: list[dict], exported_at: datetime | None = None) -
     overview.merge_cells("A2:K2")
     _text(overview["A2"], f"导出时间：{stamp}  ·  在用产品：{len(rows)}  ·  成本单位：元/kg；缺价留空，0 为有效零值")
     overview["A2"].font = Font(name="Arial", size=10, color="52636C")
-    _header(overview, 3, ["产品内编", "负责人", "最新优先成本（元/kg）", "库存优先成本（元/kg）", "最新成本来源", "库存成本来源", "收率", "投料条数", "状态", "成本记录时间", "配方版本"])
+    _header(overview, 3, ["产品内编", "负责人", "行情优先成本（元/kg）", "库存优先成本（元/kg）", "行情优先成本来源", "库存成本来源", "收率", "投料条数", "状态", "成本记录时间", "配方版本"])
     for index, item in enumerate(rows, 4):
         product, formula, latest, inventory = (item[key] for key in ("product", "formula", "latest", "inventory"))
         values = [product.get("name"), product.get("owner"), None, None,
@@ -239,7 +239,7 @@ def build_cost_workbook(rows: list[dict], exported_at: datetime | None = None) -
             for start, stop, fill in ((1, 4, FILL_GROUP), (5, 7, FILL_LATEST_GROUP), (8, 10, FILL_INVENTORY_GROUP)):
                 for column in range(start, stop + 1):
                     sheet.cell(row, column).fill = fill
-            for column, label in ((1, "配方与投料"), (5, f"最新优先成本（{_source(latest)}）"), (8, f"库存优先成本（{_source(inventory)}）")):
+            for column, label in ((1, "配方与投料"), (5, f"行情优先成本（{_source(latest)}）"), (8, f"库存优先成本（{_source(inventory)}）")):
                 cell = sheet.cell(row, column)
                 _text(cell, label)
                 cell.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")

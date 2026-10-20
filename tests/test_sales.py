@@ -147,6 +147,7 @@ def test_calculator_private_saved_workspace_and_source(sales):
     template = calculator.save(SavedInput(kind='template', name='基础公式', payload={'mode': 'domestic_direct', 'steps': []}), actor)
     unnamed = calculator.save(SavedInput(kind='workspace', payload=body.model_dump()), actor)
     assert unnamed['id'] != saved['id'] and unnamed['name'].startswith(product['code'])
+    assert ' · 行情优先 · ' in unnamed['name']
     assert len(calculator.list_saved(actor)['saved']) == 3
     viewer = dict(actor, is_system_admin=False, scope_levels={'sales': 2})
     assert calculator.evaluate(body, viewer)['results'][0]['error'] is None

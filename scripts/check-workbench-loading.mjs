@@ -23,9 +23,12 @@ import {ResearchWorkbench} from '/src/workbenches/ResearchWorkbench';
 import {ResearchMaterialPrices} from '/src/workbenches/ResearchMaterialPrices';
 import {ResearchProductDrawer} from '/src/workbenches/ResearchProductDrawer';
 import {FormulaDetails} from '/src/workbenches/ResearchProductView';
-import {Price,ChangePrices} from '/src/workbenches/ProcurementMaterialView';
+import {Price,ChangePrices,ReadOnlyMaterialDrawer} from '/src/workbenches/ProcurementMaterialView';
+import {ProcurementMaterialDrawer} from '/src/workbenches/ProcurementMaterialDrawer';
+import {fetchProcurementMaterial} from '/src/api';
 import {ProcurementNews} from '/src/workbenches/ProcurementNews';
 import {ProcurementDistribution} from '/src/workbenches/ProcurementDistribution';
+import {ProcurementActivationGrants} from '/src/components/ActivationGrants';
 import {SalesWorkbench} from '/src/workbenches/SalesWorkbench';
 import '/src/styles.css';
 const kind=new URLSearchParams(location.search).get('kind');
@@ -33,7 +36,7 @@ const props={accessLevel:2,view:'preview',page:'dashboard',userId:'test',onPageC
 const sales={...props,view:kind==='sales-preview'?'preview':'full',page:kind==='calculator'?'estimator':kind?.startsWith('sales-')?'dashboard':'calculate',currentUser:{id:'loading-test',scope_levels:{sales:2}}};
 const busyLines=[{kind:'material',ref:'CF132',code:'CF132',quantity:'10',unit_cost:'10.6',amount:'106',basis:'latest'},{kind:'recipe',ref:'recipe:nested',code:'K10-K',quantity:'10',unit_cost:'12.55',amount:'125.5',basis:'recipe'}];
 const busyCost={cost:'11.57',yield:'1',total_input:'20',output_quantity:'20',missing_materials:[],lines:busyLines};
-createRoot(document.getElementById('root')).render(kind==='price-display'?h('div',null,h(Price,{value:'待核价'}),h('span',null,h(Price,{value:null})),h(ChangePrices,{items:[{id:'sample',code:'PRICE',unit:'kg',before_recorded:true,before:'10.1234',after:'0',change:-1}]})):kind==='material-prices'?h(ResearchMaterialPrices,{userId:'test'}):kind==='research-busy'?h(FormulaDetails,{busy:true,formula:{id:'recipe:busy',name:'合成配方',yield:'1',lines:busyLines},latest:busyCost,inventory:busyCost,policy:'latest',onPolicyChange:()=>{},onRef:()=>{throw Error('Busy navigation must not run')}}):kind==='research-detail'?h(ResearchProductDrawer,{id:'recipe:feedback',accessLevel:2,onClose:()=>{},onChanged:()=>{}}):kind==='research-pages'?h(ResearchWorkbench,{...props,view:'full',page:'products'}):kind==='research'?h(ResearchWorkbench,props):kind==='news'?h(ProcurementNews,{cache:{current:null}}):kind==='distribution'?h(ProcurementDistribution,{revision:0,renderLedger:()=>null}):kind?.startsWith('sales')||kind==='calculator'?h(SalesWorkbench,sales):h(ProcurementWorkbench,props));`; },
+createRoot(document.getElementById('root')).render(kind==='material-edit'?h(ProcurementMaterialDrawer,{batches:[],materialId:'sample',canEdit:false,canManage:false,onClose:()=>{}}):kind==='material-read'?h(ReadOnlyMaterialDrawer,{batches:[],materialId:'sample',loadMaterial:fetchProcurementMaterial,onClose:()=>{}}):kind?.startsWith('grants-')?h(ProcurementActivationGrants,{admin:true,scope:kind.slice(7),onChanged:()=>{}}):kind==='price-display'?h('div',null,h(Price,{value:'待核价'}),h('span',null,h(Price,{value:null})),h(ChangePrices,{items:[{id:'sample',code:'PRICE',unit:'kg',before_recorded:true,before:'10.1234',after:'0',change:-1}]})):kind==='material-prices'?h(ResearchMaterialPrices,{userId:'test'}):kind==='research-busy'?h(FormulaDetails,{busy:true,formula:{id:'recipe:busy',name:'合成配方',yield:'1',lines:busyLines},latest:busyCost,inventory:busyCost,policy:'latest',onPolicyChange:()=>{},onRef:()=>{throw Error('Busy navigation must not run')}}):kind==='research-detail'?h(ResearchProductDrawer,{id:'recipe:feedback',accessLevel:2,onClose:()=>{},onChanged:()=>{}}):kind==='research-pages'?h(ResearchWorkbench,{...props,view:'full',page:'products'}):kind==='research'?h(ResearchWorkbench,props):kind==='news'?h(ProcurementNews,{cache:{current:null}}):kind==='distribution'?h(ProcurementDistribution,{revision:0,renderLedger:(_data,ledger)=>h('p',null,'部门原料：'+ledger.materialIds.join(','))}):kind?.startsWith('sales')||kind==='calculator'?h(SalesWorkbench,sales):h(ProcurementWorkbench,props));`; },
 }], server: { host: '127.0.0.1', port: 0, hmr: false } });
 let browser;
 const gate = () => { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; };
@@ -59,7 +62,7 @@ try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } }); page.setDefaultTimeout(7000);
     const errors = [], unexpected = []; page.on('pageerror', error => errors.push(error.message));
     const salesPaths = ['products', 'batches', 'history', 'records'].map(path => 'GET /api/workbenches/sales/' + path);
-    const expected = kind.startsWith('sales') ? salesPaths : kind === 'calculator' ? [...salesPaths, 'GET /api/workbenches/sales/calculator/saved', 'POST /api/workbenches/sales/calculator/evaluate']
+    const expected = ['material-edit','material-read'].includes(kind) ? ['GET /api/workbenches/procurement/materials/sample'] : kind.startsWith('grants-') ? ['GET /api/workbenches/'+kind.slice(7)+'/activation-grants'] : kind.startsWith('sales') ? salesPaths : kind === 'calculator' ? [...salesPaths, 'GET /api/workbenches/sales/calculator/saved', 'POST /api/workbenches/sales/calculator/evaluate']
       : kind === 'research-detail' ? ['GET /api/workbenches/research/products/recipe%3Afeedback', 'GET /api/workbenches/research/products/recipe%3Anested', 'GET /api/workbenches/research/material-prices', ...['CF004','CF132','CF014'].map(code=>'GET /api/workbenches/research/material-prices/material-'+code)]
       : kind === 'material-prices' ? ['GET /api/workbenches/research/material-prices', ...['BOTH','MARKET','STOCK','NONE','INFO'].map(code=>'GET /api/workbenches/research/material-prices/'+code)]
       : kind === 'research-pages' ? ['GET /api/workbenches/research/pages/products']
@@ -81,6 +84,55 @@ try {
       assert.deepEqual(errors, []); assert.deepEqual(unexpected, []); console.log('PASS', name);
     } finally { await page.close(); }
   }
+  for(const kind of ['material-edit','material-read']) {
+    const pending=gate();
+    await run('material drawer stable title and failure: '+kind,kind,async route=>{
+      await pending.promise;return route.fulfill({status:503,json:{detail:'合成读取失败'}});
+    },async page=>{
+      await page.getByText('正在读取原料详情',{exact:true}).waitFor();
+      assert.equal(await page.getByRole('heading',{name:'原料详情',exact:true}).count(),1);
+      assert.equal(await page.getByText('数据加载中，请稍候…',{exact:true}).count(),0);
+      await page.setViewportSize({width:390,height:844});
+      pending.release();await page.getByText('原料详情暂时不可用',{exact:true}).waitFor();
+      assert.equal(await page.getByText('正在读取原料详情',{exact:true}).count(),0);
+      assert.equal(await page.getByRole('button',{name:'重新加载',exact:true}).count(),1);
+      mkdirSync('.scratch/loading-cleanup',{recursive:true});
+      await page.screenshot({path:'.scratch/loading-cleanup/'+kind+'-failure.png'});
+    });
+  }
+  for (const scope of ['procurement','research']) {
+    const pending=gate();let attempts=0;
+    await run('grants failure stops loading and retry: '+scope,'grants-'+scope,async route=>{
+      attempts++;
+      if(attempts===1){await pending.promise;return route.fulfill({status:503,json:{detail:'授权读取失败'}});}
+      return route.fulfill({json:{users:[],events:[],total:0,has_more:false}});
+    },async page=>{
+      await page.getByText('正在读取授权…',{exact:true}).waitFor();pending.release();
+      await page.getByRole('alert').waitFor();
+      assert.equal(await page.getByText('正在读取授权…',{exact:true}).count(),0);
+      await page.getByRole('button',{name:'重试',exact:true}).click();
+      await page.getByRole('columnheader',{name:'人员',exact:true}).waitFor();
+      assert.equal(await page.getByRole('alert').count(),0);
+    });
+  }
+  {
+    let reads=0;const refresh=gate(),started=gate();
+    await run('distribution retains content on switch and clears denied','distribution',async route=>{
+      reads++;
+      if(reads===2){started.release();await refresh.promise;return route.fulfill({status:403,json:{detail:'无部门价格权限'}});}
+      return route.fulfill({json:{batches:[],departments:[{id:'rd',name:'研发一部',material_ids:['CF001'],priced:1}],capabilities:{can_manage_catalog:false}}});
+    },async page=>{
+      await page.getByRole('button',{name:'查看明细',exact:true}).click();await started.promise;
+      await page.getByText('部门原料：CF001',{exact:true}).waitFor();
+      assert.equal(await page.getByText('正在读取部门原料价格',{exact:true}).count(),0);
+      assert.equal(await page.getByText('正在读取价格版本',{exact:false}).count(),0);
+      refresh.release();await page.getByRole('alert').waitFor();
+      assert.equal(await page.getByText('部门原料：CF001',{exact:true}).count(),0);
+      assert.equal(await page.getByText('正在读取部门原料价格',{exact:true}).count(),0);
+      await page.getByRole('button',{name:'重试',exact:true}).click();
+      await page.getByText('部门原料：CF001',{exact:true}).waitFor();
+    });
+  }
   let delayedPage=gate(),slowStarted=gate(),denyPage=false;
   await run('research-server-pages-abort-stale-and-clear-denied','research-pages',async route=>{
     const query=new URL(route.request().url()).searchParams;
@@ -95,6 +147,8 @@ try {
     await page.getByRole('button',{name:'PAGE-2',exact:true}).waitFor();
     const search=page.getByRole('textbox',{name:'搜索产品内编',exact:true});
     await search.fill('slow');await slowStarted.promise;
+    await page.getByText('正在读取产品…',{exact:true}).waitFor();
+    assert.equal(await page.getByText('正在读取产品…',{exact:true}).count(),1,'Loading stays inside the table without a duplicate layout-shifting notice');
     await search.fill('fast');await page.getByRole('button',{name:'FAST',exact:true}).waitFor();
     delayedPage.release();
     assert.equal(await page.getByRole('button',{name:'SLOW',exact:true}).count(),0);
@@ -404,7 +458,7 @@ try {
     delayMaterial.release(); delayMaterial=null;
     assert.equal(await history.getAttribute('aria-expanded'),'true');
     await history.click(); await page.setViewportSize({width:1280,height:900}); await page.emulateMedia({reducedMotion:'no-preference'});
-    await parent.getByRole('tab',{name:/产品成本 · 最新优先/}).click();
+    await parent.getByRole('tab',{name:/产品成本 · 行情优先/}).click();
     const currentLink=parent.getByRole('button',{name:'CF132',exact:true});
     omitMaterial=true; await currentLink.click(); await child.getByRole('alert').getByText('此投料未关联当前原料价格目录',{exact:true}).waitFor(); await singleDrawer('CF132');
     assert.equal(await child.getByRole('heading',{name:'行情价格走势',exact:true}).count(),0);

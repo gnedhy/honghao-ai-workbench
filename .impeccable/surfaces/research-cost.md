@@ -1,11 +1,21 @@
 # Research cost workbench
 
+## 2026-10-20 cost terminology (released)
+
+- Cost policies display 行情优先 / 库存优先 across cards, tables, charts, history, editor, help and export. Raw material prices retain 行情价格 / 库存价格. Internal latest keys and all fallback/calculation rules remain unchanged. Old generated movement reasons are translated only for display, without rewriting frozen history.
+
+## 2026-10-20 detail cost trend (released)
+
+- Approved: place a single-policy cost trend immediately below the dual cost cards, before the ingredient details. The same top-card policy controls the plot and title. Default three months; reuse the incumbent date menu, chart axes, colors and light policy transition. Keep range through policy changes, reset on product change.
+- Reuse the loaded authorized detail history; no new requests or cost calculation. Missing costs remain gaps with hover reasons, zero remains valid, fewer than two effective valid dates shows 暂无走势. Tooltip identifies formal/replay source and recording time. Same-day plotting prefers formal then latest recording; all original records remain in the history list.
+- History display sorts by effective/display date descending, formal first for ties. Keep the original current formula, line-change chain, prices, percent bases and all frozen records intact; history prices retain and explicitly label the existing latest-first basis. Backend, permissions and formal service are unchanged by this candidate.
+
 - Route: evolve / operate / large. User approved A 台账＋抽屉 and the second 19-annotation implementation plan on 2026-09-12. Scope includes dashboard, dual ledger, 21 historical replay periods, immutable formal history, nested detail, formula lifecycle management, persistent drafts and managed activation.
 - Audience: RD5 viewers (level2), editors (level3), managers (level4), system administrators. Source owners are attribution, not permissions.
 - Preserve the live procurement shell, typography, table row height, menus, pagination and restrained color system. Global segmented controls now use the approved feedback-style white selected fill, pale-gray track, subtle shadow and existing motion/reduced-motion behavior; DESIGN.md and design.json updated together. No dependency added.
 - Keep existing 65 complete codes separately. Navigation is 研发看板 / 原料价格 / 产品成本 / 配方管理 / 价格历史. New unique full codes enter as drafts; inactive records retain IDs and history. Three source trials stay independent from formal records and replay.
-- Columns: 产品内编 / 负责人 / 产品成本（最新优先） / 产品成本（库存优先） / 价格变化 / 收率 / 投料明细 / 状态. Code opens the drawer; no redundant view column. No name/owner/status sorting. Default change descending, null last, code breaks ties; old sort preferences migrate without losing column/page settings. Money displays and hovers two decimals; comparisons round both operands to cents.
-- Dashboard combines the frozen V1–V21 replay and actual formal records, marked 含历史回算. Trend defaults to three months, interval movers fourteen days with explicit missing endpoint behavior. Never generate example trends. Compact preview fills the unused task-card width; full view retains tasks. Time rankings retain two five-item columns; the approved current dual-cost gap card sits to their right on desktop. Both cards stack on narrow screens.
+- Columns: 产品内编 / 负责人 / 产品成本（行情优先） / 产品成本（库存优先） / 价格变化 / 收率 / 投料明细 / 状态. Code opens the drawer; no redundant view column. No name/owner/status sorting. Default change descending, null last, code breaks ties; old sort preferences migrate without losing column/page settings. Money displays and hovers two decimals; comparisons round both operands to cents.
+- Dashboard combines the frozen V1–V21 replay and actual formal records, marked 含历史回算. Trend defaults to three months, interval movers one month with explicit missing endpoint behavior. Never generate example trends. Compact preview fills the unused task-card width; full view retains tasks. Time rankings retain two five-item columns; the approved current dual-cost gap card sits to their right on desktop. Both cards stack on narrow screens.
 - Draft work stays out of formal ledger and history. Simulate before save; explicit final review before manager activation; stale input conflict retains the user's form. Referenced products and approved composite drill into their own cost under the same policy.
 - Narrow view: wrapping toolbar and contained horizontal table scrolling; drawers fit the viewport, actions remain reachable. Test desktop and mobile after final implementation.
 - History uses the purchase-style timeline and version detail; product rows expand frozen dual costs and inputs inline. Current-price fallback is labeled as such, never described as historical inventory. Ledger/current statistics compare against the last distinct rounded price; history/version details compare against the previous effective cost. Interval rankings compare their selected endpoints. Old formal and replay payloads remain immutable; input deduplication only controls creation of new formal records.
@@ -26,8 +36,18 @@
 
 ## Current comparison authority
 
-See `docs/business/研发工作台调整-2026-09-12.md`, section 当前比较口径. Final controls read 全部 / 最新优先 / 库存优先. The trend, interval ranking, current gap and simulation have distinct purposes; all monetary comparisons use rounded cents, while internal formula calculation and frozen inputs retain precision. September 12 implementation captures remain historical evidence in `20260912-rounded-comparison` and `.scratch/closeout-20260912/`.
+See `docs/business/研发工作台调整-2026-09-12.md`, section 当前比较口径. Final controls read 全部 / 行情优先 / 库存优先. The trend, interval ranking, current gap and simulation have distinct purposes; all monetary comparisons use rounded cents, while internal formula calculation and frozen inputs retain precision. September 12 implementation captures remain historical evidence in `20260912-rounded-comparison` and `.scratch/closeout-20260912/`.
 
 ## Current additions
 
 The read-only material page reuses procurement ledger cells and the material drawer, with research GET endpoints and a ten-second refresh preserving content and position. Only inventory quantity, latest price, inventory price, movement and price date are sortable; movement descends by default. Cost export places statistics beside the section title and the button at the right, with wrapping on mobile. These contracts and export formulas are maintained in [研发业务约定](../../docs/business/研发工作台调整-2026-09-12.md#原料价格与成本导出). Trend axes now fit visible data; current runtime and release evidence are linked from [当前交接](../../docs/当前交接.md).
+
+## 2026-10-19 candidate: trend gaps and code order
+
+- Keep formal and replay records together. Preserve cost-line gaps; missing periods have an exclamation marker on the baseline (not a zero cost). Hover or chart keyboard navigation shows available costs and the supplied missing-material codes; absent reasons remain generic. No price is inferred.
+- Candidate identifiers use the shared `src/codeOrder.ts` A–Z, case-insensitive natural comparator: trend menus, formula-input candidates within their existing kind groups, and sales quotation/calculator selectors before pagination. Existing scope filters, disabled costs, line order and business-ranked ledgers remain unchanged.
+- These refinements and the one-month ranking default passed isolated validation and were deployed on 2026-10-19 as `20261019-trend-code-order`; current identity and recovery evidence are in the release record.
+
+## 2026-10-20 isolated candidate: default trend selection
+
+Use the shared `useTrendSelection` contract in `docs/components.md`: authorized candidates only; two distinct valid sample times on the same plotted series within the current range take priority, ties by natural full code. Preserve a manual visible ID in this tab session per account/workbench across preview/full view and remounts; discard inaccessible IDs before rendering. No synthetic prices or financial changes. Procurement reuses its existing price-series request with the movers. This candidate passed isolated validation and was deployed on 2026-10-20 as `20261020-trend-default-selection`; see the dated release record for current evidence and recovery.

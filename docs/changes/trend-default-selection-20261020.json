@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "kind": "presentation",
+  "summary": "三个工作台按权限内有效走势统一默认选择，并按账号及工作台记忆当前标签页会话的手动选择。",
+  "modules": ["procurement", "research", "sales"],
+  "files": ["src/codeOrder.ts", "src/components/useTrendSelection.ts", "src/workbenches/ProcurementWorkbench.tsx", "src/workbenches/ResearchWorkbench.tsx", "src/workbenches/SalesWorkbench.tsx", "src/workbenches/WorkbenchModuleSlot.tsx"],
+  "consumers": ["src/workbenches/ProcurementWorkbench.tsx", "src/workbenches/ResearchWorkbench.tsx", "src/workbenches/SalesWorkbench.tsx", "src/workbenches/WorkbenchModuleSlot.tsx"],
+  "permissions": "只从当前已授权候选中选取；记忆仅保存ID，不保存价格或历史。记忆失去可见性立即回退并清除，不跨账号或工作台。401/403清空受影响旧列表。",
+  "data": "不写数据库，不改API、迁移、成本、报价、冻结历史、权限分配或台账排序。零价有效，不伪造缺价记录。",
+  "lifecycle": "当前日期范围同一数据线至少两个不同时间记录才优先；同等条件自然排序；没有足够记录时回退到权限内自然顺序首项并保留原空状态。手动选项只要可见就不被日期、报价类型或数据刷新覆盖。采购走势与排行复用同一份既有price-series读取及缓存，取消过期详情读取。",
+  "exits": "沿用菜单及工作台退出保护；当前标签页sessionStorage按账号和工作台隔离，不新增长期偏好。",
+  "compatibility": "预览与完整看板使用相同规则；复用原GET及已有权限检查，无新增依赖。两个已消除React依赖告警从历史清单移除，不放宽质量规则。",
+  "recovery": "隔离验收后按用户授权正式发布20261020-trend-default-selection；完整保留前版20261019-trend-code-order及旧启动配置，可只回退程序，无需业务数据恢复。",
+  "verification": {
+    "api": [],
+    "node": [{"file": "tests_ui/codeOrder.test.ts", "id": "走势默认按当前范围同一口径两期有效值判断，零价有效且同日重复不凑期数"}],
+    "browser": [
+      {"file": "scripts/check-trend-selection.mjs", "id": "procurement-default-manual-scope-and-session"},
+      {"file": "scripts/check-trend-selection.mjs", "id": "research-default-manual-scope-and-session"},
+      {"file": "scripts/check-trend-selection.mjs", "id": "sales-default-manual-scope-and-session"},
+      {"file": "scripts/check-trend-selection.mjs", "id": "procurement-revoked-series-clears-dashboard"},
+      {"file": "scripts/check-trend-selection.mjs", "id": "trend-session-workbench-isolation"},
+      {"file": "scripts/check-trend-selection.mjs", "id": "procurement-aborted-history-cannot-replace-current-selection"}
+    ]
+  }
+}

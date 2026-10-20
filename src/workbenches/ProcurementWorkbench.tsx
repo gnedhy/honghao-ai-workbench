@@ -1,3 +1,6 @@
+import {useTrendSelection} from "../components/useTrendSelection";
+import {trendEligibleIds} from "../codeOrder";
+import {dailyProcurementOverview, isDailyMaterial} from "../materialVisibility";
 import { ProcurementMaterials } from "./ProcurementMaterials";
 import { useUnsavedChanges } from "../components/Interaction";
 import { ProcurementMaterialDrawer } from "./ProcurementMaterialDrawer";
@@ -16,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { fetchJson, createProcurementMaterial, cancelProcurementSchedule, confirmProcurementImport, fetchProcurementBatch, fetchProcurementMaterial, fetchProcurementOverview, previewProcurementImport, publishProcurementUpdate} from "../api";
 import type { ProcurementBatchDetail, ProcurementImportPreview, ProcurementMaterialDetail, ProcurementOverview, ProcurementPage, ProcurementUpdate} from "../types";
-import { type PriceSeries, buildPriceMovement, buildRangeDistribution, buildPublishedPriceMovement, buildVersionMovers, focusedTrendAxis, moverDateRange, sortBatchPrices } from "./procurementAnalytics";
+import { type PriceSeries, buildRangeDistribution, buildPublishedPriceMovement, buildVersionMovers, focusedTrendAxis, moverDateRange, sortBatchPrices } from "./procurementAnalytics";
 import { defaultProcurementPage } from "./procurementWorkflow";
 import { summarizeUpdate } from "./procurementLedger";
 import { PRICE_REASONS, resolveReason, type ReasonSelection } from "./procurementReasons";
@@ -25,11 +28,32 @@ import { previewProcurementExcel, type ExcelPreview } from "../api";
 import { ProcurementDistribution, type DepartmentLedger } from "./ProcurementDistribution";
 import { ProcurementNews, type NewsData } from "./ProcurementNews";
 
-type MoverHistoryCache = { key: string; history: PriceSeries[] } | null;
+type PriceSeriesState = {history:PriceSeries[]|null;failed:boolean;denied:boolean;reload:()=>void};
+function usePriceSeries(batches:ProcurementOverview["batches"], active:boolean):PriceSeriesState {
+  const [history,setHistory]=useState<PriceSeries[]|null>(null),[failed,setFailed]=useState(false),[retry,setRetry]=useState(0);
+  const [denied,setDenied]=useState(false);
+  const loaded=useRef("");
+  const historyKey=JSON.stringify(batches);
+  useEffect(()=>{
+    if(!active||loaded.current===historyKey)return;
+    const controller=new AbortController();setFailed(false);
+    fetchJson<{batches:PriceSeries[]}>("/api/workbenches/procurement/price-series",{signal:controller.signal}).then(value=>{
+      if(!controller.signal.aborted){loaded.current=historyKey;setHistory(value.batches);}
+    }).catch(error=>{if(!controller.signal.aborted){setFailed(true);if(error?.status===401||error?.status===403){setHistory(null);setDenied(true);loaded.current="";}}});
+    return()=>controller.abort();
+  },[historyKey,active,retry]);
+  return {history,failed,denied,reload:()=>{loaded.current="";setDenied(false);setRetry(value=>value+1);}};
+}
 
-export function ProcurementWorkbench({ accessLevel, view, page, onPageChange, onEnter }: { accessLevel: number; view: "preview" | "full"; page: ProcurementPage; onPageChange: (page: ProcurementPage) => void; onEnter: () => void }) {
-  const moverHistory = useRef<MoverHistoryCache>(null);
+export function ProcurementWorkbench({ userId, accessLevel, view, page, onPageChange, onEnter }: { userId:string; accessLevel: number; view: "preview" | "full"; page: ProcurementPage; onPageChange: (page: ProcurementPage) => void; onEnter: () => void }) {
   const [data, setData] = useState<ProcurementOverview | null>(null);
+  const series=usePriceSeries(data?.batches??[],Boolean(data)&&(view==="preview"||page==="dashboard"));
+  const dailyData=useMemo(()=>data?dailyProcurementOverview(data):null,[data]);
+  const dailyHistory=useMemo(()=>{
+    const hidden=new Set(data?.materials.filter(item=>!isDailyMaterial(item)).map(item=>item.id));
+    return series.history?.map(batch=>({...batch,items:batch.items.filter(item=>isDailyMaterial(item)&&!hidden.has(item.material_id))}))??null;
+  },[series.history,data]);
+  const dailySeries={...series,history:dailyHistory};
   const reads = useRef(0);
   const acceptOverview = useCallback((overview: ProcurementOverview) => { reads.current++; setData(overview); }, []);
   const newsCache = useRef<NewsData | null>(null);
@@ -56,7 +80,8 @@ export function ProcurementWorkbench({ accessLevel, view, page, onPageChange, on
       .then((overview) => { if (!signal?.aborted && sequence === reads.current) { setData(overview); setState("ready"); } })
       .catch((error: unknown) => {
         if (!signal?.aborted && sequence === reads.current && !(error instanceof DOMException && error.name === "AbortError")) {
-          setState(current => current === "ready" ? "ready" : "error");
+          if(error && typeof error === "object" && "status" in error && (error.status===401||error.status===403)){setData(null);setState("error");}
+          else setState(current => current === "ready" ? "ready" : "error");
           setNotice("采购数据刷新失败，请重试。");
         }
       });
@@ -69,12 +94,13 @@ export function ProcurementWorkbench({ accessLevel, view, page, onPageChange, on
   }, [load, page]);
   useEffect(() => { if (page !== "materials") setLocateCode(""); }, [page]);
 
+  if (series.denied) return <ModuleState title="采购工作台暂时不可用" retry={()=>{setData(null);setState("loading");series.reload();void load();}} />;
   if (state === "loading") return <WorkbenchLoading title="正在读取采购数据" />;
-  if (state === "error" || !data) return <ModuleState title="采购工作台暂时不可用" retry={() => void load()} />;
+  if (state === "error" || !data || !dailyData) return <ModuleState title="采购工作台暂时不可用" retry={() => void load()} />;
 
-  const renderLedger = (ledgerData: ProcurementOverview, department?: DepartmentLedger) => <ProcurementMaterials startInEdit={editFromDashboard} onEditStarted={() => setEditFromDashboard(false)} locateCode={locateCode} data={ledgerData} accessLevel={accessLevel} onRefresh={() => load()} onSaved={acceptOverview} onCreate={() => setCatalogOpen(true)} onImport={() => setImportOpen(true)} onPublish={() => {publishTrigger.current = document.activeElement as HTMLElement; setPublishOpen(true);}} onPageChange={onPageChange} focusPending={page === "updates"} department={department} onOpenDepartmentMaterial={id => { distributionTrigger.current = document.activeElement as HTMLElement; setDistributionMaterial(id); }} />;
+  const renderLedger = (ledgerData: ProcurementOverview, department?: DepartmentLedger) => <ProcurementMaterials startInEdit={editFromDashboard} onEditStarted={() => setEditFromDashboard(false)} locateCode={locateCode} data={dailyProcurementOverview(ledgerData)} accessLevel={accessLevel} onRefresh={() => load()} onSaved={acceptOverview} onCreate={() => setCatalogOpen(true)} onImport={() => setImportOpen(true)} onPublish={() => {publishTrigger.current = document.activeElement as HTMLElement; setPublishOpen(true);}} onPageChange={onPageChange} focusPending={page === "updates"} department={department} onOpenDepartmentMaterial={id => { distributionTrigger.current = document.activeElement as HTMLElement; setDistributionMaterial(id); }} />;
 
-  if (view === "preview") return <ProcurementPreview data={data} moverHistory={moverHistory} onEnter={() => { onPageChange(defaultProcurementPage(data.current_update)); onEnter(); }} />;
+  if (view === "preview") return <ProcurementPreview userId={userId} data={dailyData} series={dailySeries} onEnter={() => { onPageChange(defaultProcurementPage(data.current_update)); onEnter(); }} />;
 
   return (
     <article className={`workbench-detail ${styles.root} ${styles.full}${page === "materials" || page === "updates" || page === "distribution" ? ` ${styles.ledgerPage}` : ""}`}>
@@ -89,7 +115,7 @@ export function ProcurementWorkbench({ accessLevel, view, page, onPageChange, on
 
       {notice && <div className={styles.notice}><Check size={14} />{notice}<button type="button" aria-label="关闭提示" onClick={() => setNotice("")}><X size={13} /></button></div>}
 
-      {page === "dashboard" && <Dashboard data={data} moverHistory={moverHistory} newsCache={newsCache} onOpenUpdate={() => { setEditFromDashboard(true); onPageChange("materials"); }} />}
+      {page === "dashboard" && <Dashboard userId={userId} data={dailyData} series={dailySeries} newsCache={newsCache} onOpenUpdate={() => { setEditFromDashboard(true); onPageChange("materials"); }} />}
       {(page === "materials" || page === "updates") && renderLedger(data)}
       {page === "distribution" && <ProcurementDistribution revision={distributionRevision} renderLedger={renderLedger} />}
       {page === "distribution" && distributionMaterial && <ProcurementMaterialDrawer batches={data.batches} materialId={distributionMaterial} canEdit={accessLevel >= 3} canManage={Boolean(data.capabilities?.can_manage_catalog)} currentPriceDate={data.current_update?.price_date} onClose={closeDistributionMaterial} onChanged={() => { closeDistributionMaterial(); setDistributionRevision(value => value + 1); void load(); }} />}
@@ -121,7 +147,7 @@ function ProcurementMetrics({ data, movement }: { data: ProcurementOverview; mov
   return <div className={`${styles.metrics} workbench-metrics`}>{metrics.map(([label, value, note]) => <div key={label}><small>{label}</small><strong>{value}</strong><span>{note}</span></div>)}</div>;
 }
 
-function ProcurementPreview({ data, moverHistory, onEnter }: { data: ProcurementOverview; moverHistory: React.RefObject<MoverHistoryCache>; onEnter: () => void }) {
+function ProcurementPreview({ userId, data, series, onEnter }: { userId:string; data: ProcurementOverview; series:PriceSeriesState; onEnter: () => void }) {
   const movement = buildPublishedPriceMovement(data.materials, data.batches[0]?.comparison);
 
   return <article className={`workbench-detail ${styles.root} ${styles.summaryPage}`}>
@@ -130,42 +156,41 @@ function ProcurementPreview({ data, moverHistory, onEnter }: { data: Procurement
       <button className="primary-button" type="button" onClick={onEnter}>进入工作台<ArrowRight size={15} /></button>
     </header>
     <ProcurementMetrics data={data} movement={movement} />
-    <PriceTrendPanel data={data} className={styles.previewTrend} />
-    <PriceMovers batches={data.batches} cache={moverHistory} compact />
+    <PriceTrendPanel userId={userId} series={series} data={data} className={styles.previewTrend} />
+    <PriceMovers batches={data.batches} series={series} compact />
   </article>;
 }
 
-function PriceTrendPanel({ data, className = "" }: { data: ProcurementOverview; className?: string }) {
-  const [history, setHistory] = useState<ProcurementMaterialDetail["official_history"] | null>(null);
+function PriceTrendPanel({ userId, data, series, className = "" }: { userId:string; data: ProcurementOverview; series:PriceSeriesState; className?: string }) {
+  const [loadedHistory,setLoadedHistory]=useState<{id:string;rows:ProcurementMaterialDetail["official_history"]}|null>(null);
   const { period, range, setPeriod } = usePriceDateRange(data.batches, "3m");
   const [failed, setFailed] = useState(false);
-  const movement = buildPriceMovement(data.materials);
-  const materialMap = new Map(data.materials.map((material) => [material.code, material]));
-  const defaultMaterial = movement.ranked[0]?.code ?? data.materials[0]?.code ?? "";
-  const [selectedMaterial, setSelectedMaterial] = useState(defaultMaterial);
+  const eligible=useMemo(()=>trendEligibleIds((series.history??[]).flatMap(batch=>batch.items.map(item=>({id:item.material_id,date:batch.price_date||batch.published_at,values:[item.latest_price]}))),{start:range.start,end:range.end}),[series.history,range.start,range.end]);
+  const [selectedId,selectId]=useTrendSelection(userId,"procurement",data.materials,eligible);
+  const selectedMaterial=data.materials.find(item=>item.id===selectedId)?.code??"";
+  const setSelectedMaterial=(code:string)=>{const row=data.materials.find(item=>item.code===code);if(row)selectId(row.id);};
+  const waiting=series.history===null&&!series.failed;
+  const history=loadedHistory?.id===selectedId?loadedHistory.rows:null;
   const trend = (history ?? []).filter(item => item.version_date.slice(0, 10) >= range.start && item.version_date.slice(0, 10) <= range.end && item.latest_price != null && Number.isFinite(Number(item.latest_price))).map(item => ({recordedAt: item.version_date, value: Number(item.latest_price)}));
   const axis = focusedTrendAxis([{ values: trend.map(item => item.value) }]);
+  const latestBatchId=data.batches[0]?.id;
   useEffect(() => {
-    const material = data.materials.find(item => item.code === selectedMaterial);
-    if (!material) return;
-    const controller = new AbortController(); setHistory(null); setFailed(false);
-    fetchProcurementMaterial(material.id, controller.signal).then(item => setHistory(item.official_history)).catch(() => { if (!controller.signal.aborted) setFailed(true); });
+    if (!selectedId || waiting) return;
+    const controller = new AbortController(); setLoadedHistory(null); setFailed(false);
+    fetchProcurementMaterial(selectedId, controller.signal).then(item => {if(!controller.signal.aborted)setLoadedHistory({id:selectedId,rows:item.official_history});}).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => controller.abort();
-  }, [selectedMaterial, data.batches[0]?.id]);
+  }, [selectedId, waiting, latestBatchId]);
 
-  useEffect(() => {
-    if (selectedMaterial && data.materials.some((material) => material.code === selectedMaterial)) return;
-    setSelectedMaterial(defaultMaterial);
-  }, [data.materials, defaultMaterial, selectedMaterial]);
+
 
   return <DashboardPanel className={`${styles.dashboardPanel} ${styles.trendPanel}${className ? ` ${className}` : ""}`}>
     <div className={styles.panelHeading}><div><span>历史价格记录</span><h2>原料价格走势</h2></div><div className={styles.chartActions}><PriceDateRangeMenu label="走势日期范围" period={period} range={range} onChange={setPeriod} /><TrendMaterialMenu materials={data.materials} selected={selectedMaterial} onSelect={setSelectedMaterial} /></div></div>
-    {failed ? <ChartEmpty title="价格历史暂时不可用" detail="稍后重新进入该页面。" /> : history === null ? <WorkbenchLoading local title="正在读取采购价格趋势" /> : trend.length < 2 ? <ChartEmpty title="暂无可比较周期" detail="至少需要两期单值价格才会生成趋势线。" /> : <div className={styles.lineChart} aria-label={`${selectedMaterial}价格趋势`}><ResponsiveContainer width="100%" height="100%"><LineChart data={trend} accessibilityLayer margin={{ top: 8, right: 12, bottom: 4, left: 0 }}><CartesianGrid stroke="#edf0f1" vertical={false} /><XAxis dataKey="recordedAt" tickFormatter={shortDate} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis domain={axis.domain} ticks={axis.ticks} interval="preserveStartEnd" minTickGap={6} tickFormatter={value => Number(value).toFixed(2)} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} width={52} /><Tooltip labelFormatter={(value) => formatPriceDate(String(value))} formatter={(value) => [price(String(value)), "行情价格"]} /><Line type="monotone" dataKey="value" stroke="#2f3337" strokeWidth={2} dot={{ r: 3, fill: "#fff", strokeWidth: 2 }} activeDot={{ r: 4 }} /></LineChart></ResponsiveContainer></div>}
+    {!data.materials.length ? <ChartEmpty title="当前没有可查看的原料" detail="新增原料或调整可见范围后可再查看。" /> : failed ? <ChartEmpty title="价格历史暂时不可用" detail="稍后重新进入该页面。" /> : waiting || history === null ? <WorkbenchLoading local title="正在读取采购价格趋势" /> : trend.length < 2 ? <ChartEmpty title="暂无可比较周期" detail="至少需要两期单值价格才会生成趋势线。" /> : <div className={styles.lineChart} aria-label={`${selectedMaterial}价格趋势`}><ResponsiveContainer width="100%" height="100%"><LineChart data={trend} accessibilityLayer margin={{ top: 8, right: 12,bottom:4,left:0 }}><CartesianGrid stroke="#edf0f1" vertical={false} /><XAxis dataKey="recordedAt" tickFormatter={shortDate} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis domain={axis.domain} ticks={axis.ticks} interval="preserveStartEnd" minTickGap={6} tickFormatter={value => Number(value).toFixed(2)} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} width={52} /><Tooltip labelFormatter={(value) => formatPriceDate(String(value))} formatter={(value) => [price(String(value)), "行情价格"]} /><Line type="monotone" dataKey="value" stroke="#2f3337" strokeWidth={2} dot={{ r: 3, fill: "#fff", strokeWidth: 2 }} activeDot={{ r: 4 }} /></LineChart></ResponsiveContainer></div>}
   </DashboardPanel>;
 }
 
 
-function Dashboard({ data, moverHistory, newsCache, onOpenUpdate }: { data: ProcurementOverview; moverHistory: React.RefObject<MoverHistoryCache>; newsCache: React.RefObject<NewsData | null>; onOpenUpdate: () => void }) {
+function Dashboard({ userId, data, series, newsCache, onOpenUpdate }: { userId:string; data: ProcurementOverview; series:PriceSeriesState; newsCache: React.RefObject<NewsData | null>; onOpenUpdate: () => void }) {
   const movement = buildPublishedPriceMovement(data.materials, data.batches[0]?.comparison);
   const editable = Boolean(data.capabilities?.can_edit) && (!data.current_update || ["draft", "returned"].includes(data.current_update.status));
   return <>
@@ -175,9 +200,9 @@ function Dashboard({ data, moverHistory, newsCache, onOpenUpdate }: { data: Proc
     </section>
     <ProcurementMetrics data={data} movement={movement} />
     <div className={styles.dashboardGrid}>
-      <PriceTrendPanel data={data} />
+      <PriceTrendPanel userId={userId} series={series} data={data} />
       <PriceDistributionPanel data={data} />
-      <PriceMovers batches={data.batches} cache={moverHistory} />
+      <PriceMovers batches={data.batches} series={series} />
       <ProcurementNews cache={newsCache} />
     </div>
   </>;
@@ -197,7 +222,7 @@ function PriceDistributionPanel({ data }: { data: ProcurementOverview }) {
     Promise.all(ids.map(id => fetchProcurementBatch(id, controller.signal))).then(value => { if (!controller.signal.aborted) setHistory(value); }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => controller.abort();
   }, [ids.join("|")]);
-  const movement = history ? buildRangeDistribution(history, range) : null;
+  const movement = history ? buildRangeDistribution(history.map(batch=>({...batch,items:batch.items.filter(isDailyMaterial)})), range) : null;
   const surgeCount = movement?.ranked.filter(item => item.changePercent >= 10).length ?? 0;
   const pieData = [
     { name: "大幅上涨", value: surgeCount, color: "#d03730" },
@@ -214,15 +239,13 @@ function PriceDistributionPanel({ data }: { data: ProcurementOverview }) {
       </DashboardPanel>;
 }
 
-function PriceMovers({ batches, cache, compact = false }: { batches: ProcurementOverview["batches"]; cache: React.RefObject<MoverHistoryCache>; compact?: boolean }) {
+function PriceMovers({ batches, series, compact = false }: { batches: ProcurementOverview["batches"]; series:PriceSeriesState; compact?: boolean }) {
   const [selectedMaterial, setSelectedMaterial] = useState<string | null>(null);
   const materialTrigger = useRef<HTMLButtonElement | null>(null);
-  const [history, setHistory] = useState<PriceSeries[] | null>(() => cache.current?.history ?? null);
-  const historyKey = JSON.stringify(batches);
+  const {history,failed,reload}=series;
   const { period, range, setPeriod } = usePriceDateRange(batches);
   const rows = useMemo(() => history ? buildVersionMovers(history, { start: range.start, end: range.end }) : null, [history, range.start, range.end]);
-  const [failed, setFailed] = useState(false);
-  const [retry, setRetry] = useState(0);
+
   const [ranking, setRanking] = useState<"up" | "down">("up");
   const matchingRows = rows?.filter(row => ranking === "up" ? row.changePercent > 0 : row.changePercent < 0) ?? [];
   const rankedRows = matchingRows.slice(0, compact ? 10 : 30);
@@ -230,25 +253,13 @@ function PriceMovers({ batches, cache, compact = false }: { batches: Procurement
   const pages = Math.ceil(rankedRows.length / pageSize);
   const { page, previousPage, instant, reduced, rotating, controls, interaction, setPage, setPreviousPage, setInstant } = useMoverPaging(pages, `${ranking}-${range.start}-${range.end}`, !!selectedMaterial);
 
-  useEffect(() => {
-    if (cache.current?.key === historyKey && retry === 0) return;
-    const controller = new AbortController();
-    setFailed(false);
-    fetchJson<{batches:PriceSeries[]}>("/api/workbenches/procurement/price-series",{signal:controller.signal}).then(({batches:details}) => {
-      if (controller.signal.aborted) return;
-      cache.current = { key: historyKey, history: details };
-      setHistory(details);
-      setPage(0); setPreviousPage(null); setInstant(true);
-    }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
-    return () => controller.abort();
-  }, [historyKey, retry, cache, setPage, setPreviousPage, setInstant]);
-
+  useEffect(()=>{setPage(0);setPreviousPage(null);setInstant(true);},[history,setPage,setPreviousPage,setInstant]);
 
 
   return <DashboardPanel className={`${styles.dashboardPanel} ${styles.moversPanel}${compact ? ` ${styles.compactMovers}` : ""}`} aria-label="价格变动排行" aria-roledescription={compact ? undefined : "轮播"} {...interaction}>
     <div className={styles.panelHeading}><div><span>区间涨跌幅</span><h2>价格变动排行</h2></div><div className={styles.moverActions}><PriceDateRangeMenu period={period} range={range} onChange={value => { setPeriod(value); setPage(0); setPreviousPage(null); setInstant(true); }} /><div className={styles.moverSwitch} role="group" aria-label="排行方向">{(["up", "down"] as const).map(value => <button key={value} type="button" aria-pressed={ranking === value} onClick={() => { setRanking(value); setPage(0); setPreviousPage(null); setInstant(true); }}>{value === "up" ? "涨幅" : "降幅"}</button>)}</div></div></div>
-    {failed && history !== null && <p role="status">排行刷新失败，暂显示上次结果。<button type="button" onClick={() => setRetry(value => value + 1)}>重试</button></p>}
-    {failed && history === null ? <div className={styles.chartEmpty}><strong>价格排行读取失败</strong><button type="button" className="secondary-button" onClick={() => setRetry(value => value + 1)}>重新加载</button></div> : rows === null ? <WorkbenchLoading local title="正在读取采购价格排行" /> : !rankedRows.length ? <ChartEmpty title={ranking === "up" ? "暂无涨价原料" : "暂无降价原料"} detail="该范围内暂无符合条件的原料；缺少期初价格不参与排行。" /> : <>
+    {failed && history !== null && <p role="status">排行刷新失败，暂显示上次结果。<button type="button" onClick={reload}>重试</button></p>}
+    {failed && history === null ? <div className={styles.chartEmpty}><strong>价格排行读取失败</strong><button type="button" className="secondary-button" onClick={reload}>重新加载</button></div> : rows === null ? <WorkbenchLoading local title="正在读取采购价格排行" /> : !rankedRows.length ? <ChartEmpty title={ranking === "up" ? "暂无涨价原料" : "暂无降价原料"} detail="该范围内暂无符合条件的原料；缺少期初价格不参与排行。" /> : <>
       <div key={`${ranking}-${range.start}-${range.end}`} className={styles.moverPages} data-instant={instant || reduced} aria-live={rotating ? "off" : "polite"}>
         {Array.from({ length: pages }, (_, index) => <div key={index} data-active={page === index} data-retiring={previousPage === index} aria-hidden={page !== index} inert={page !== index} className={styles.moverList} role="group" aria-roledescription={compact ? undefined : "排行页"} aria-label={compact ? "排行结果" : `第 ${index + 1} 页，共 ${pages} 页`}>
           {rankedRows.slice(index * pageSize, (index + 1) * pageSize).map((row, rowIndex) => { const Icon = row.changePercent > 0 ? TrendingUp : TrendingDown; return <div key={`${row.batchId}-${row.materialId}`} style={{ transitionDelay: `${Math.floor(rowIndex / 2) * 30}ms` }}><Icon size={16} /><span><span className={styles.moverLine}><strong><button type="button" className={styles.materialLink} onClick={event => { materialTrigger.current = event.currentTarget; setSelectedMaterial(row.materialId); }}><span><strong title={row.item.code}>{row.item.code}</strong></span><ChevronRight size={16} aria-hidden="true"/></button></strong><span className={styles.moverPrices} title={`比较日期：${formatPriceDate(row.previousDate)} → ${formatPriceDate(row.date)}`}><span>{price(row.previous)}</span><ArrowRight size={12} /><b>{price(row.item.latest_price)}</b><Movement value={row.changePercent} /></span></span><small className={styles.moverVersions}><span>v{row.version}</span>{" · "}<span>{formatPriceDate(row.date)}</span></small></span></div>; })}
@@ -428,7 +439,7 @@ function PublishedBatchDrawer({ batchId, onClose }: { batchId: string; onClose: 
   }, [batchId]);
   const additions = detail?.comparison?.added_material_ids;
   const priceItems = detail ? sortBatchPrices(detail, sort, direction).filter(item => !additions?.length || additions.includes(item.material_id)) : [];
-  return <PriceRecordDrawer fixedBody title={detail ? `价格基线 v${detail.version}` : "正在读取"} label="价格基线详情" loading={!detail} failed={failed} onClose={onClose}>
+  return <PriceRecordDrawer fixedBody title={detail ? `价格基线 v${detail.version}` : "价格基线详情"} label="价格基线详情" loading={!detail} failed={failed} onClose={onClose}>
     {detail && <>
       <div className={styles.versionOverview}><VersionSummary comparison={detail.comparison} hideZeroFirst /></div>
       <div className={styles.detailMetrics}><div><span>价格日期</span><strong>{detail.price_date ? formatPriceDate(detail.price_date) : "—"}</strong></div><div><span>启用时间</span><strong>{detail.provenance ? "原表未记录" : formatDate(detail.activated_at ?? detail.published_at)}</strong></div><div><span>{additions?.length ? "本次补充" : "原料数量"}</span><strong>{additions?.length || detail.item_count}</strong></div><div><span>版本状态</span><strong>{detail.status === "active" ? "当前生效" : "历史版本"}</strong></div></div>

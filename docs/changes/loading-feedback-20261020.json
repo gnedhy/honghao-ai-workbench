@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "kind": "presentation",
+  "summary": "已正式发布：统一工作台加载提示，减少重复与布局跳动，修正授权失败状态。",
+  "modules": [
+    "procurement",
+    "research",
+    "sales"
+  ],
+  "files": [
+    "src/components/ActivationGrants.tsx",
+    "src/components/WorkbenchLayout.tsx",
+    "src/workbenches/ProcurementDistribution.tsx",
+    "src/workbenches/ProcurementMaterialDrawer.tsx",
+    "src/workbenches/ProcurementMaterialView.tsx",
+    "src/workbenches/ProcurementWorkbench.tsx",
+    "src/workbenches/ResearchWorkbench.tsx"
+  ],
+  "consumers": [
+    "src/workbenches/ProcurementWorkbench.tsx",
+    "src/workbenches/ResearchWorkbench.tsx",
+    "src/workbenches/SalesWorkbench.tsx",
+    "src/components/SettingsDialog.tsx"
+  ],
+  "permissions": "权限接口和范围不变；分流刷新收到401或403立即清空已读数据，授权重试不执行权限写入。",
+  "data": "不改成本、精度、取价、历史或业务写入；本次测试仅使用隔离合成响应。",
+  "lifecycle": "表格首次读取保留单一提示；分流切换保留内容，旧请求取消并阻止乱序覆盖；授权失败停止加载并可重试。",
+  "exits": "保留编辑草稿、保存和退出保护。",
+  "compatibility": "沿用现有组件、接口和样式，不新增依赖。",
+  "recovery": "前版程序、active-before及已验证快照保留；仅前端替换，回退不覆盖数据库。",
+  "verification": {
+    "api": [],
+    "node": [],
+    "browser": [
+      {
+        "file": "scripts/check-workbench-loading.mjs",
+        "id": "distribution retains content on switch and clears denied"
+      },
+      {
+        "file": "scripts/check-workbench-loading.mjs",
+        "id": "research-server-pages-abort-stale-and-clear-denied"
+      }
+    ]
+  }
+}

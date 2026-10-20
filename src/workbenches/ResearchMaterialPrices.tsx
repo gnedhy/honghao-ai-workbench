@@ -1,4 +1,5 @@
 import {FilterSummary} from "../components/FilterSummary";
+import {isDailyMaterial} from "../materialVisibility";
 import {SortHeading} from "../components/SortHeading";
 import { Check, ChevronRight, Columns3, Search, SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -92,9 +93,10 @@ export function ResearchMaterialPrices({ userId }: { userId: string }) {
   }, []);
   useEffect(() => { setPage(1); }, [scope, query, person, movement, sort, direction, preferences.pageSize]);
 
-  const people = useMemo(() => Array.from(new Map((data?.materials ?? []).flatMap(item => item.participants ?? []).map(item => [item.id, item])).values())
-    .sort((a, b) => a.name.localeCompare(b.name, "zh-CN")), [data]);
-  const scoped = useMemo(() => (data?.materials ?? []).filter(item => scope === "all" || item.in_formula_scope), [data, scope]);
+  const materials = useMemo(() => (data?.materials ?? []).filter(isDailyMaterial), [data]);
+  const people = useMemo(() => Array.from(new Map(materials.flatMap(item => item.participants ?? []).map(item => [item.id, item])).values())
+    .sort((a, b) => a.name.localeCompare(b.name, "zh-CN")), [materials]);
+  const scoped = useMemo(() => materials.filter(item => scope === "all" || item.in_formula_scope), [materials, scope]);
   const rows = useMemo(() => filterLedgerRows(buildLedgerRows(scoped, null), {
     query, movement, scope: "all", editor: person, selectedPerson: "", current: null,
     comparison: data?.ledger_comparison ?? undefined, sort, sortDirection: direction, edit: null, values: {},
@@ -114,7 +116,7 @@ export function ResearchMaterialPrices({ userId }: { userId: string }) {
       {!data ? error ? null : <WorkbenchLoading local title="正在读取原料价格" /> : <LedgerFrame>
         <LedgerToolbar id="research-material-toolbar" onBlur={event => { event.currentTarget.querySelectorAll<HTMLDetailsElement>("details[open]").forEach(menu => { if (!menu.contains(event.relatedTarget)) menu.open = false; }); }} onKeyDown={event => { if (event.key === "Escape") { const menu = (event.target as HTMLElement).closest("details"); if (menu) { menu.open = false; menu.querySelector<HTMLElement>("summary")?.focus(); } } }}>
           <label className={styles.searchField}><Search size={15} aria-hidden="true"/><input aria-label="搜索原料编号" placeholder="搜索原料编号" value={query} onChange={event => setQuery(event.target.value)}/></label>
-          <WorkbenchOptionMenu label="原料范围" value={scope} options={[{value:"formula",label:`配方范围（${data?.materials.filter(item => item.in_formula_scope).length ?? 0}项）`},{value:"all",label:`所有原料（${data?.materials.length ?? 0}项）`}]} onSelect={setScope}/>
+          <WorkbenchOptionMenu label="原料范围" value={scope} options={[{value:"formula",label:`配方范围（${materials.filter(item => item.in_formula_scope).length}项）`},{value:"all",label:`所有原料（${materials.length}项）`}]} onSelect={setScope}/>
           <WorkbenchOptionMenu label="人员" value={person} options={[{value:"",label:"全部人员"},...people.map(item => ({value:item.id,label:item.name}))]} onSelect={setPerson}/>
           <details className={`${styles.columnMenu} ${styles.filterMenu}`}><summary><SlidersHorizontal size={14} aria-hidden="true"/>筛选{movement !== "all" && <em>1</em>}</summary><div><section className={styles.filterGroup} aria-label="价格变化"><span>价格变化</span>{movementOptions.map(option => <button key={option.value} type="button" aria-pressed={movement === option.value} onClick={event => { setMovement(option.value); const menu = event.currentTarget.closest("details"); if (menu) { menu.open = false; menu.querySelector<HTMLElement>("summary")?.focus(); } }}>{option.label}{movement === option.value && <Check size={14}/>}</button>)}</section></div></details>
           <details className={`${styles.columnMenu} ${styles.displayMenu} ${researchStyles.materialDisplayMenu}`}><summary><Columns3 size={14} aria-hidden="true"/>显示</summary><div><span className={styles.menuLabel}>显示列</span><div className={styles.columnGrid}>{columns.map(([id,label]) => <label key={id}><input type="checkbox" checked={preferences.columns.includes(id)} onChange={() => { const next = preferences.columns.includes(id) ? preferences.columns.filter(column => column !== id) : columns.map(([column]) => column).filter(column => column === id || preferences.columns.includes(column)); if (next.length) setPreferences({...preferences, columns: next}); }}/>{label}</label>)}</div><span className={styles.menuLabel}>浏览方式</span><div className={styles.ledgerMode} role="group" aria-label="台账查看模式"><button type="button" aria-pressed={preferences.view === "scroll"} onClick={() => setPreferences({...preferences,view:"scroll"})}>连续</button><button type="button" aria-pressed={preferences.view === "paged"} onClick={() => setPreferences({...preferences,view:"paged"})}>分页</button></div>{preferences.view === "paged" && <><span className={styles.menuLabel}>每页条数</span><div className={styles.pageSizeControl}>{[25,50,100].map(size => <button key={size} type="button" aria-pressed={preferences.pageSize === size} onClick={() => setPreferences({...preferences,pageSize:size})}>{size}</button>)}<input aria-label="自定义每页条目数" type="number" min="10" max="200" key={preferences.pageSize} defaultValue={preferences.pageSize} onBlur={event => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 10 && value <= 200) setPreferences({...preferences,pageSize:value}); else event.target.value = String(preferences.pageSize); }} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }}/></div></>}</div></details>

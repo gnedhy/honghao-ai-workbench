@@ -240,7 +240,7 @@ class CalculatorStore:
                 source.kind = 'snapshot'
             payload = Evaluation(source=source, panels=workspace.panels).model_dump()
             label = source.product_code or '手工成本'
-            basis = (' · 库存优先' if source.basis == 'inventory' else ' · 最新优先') if source.kind != 'manual' else ''
+            basis = (' · 库存优先' if source.basis == 'inventory' else ' · 行情优先') if source.kind != 'manual' else ''
             name = (body.name or '').strip() or f'{label}{basis} · {len(workspace.panels)} 个面板'
         stamp = now()
         with transaction(self.url, write=True) as db:

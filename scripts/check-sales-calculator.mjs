@@ -210,13 +210,13 @@ try {
     await page.getByRole('button', { name: '切换产品报价', exact: true }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: '继续编辑', exact: true }).click(); assert.equal(await name.inputValue(), 'W5 未保存名称');
     await page.locator('summary').filter({ hasText: '历史测算' }).click();
-    await page.getByRole('button').filter({ hasText: 'Q · 最新优先 · 1 个面板' }).click();
+    await page.getByRole('button').filter({ hasText: 'Q · 行情优先 · 1 个面板' }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: '放弃修改', exact: true }).click();
     await name.waitFor({ state: 'detached' }); await page.getByText('4.00 元/kg', { exact: true }).waitFor();
   });
   await run('frozen-product-history-refresh-is-explicit', '', async ({ page, get }) => {
     await page.locator('summary').filter({ hasText: '历史测算' }).click();
-    await page.getByRole('button').filter({ hasText: 'Q · 最新优先 · 1 个面板' }).click();
+    await page.getByRole('button').filter({ hasText: 'Q · 行情优先 · 1 个面板' }).click();
     await page.getByText('正式成本已变化', { exact: false }).waitFor();
     await page.getByRole('region', { name: '测算工具' }).getByRole('article').first().getByText('4.00 元/kg', { exact: true }).first().waitFor();
     await page.getByRole('button', { name: '刷新正式成本', exact: true }).click();
@@ -251,7 +251,7 @@ try {
     await first.locator('summary[aria-label="面板 1客户类型"]').click(); await page.getByRole('button', { name: '国内直接厂', exact: true }).click();
     await page.getByRole('button', { name: '选择产品', exact: true }).click();
     await page.locator('summary[aria-label="选择产品及成本口径"]').click();
-    await page.getByRole('button', { name: /^CF401B 最新优先/ }).click();
+    await page.getByRole('button', { name: /^CF401B 行情优先/ }).click();
     const allocation = first.getByRole('textbox', { name: '面板 1特殊公摊数值', exact: true }); await allocation.fill('0.2');
     await first.getByText('特殊公摊须在0.3至1元之间', { exact: true }).waitFor();
     await allocation.fill('0.3'); await first.getByText('12.05 元/kg', { exact: true }).waitFor();

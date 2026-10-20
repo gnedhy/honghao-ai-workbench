@@ -1,0 +1,49 @@
+.dialog:global(.help-dialog) { width: min(740px, calc(100vw - 32px)); height: min(820px, calc(100dvh - 48px)); max-height: calc(100dvh - 48px); }
+.dialog:global(.help-dialog) > header { padding-bottom: 16px; }
+.dialog:global(.help-dialog) > header h1 { font-size: calc(20px + var(--ui-font-offset)); letter-spacing: -.02em; }
+.dialog :global(.help-intro) { line-height: 1.75; text-wrap: pretty; margin-bottom: 12px; }
+.dialog :global(.help-content) :is(ol, ul):not(.flow) { max-width: 66ch; margin-top: 20px; font-size: calc(14px + var(--ui-font-offset)); line-height: 1.85; }
+.dialog :global(.help-content) :is(ol, ul):not(.flow) li + li { margin-top: 18px; }
+.dialog :global(.help-content) li p { margin-top: 6px; }
+.navigation { display: flex; align-items: center; gap: 16px; padding-bottom: 20px; color: var(--muted); font-size: calc(13px + var(--ui-font-offset)); }
+.navigation button { display: inline-flex; align-items: center; gap: 6px; }
+.pageTitle { margin: 4px 0 18px; font-size: calc(20px + var(--ui-font-offset)); }
+.directory { padding-left: 24px; }
+.dialog :global(.settings-group-copy) > strong { font-size: calc(15px + var(--ui-font-offset)); }
+.entry { display: flex; align-items: flex-start; gap: 16px; width: 100%; padding: 24px 8px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.entry:hover { background: var(--surface); }
+.entry > svg { flex: none; margin-top: 3px; color: var(--muted); }
+.entry > svg:last-child { margin-left: auto; }
+.entry > span { display: grid; gap: 8px; }
+.entry strong { font-size: calc(15px + var(--ui-font-offset)); }
+.entry span span { color: var(--muted); font-size: calc(13px + var(--ui-font-offset)); line-height: 1.7; }
+.entry:last-child { border-bottom: 0; }
+.jump { display: inline-flex; align-items: center; gap: 8px; color: var(--text); font-size: calc(13px + var(--ui-font-offset)); text-underline-offset: 4px; }
+.calculator { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border); scroll-margin-top: 12px; }
+.calculator h3 { margin: 0; font-size: calc(17px + var(--ui-font-offset)); }
+.dialog article { display: flow-root; padding-bottom: 8px; }
+.figure { margin: 18px 0; padding: 18px; border: 1px solid var(--border); border-radius: 10px; background: #fafbfc; color: var(--text); }
+.figure figcaption { margin-bottom: 16px; color: var(--muted); font-size: calc(12px + var(--ui-font-offset)); }
+.dialog .flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; margin: 0; padding: 0; list-style: none; }
+.dialog .flow li { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 0; }
+.flow li > svg:first-child { color: #4d665e; }
+.flow strong, .costs strong { font-size: calc(14px + var(--ui-font-offset)); }
+.flow span, .costs span { color: #606970; font-size: calc(12px + var(--ui-font-offset)); line-height: 1.6; }
+.arrow { position: absolute; top: 4px; right: -22px; color: #7a858d; }
+.costs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.costs > div { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.linked { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; font-size: calc(13px + var(--ui-font-offset)); }
+.linked svg { flex: none; }
+.figure p { margin: 12px 0 0; color: #606970; font-size: calc(12px + var(--ui-font-offset)); line-height: 1.7; }
+@media (max-width: 560px) {
+  .dialog:global(.help-dialog) { width: calc(100vw - 24px); height: calc(100dvh - 24px); max-height: calc(100dvh - 24px); }
+  .dialog:global(.help-dialog) > header { padding: 20px 20px 12px; }
+  .dialog :global(.personal-profile__body) { padding: 8px 20px 20px; }
+  .dialog .flow { grid-template-columns: 1fr; gap: 30px; }
+  .dialog .flow li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 4px 10px; }
+  .flow li > svg:first-child { grid-row: span 2; }
+  .flow span { grid-column: 2; }
+  .arrow { top: auto; bottom: -24px; left: 3px; right: auto; transform: rotate(90deg); }
+  .costs { grid-template-columns: 1fr; }
+  .figure { padding: 14px; }
+}

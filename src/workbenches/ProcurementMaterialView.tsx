@@ -149,7 +149,7 @@ export function ReadOnlyMaterialDrawer({batches,materialId,loadMaterial,refreshE
   if(backLabel) return <Drawer title={detail?.material.code ?? materialId} label="原料详情" onClose={onClose} backLabel={backLabel} closeLabel="关闭原料详情" bodyClassName={styles.materialDrawerBody}>{body}</Drawer>;
   return <div inert={closing} className={`${styles.drawerLayer} ${closing?styles.closing:""}`} role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)close();}} onKeyDown={event=>recordDialogKeys(event)}>
     <aside className={styles.drawer} role="dialog" aria-modal="true" aria-label="原料价格详情">
-      <header className={styles.drawerHeader}><div><span>原料详情</span><h2>{detail?detail.material.code:"正在读取"}</h2></div><div className={styles.drawerHeaderActions}><button className="icon-button" type="button" aria-label="关闭详情" ref={focusWithoutScroll} onClick={close}><X size={17}/></button></div></header>
+      <header className={styles.drawerHeader}><div><span>原料详情</span><h2>{detail?detail.material.code:"原料详情"}</h2></div><div className={styles.drawerHeaderActions}><button className="icon-button" type="button" aria-label="关闭详情" ref={focusWithoutScroll} onClick={close}><X size={17}/></button></div></header>
       {body}
     </aside>
   </div>;

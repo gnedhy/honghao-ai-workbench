@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "kind": "presentation",
+  "summary": "2026-10-20已正式发布：补齐销售与测算工具说明，更新研发走势、历史和采购操作，加入静态流程示意。",
+  "modules": [
+    "procurement",
+    "research",
+    "sales"
+  ],
+  "files": [
+    "src/components/HelpDialog.tsx",
+    "src/components/HelpDialog.module.css",
+    "src/components/Interaction.tsx",
+    "src/components/SettingsDialog.tsx"
+  ],
+  "consumers": [
+    "src/components/Sidebar.tsx",
+    "src/components/ProfileDialog.tsx",
+    "src/components/SettingsDialog.tsx",
+    "src/components/ActivationGrants.tsx"
+  ],
+  "permissions": "使用说明只提供通用操作知识，不请求业务或授权数据，不新增入口或修改权限。",
+  "data": "示意图不含真实产品、配方、客户或金额；不改变成本、报价或历史。",
+  "lifecycle": "一级入口保留原有展开收起与箭头动效；工作台二级入口进入说明，切换保留轻量过渡和减少动态支持；测算工具归入销售，返回保留展开状态、阅读位置和焦点。",
+  "exits": "沿用退出动效、Esc及关闭按钮，无草稿或保存操作。",
+  "compatibility": "沿用现有 SettingsGroup 与图标，无新增依赖；共用高度测量改用不受弹窗缩放动效影响的布局高度，避免底部文字被裁切。",
+  "recovery": "现役20261020-help-guide；前版20261020-loading-feedback及最新已恢复验证快照保留，程序回退不覆盖数据库，见docs/releases/图文使用说明正式更新-2026-10-20.md。",
+  "verification": {
+    "api": [],
+    "node": [],
+    "browser": [
+      {
+        "file": "scripts/check-help-guide.mjs",
+        "id": "help-guide: hierarchy, sales calculator, reading position, mobile, Escape, focus and no business requests"
+      }
+    ]
+  }
+}

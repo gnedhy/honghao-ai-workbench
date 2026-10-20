@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "kind": "presentation",
+  "summary": "成本口径统一显示为行情优先／库存优先，修复研发、销售及报告中的旧名称；已于2026-10-20正式发布。",
+  "modules": [
+    "procurement",
+    "research",
+    "sales"
+  ],
+  "files": [
+    "src/workbenchRegistry.ts",
+    "src/components/HelpDialog.tsx",
+    "src/components/SettingsDialog.tsx",
+    "src/workbenches/ResearchProductView.tsx",
+    "src/workbenches/ResearchProductDrawer.tsx",
+    "src/workbenches/ResearchCostTrend.tsx",
+    "src/workbenches/ResearchFormulaEditor.tsx",
+    "src/workbenches/ResearchWorkbench.tsx",
+    "src/workbenches/researchAnalytics.ts",
+    "src/workbenches/SalesWorkbench.tsx",
+    "src/workbenches/SalesQuoteEditor.tsx",
+    "src/workbenches/SalesProductPicker.tsx",
+    "src/workbenches/salesCalculatorModel.ts",
+    "api/research.py",
+    "api/research_export.py",
+    "api/procurement_rd5.py",
+    "api/sales_calculator.py"
+  ],
+  "consumers": [
+    "src/workbenches/ResearchProductDrawer.tsx",
+    "src/workbenches/ResearchWorkbench.tsx",
+    "src/workbenches/ResearchFormulaEditor.tsx",
+    "src/workbenches/SalesWorkbench.tsx",
+    "src/workbenches/SalesQuoteEditor.tsx",
+    "src/workbenches/SalesCalculator.tsx"
+  ],
+  "permissions": "只修改名称、帮助和可访问标签；授权等级、部门范围、失权清空和编辑权限不改。",
+  "data": "保留 latest／latest_cost 等契约、递归取价和回退、精度及冻结记录。后端仅改生成说明和导出表头；旧系统涨跌说明在 Movement 展示时转换，不回写。历史原文件列名及导入别名保留兼容。",
+  "lifecycle": "卡片、走势、台账、历史、配方试算、报价、选品、测算及悬停说明同步名称；状态、草稿和切换联动保持。",
+  "exits": "不新增交互或写入流程，沿用原退出保护。",
+  "compatibility": "不改字段、内部枚举、用户自定义名称及旧数据；报告的可见列名采用新口径。",
+  "recovery": "前版程序和同版本快照保留，回退文案无需恢复数据库。",
+  "verification": {
+    "api": [
+      "tests/test_research_workbench.py::test_cost_export_contains_all_active_products_and_frozen_recipe_prices",
+      "tests/test_research_workbench.py::test_cost_export_keeps_zero_missing_and_untrusted_codes_distinct",
+      "tests/test_sales.py::test_calculator_private_saved_workspace_and_source",
+      "tests/test_sales.py::test_http_and_store_authorization_and_mode",
+      "tests/test_sales.py::test_cost_fallback_and_zero_sources"
+    ],
+    "node": [
+      {
+        "file": "tests_ui/salesModel.test.ts",
+        "id": "报价参考按最新优先成本计算三类报价，特殊公摊产品不伪造参考价"
+      },
+      {
+        "file": "tests_ui/researchDetailTrend.test.ts",
+        "id": "成本详情按所属日期倒序，同日正式优先且不改冻结记录及涨跌"
+      }
+    ],
+    "browser": [
+      {
+        "file": "scripts/check-research-detail-trend.mjs",
+        "id": "detail-trend-policy-dates-tooltip-and-frozen-history"
+      },
+      {
+        "file": "scripts/check-research-detail-trend.mjs",
+        "id": "mobile-keyboard-range-and-reduced-motion"
+      },
+      {
+        "file": "scripts/check-workbench-loading.mjs",
+        "id": "research-history-periods-and-material-price-arrows"
+      }
+    ]
+  }
+}

@@ -403,3 +403,26 @@ def test_saved_draft_can_be_resimulated_and_restored_after_own_product_is_deacti
     assert restored['draft'] is None
     assert Decimal(restored['latest']['yield']) == Decimal('.85')
     assert records(store.url)[:len(before)] == before
+
+
+def test_backfill_summaries_omit_input_details_but_preserve_full_history(ready):
+    from api.research_history import linked_histories
+    _, _, _, store = ready
+    store.backfill_history()
+    frozen = backfill_payloads(store)
+    formal = records(store.url)
+    with transaction(store.url) as db:
+        full = linked_histories(db, [K])[K]
+        summary = linked_histories(db, [K], summary=True)[K]
+    replay = [row for row in summary if row['record_type'] == 'backfill']
+    assert replay and all(not {'latest', 'inventory', 'lines'} & row.keys() for row in replay)
+    assert [(row['purchase_version'], row['latest_cost'], row['inventory_cost'], row['change']) for row in replay] == [
+        (row['purchase_version'], row['latest_cost'], row['inventory_cost'], row['change'])
+        for row in full if row['record_type'] == 'backfill']
+    assert all(row['latest']['lines'] and row['inventory']['lines'] for row in full if row['record_type'] == 'backfill')
+    listing = next(row for row in store.listing()['products'] if row['id'] == K)
+    current = next(row for row in full if row['record_type'] == 'formal')
+    assert listing['latest_cost'] == current['latest_cost']
+    assert listing['inventory_cost'] == current['inventory_cost']
+    assert listing['cost_details']['latest']['auto_cost'] == current['latest']['auto_cost']
+    assert backfill_payloads(store) == frozen and records(store.url) == formal

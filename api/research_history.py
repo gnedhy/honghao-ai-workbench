@@ -99,7 +99,7 @@ def linked_histories(db, keys, periods=None, summary=False, series=False):
     entries = {key:[] for key in keys}
     # Historical series need identity/scope and exact costs, not historical input lines.
     slim = f"({payload}::jsonb - ARRAY['latest','inventory','lines'])::text"
-    backfill_payload = slim if series else payload
+    backfill_payload = slim if series or summary else payload
     formal_payload = f"CASE WHEN sequence=max(sequence) OVER (PARTITION BY product_id) THEN {payload} ELSE {slim} END" if series else payload
     for key,raw in db.execute(f'SELECT product_id,{backfill_payload} FROM research_backfill_records WHERE product_id=ANY(%s) ORDER BY purchase_version',(list(keys),)):
         entries[key].append(json.loads(raw))
