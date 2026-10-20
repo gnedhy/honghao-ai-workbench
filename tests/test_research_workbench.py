@@ -435,6 +435,8 @@ def test_cost_export_keeps_zero_missing_and_untrusted_codes_distinct():
     ]
     book = load_workbook(BytesIO(build_cost_workbook(rows)), data_only=False)
     assert book.sheetnames == ['总览', '甲_乙']
+    assert book['总览']['C3'].value == '行情优先成本（元/kg）'
+    assert book['总览']['E3'].value == '行情优先成本来源'
     assert book['总览']['A4'].data_type == 's'
     assert book['总览']['C4'].value == 0
     assert book['总览']['D4'].value is None
@@ -442,6 +444,7 @@ def test_cost_export_keeps_zero_missing_and_untrusted_codes_distinct():
     assert book['总览']['J4'].number_format == 'yyyy-mm-dd hh:mm:ss'
     assert book['总览']['I5'].value == '更新中（尚无成本记录）'
     owner = book['甲_乙']
+    assert owner['E6'].value == '行情优先成本（手动）'
     assert owner['I5'].value == datetime(2026, 9, 29, 16, 0)
     assert owner['G6'].value == 0  # 手动成本保持明确的手动值。
     assert owner['B8'].value == '=2+2' and owner['B8'].data_type == 's'

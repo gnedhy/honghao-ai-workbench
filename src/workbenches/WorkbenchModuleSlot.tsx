@@ -28,7 +28,7 @@ export function WorkbenchModuleSlot(props: Props) {
   return (
     <ModuleBoundary key={`${props.currentUser.id}:${props.workbenchId}`} title={props.title}>
       {props.workbenchId === "procurement"
-        ? <Suspense fallback={<WorkbenchLoading title={`正在加载${props.title}`} />}><ProcurementWorkbench accessLevel={accessLevel} view={props.view} page={props.procurementPage} onPageChange={props.onProcurementPageChange} onEnter={props.onEnter} /></Suspense>
+        ? <Suspense fallback={<WorkbenchLoading title={`正在加载${props.title}`} />}><ProcurementWorkbench userId={props.currentUser.id} accessLevel={accessLevel} view={props.view} page={props.procurementPage} onPageChange={props.onProcurementPageChange} onEnter={props.onEnter} /></Suspense>
         : props.workbenchId === "research" ? <Suspense fallback={<WorkbenchLoading title={`正在加载${props.title}`} />}><ResearchWorkbench accessLevel={accessLevel} userId={props.currentUser.id} view={props.view} page={props.researchPage} onPageChange={props.onResearchPageChange} onEnter={props.onEnter} /></Suspense> : props.workbenchId === "sales" ? <Suspense fallback={<WorkbenchLoading title="正在加载销售工作台" />}><SalesWorkbench accessLevel={accessLevel} currentUser={props.currentUser} page={props.salesPage} onPageChange={props.onSalesPageChange} view={props.view} onEnter={props.onEnter}/></Suspense> : <Pending title={props.title} />}
     </ModuleBoundary>
   );

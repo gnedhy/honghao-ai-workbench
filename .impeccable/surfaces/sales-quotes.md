@@ -13,7 +13,7 @@
 
 ## 独立测算工具
 
-默认两个公式面板，更多面板向右增加；窄屏仅在面板区域横向浏览。产品及最新／库存口径由共享选择器提供，也可手工成本，各面板独立选择客户类型、常规／反推、公式步骤与公摊分档。分档读写共用固定列，末档只显示成本下限与无上限。
+默认两个公式面板，更多面板向右增加；窄屏仅在面板区域横向浏览。产品及行情／库存口径由共享选择器提供，也可手工成本，各面板独立选择客户类型、常规／反推、公式步骤与公摊分档。分档读写共用固定列，末档只显示成本下限与无上限。
 
 结果突出报价或产品成本上限，“计算过程”按需展开。混合方向时顶部成本参照说明供哪些常规面板使用；点击后向右浮层调整，空间不足时转下方，手机在工具栏内展开。反推不使用该成本数值，成本差额放入计算过程；未完成面板在本行提示，完整面板可独立计算。本人历史与模板不影响正式报价或研发成本。
 
@@ -24,3 +24,7 @@
 客户报价的本地 W4 候选将展示与业务会话拆到 `SalesQuoteEditor.tsx`／`salesQuoteSession.ts`，保留当前布局和公共控件。已采用产品及客户信息原生禁用，调整仍从历史详情进入；旧报价参考沿用保存的成本快照，目录供新产品及采用前对照。实现、挂载和实际组合验证见 [W4 记录](../../docs/history/records/W4-客户报价编辑会话模块化-2026-10-02.md)，未部署前不代表现役界面已更新。
 
 现役状态与最近发布、截图及恢复位置见 [当前交接](../../docs/当前交接.md)。销售首次部署、测算部署、9 月 29 日台账统一及 9 月 30 日输入修正均保留各自发布证据；9 月 17—22 日候选流程不再作为现行操作约定。源码与业务门禁无新变化时，不重复运行整套验证。
+
+## 2026-10-20 isolated candidate: default trend selection
+
+Use the shared `useTrendSelection` contract in `docs/components.md`: authorized candidates only; two distinct valid sample times on the same plotted series within the current range take priority, ties by natural full code. Preserve a manual visible ID in this tab session per account/workbench across preview/full view and remounts; discard inaccessible IDs before rendering. No synthetic prices or financial changes. Procurement reuses its existing price-series request with the movers. This candidate passed isolated validation and was deployed on 2026-10-20 as `20261020-trend-default-selection`; see the dated release record for current evidence and recovery.

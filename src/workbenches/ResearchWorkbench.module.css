@@ -110,6 +110,15 @@
 .heading > div:last-child { min-width: 0; }
 .chartTooltip { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; box-shadow: 0 4px 14px #1c222614; font-size: calc(12px + var(--ui-font-offset)); }
 .chartTooltip > span { display: flex; justify-content: space-between; gap: 20px; }
+.chartTooltip > small { max-width: 260px; font-size: inherit; line-height: 1.6; color: var(--muted); }
+.detailTrend { margin: 24px 0 28px; }
+.detailTrendTitle { display: flex; align-items: center; gap: 8px; }
+.detailTrend .sectionHeading { flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+.detailTrend .gapHint, .trendCaption { min-height: 1.6em; }
+.trendCaption { margin: 4px 0 0; text-align: center; font-size: calc(12px + var(--ui-font-offset)); line-height: 1.6; color: var(--muted); }
+.gapHint { margin: 4px 0 0; text-align: center; font-size: calc(12px + var(--ui-font-offset)); line-height: 1.6; color: #a56323; }
+.gapMarker circle { fill: #fff; stroke: #a56323; stroke-width: 1.5; }
+.gapMarker text { fill: #a56323; font-size: 9px; font-weight: 700; }
 .table { min-width: 1048px; table-layout: fixed; }
 .table th:first-child { min-width: 0; }
 .table td { overflow-wrap: anywhere; }

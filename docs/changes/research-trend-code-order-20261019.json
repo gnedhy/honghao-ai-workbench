@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "kind": "presentation",
+  "summary": "研发趋势缺失期可悬停说明，涨跌排行默认近一个月，内编候选统一A–Z自然排序。",
+  "modules": ["procurement", "research", "sales"],
+  "files": ["src/codeOrder.ts", "src/components/WorkbenchMenus.tsx", "src/workbenches/ResearchFormulaEditor.tsx", "src/workbenches/SalesProductPicker.tsx", "src/workbenches/ResearchWorkbench.tsx", "src/workbenches/ResearchWorkbench.module.css"],
+  "consumers": ["src/workbenches/ProcurementWorkbench.tsx", "src/workbenches/ResearchWorkbench.tsx", "src/workbenches/SalesWorkbench.tsx", "src/workbenches/ResearchFormulaEditor.tsx", "src/workbenches/SalesQuoteEditor.tsx", "src/workbenches/SalesCalculator.tsx"],
+  "permissions": "仅排序调用方已授权的候选；原筛选、排除、禁用和部门范围不变。",
+  "data": "无业务数据、API或迁移变更；原精确成本保持，缺失标记不是零成本。",
+  "lifecycle": "保留断线及正式／回算同图展示；使用已有摘要中的缺价原料，不额外读取明细。候选先排序再分页，配方保留原料／产品／复配分组。",
+  "exits": "沿用菜单焦点、键盘和退出契约；排序不修改既有投料或报价行顺序。",
+  "compatibility": "复用Intl.Collator及现有共享候选组件，无新增依赖。日期、金额、涨跌及台账排序维持业务规则。",
+  "recovery": "当前仅隔离候选，可撤回本次前端改动；无需数据库恢复。",
+  "verification": {
+    "api": [],
+    "node": [{"file": "tests_ui/codeOrder.test.ts", "id": "内编候选 A–Z 自然排序，忽略大小写并保留完整内编"}],
+    "browser": []
+  }
+}

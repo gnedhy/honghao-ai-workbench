@@ -10,6 +10,7 @@
 | 确认与放弃修改 | `src/components/Interaction.tsx` → `DiscardChangesDialog` | 标题、说明、按钮、危险／普通确认；设置、资料、反馈、采购、研发、销售 |
 | 未保存保护 | 同文件 → `useUnsavedChanges`；`interactionNavigation.ts` | 业务提供 dirty、busy；取消保留输入，确认后继续原导航 |
 | 抽屉 | `src/components/Drawer.tsx` | 标题、宽度、正文、关闭前检查；`backLabel` 显示标题左侧返回箭头，可用 `onBack` 注入上层配方导航，未提供时关闭子层。返回与关闭共用 busy／关闭前检查和完整退出动效；下层原生抽屉打开时隐藏上层抽屉及遮罩，退出后恢复，上层保持挂载以保留状态，退出下层后按现有抽屉节奏滑入；研发详情／编辑、采购版本／本轮记录、销售参数／历史 |
+| 图文使用说明 | `HelpDialog.tsx`、`HelpDialog.module.css` | 一级入口复用 SettingsGroup 原有展开动效，工作台展开列出二级入口，点击进入具体说明；测算工具归属销售工作台，返回保留阅读位置；静态示意不加载业务数据，实际入口以账号权限为准。隔离回归 `scripts/check-help-guide.mjs` |
 | 折叠与滚动 | `Interaction.tsx` → `SettingsGroup`、`useMeasuredContent`、`useFadingScrollbars` | 异步高度、默认展开、收起 inert；设置、资料、帮助、授权记录 |
 | 单选菜单、搜索单选与日期 | `src/components/WorkbenchMenus.tsx` | 普通单选、可选删除、搜索候选、日期区间；采购／研发看板、销售测算。部门树与多选继续使用 `OrganizationControls.tsx` |
 | 开关 | `src/components/Switch.tsx` | 受控选中、禁用、忙碌；设置、授权、配方自动换算。确认及提交由业务提供 |
@@ -23,7 +24,9 @@
 | 客户报价编辑 | `src/workbenches/SalesQuoteEditor.tsx` → `salesQuoteSession.ts` | 销售内部展示／业务会话；状态、保存恢复、采用及退出由会话提供领域动作，复用 Drawer、DecimalInput、FormFooter 和 SalesProductPicker；公开工作台入口不变 |
 | 独立测算工作区 | `src/workbenches/SalesCalculator.tsx` → `salesCalculatorWorkspace.ts`／`SalesCalculatorPanel.tsx` | 工作区／请求属业务 Hook；分档、命名、展开和拖拽属面板，修改提议参与退出保护；复用金额输入、菜单、选品和确认；纯逻辑在 `salesCalculatorModel.ts` |
 | 研发详情与编辑 | `ResearchProductDrawer.tsx`／`ResearchFormulaEditor.tsx` → `researchEditSession.ts` | 业务内部维护产品身份、原因、可编辑基线、试算 token、draft revision、保存锁与冲突；投料选择复用现有单选菜单及搜索样式，候选仅来自业务授权数据；复用共享退出契约、Drawer、金额输入和底部操作栏 |
+| 日常原料可见性 | `src/materialVisibility.ts` → `isDailyMaterial`／`dailyProcurementOverview` | 仅过滤明确的不用／已停用文字标注；采购日常台账、分流明细、走势和排行，研发原料列表及新增／替换投料候选共用。保留原始数据、部门关联、后端合法引用、既有投料和冻结历史；不以缺价、无库存推断停用。2026-10-20 已正式发布，原配方与历史保留 |
 | 研发展示与读取 | `ResearchProductView.tsx`／`researchModel.ts`／`researchData.ts` | 原详情、投料、冻结历史及显示口径；看板条件读取、产品与配方服务端分页。筛选与页码同步重置；后台失败保留当前列表，权限失效清空；聚焦和定时读取可取消，权限和写回由业务承担 |
+| 产品详情成本走势 | `ResearchCostTrend.tsx`，由 `ResearchProductDrawer.tsx` 注入 `FormulaDetails` 的 `trend` 插槽 | 在双成本卡片下方复用已授权、已加载历史；切换行情／库存优先保留日期范围，缺价保留断点，少于两期有效成本显示暂无走势。同日优先正式记录并保留完整历史列表；列表按所属日期倒序，不影响当前成本及冻结核算基准。2026-10-20 已正式发布 |
 | 看板容器 | `WorkbenchLayout.tsx` → `DashboardPanel` | 标题、内容及尺寸由业务组合；共用 `dashboardPanel` 样式，不统一业务布局 |
 | 排行翻页 | `src/components/useMoverPaging.tsx` | 悬停、键盘、详情打开、后台和减少动态效果时暂停；采购／研发排行 |
 | 数值／页面状态 | `PriceMovement.tsx`、`WorkbenchLayout.tsx` → `PageState`、`WorkbenchLoading` | 涨跌与无对比展示；错误与重试分开，不把失败当空数据 |
@@ -47,6 +50,7 @@ W7 研发编辑会话按产品 ID 挂载，后台刷新不重新初始化填写�
 - 成功绿、待处理橙、失败红、中性灰；权限来源继续区分管理／额外／未授权。避免重复成功提示。
 - 工作台列表、模块代码与首次业务读取共用 `WorkbenchLoading`，旋转图标配合业务名称；图表、资讯、数据分流和详情通过 `local` 复用内容区样式，减少动态效果时保留静态提示。
 - 后台刷新保留已有内容；首次加载、空结果和失败分别展示。台账刷新不加整表、重排行或数字动画。
+- 加载反馈在内容区只显示一处，不在台账上方重复插入提示；详情标题不使用“正在读取”。读取失败后停止加载提示并保留重试。分流页刷新保留已读内容，但失权响应立即清空。
 - 研发根读取的定时及聚焦刷新使用账号与权限绑定的HTTP条件读取：304保留现有列表，不重新解析或替换；写后与手动重试完整读取，401/403清空旧内容。实现仍在 `researchData.ts`，共享错误解析沿用 `api.ts`。
 
 ## 动效
@@ -70,3 +74,7 @@ W7 研发编辑会话按产品 ID 挂载，后台刷新不重新初始化填写�
 客户报价维护：`SalesWorkbench` 保留关联目录／批次／历史读取与详情入口；内部编辑组件按打开的原批次 ID 或 `new` 挂载，保存所得 ID／revision 不作 key。`salesModel` 维护纯快照、草稿合并、可编辑规则及原公式；业务 Hook 不向父级暴露 setter。原抽屉实现已移除，无兼容副本。实际挂载、旧成本、部分采用和调整版本回归见 [W4 记录](history/records/W4-客户报价编辑会话模块化-2026-10-02.md)。
 
 W8 的静态元数据、lazy 适配、App 身份、反馈与隔离示例维护见 [静态工作台接入](agents/workbench-integration.md)；新增模块使用该页任务模板，正式启用仍须现有授权和门禁。
+
+内编候选排序复用 `src/codeOrder.ts` 的 `compareCodes`：`TrendMaterialMenu`（采购／研发／销售趋势）、研发投料候选（保留类别分组）、`SalesProductPicker`（报价编辑／独立测算，排序后分页）。只整理调用方已授权的候选，不改变台账业务排序、投料顺序、成本口径或可选条件。
+
+走势默认选择复用 `useTrendSelection.ts` 和 `codeOrder.ts` 的有效记录筛选：当前范围同一条数据线至少两期有效记录者优先，同等条件按内编自然排序；不足时选权限内首项并显示原空状态。手动ID用当前标签页sessionStorage按账号／工作台保存，展示前始终核对最新候选；预览／完整页共用，失去可见性立即回退，数据库与长期偏好不写入。采购走势与排行共用一次 `price-series` 请求；实现及边界验证见 `scripts/check-trend-selection.mjs`。2026-10-20已正式发布为 `20261020-trend-default-selection`，验收与恢复见当日发布记录。

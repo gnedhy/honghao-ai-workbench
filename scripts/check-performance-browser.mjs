@@ -118,11 +118,11 @@ try {
     ready.push(await page.evaluate(() => window.perfReadyMs));
     assert.ok((await page.getByLabel('台账分页').innerText()).includes('2000 条'));
     await page.getByRole('button',{name:'下一页',exact:true}).click();
-    await page.getByRole('button',{name:'P00050 最新优先 4.00 元每千克',exact:true}).waitFor();
+    await page.getByRole('button',{name:'P00050 行情优先 4.00 元每千克',exact:true}).waitFor();
     const code = 'P' + String(policy.fixture.salesProducts - 1).padStart(5, '0');
     await measureFilter(page, page.getByRole('searchbox'), code, '[data-cost-option]', 2);
     filtered.push(await page.evaluate(() => window.perfFilterMs));
-    await page.getByRole('button', { name: code + ' 最新优先 4.00 元每千克', exact: true }).click();
+    await page.getByRole('button', { name: code + ' 行情优先 4.00 元每千克', exact: true }).click();
     assert.equal(await page.evaluate(() => window.perfSelected), code);
   });
   writeFileSync(path.join(directory, 'browser.json'), JSON.stringify({ schema: 1, kind: 'browser', browser: browser.version(), fixture: policy.fixture, metrics, samples, browserPath: 'Browser plugin not available; existing Playwright Chromium harness' }, null, 2) + '\n');

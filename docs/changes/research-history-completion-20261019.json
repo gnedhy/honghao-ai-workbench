@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "补齐各部门历期行情回算，并避免列表摘要读取历史投料明细。",
+  "modules": [
+    "procurement",
+    "research",
+    "sales"
+  ],
+  "files": [
+    "api/research_history.py"
+  ],
+  "consumers": [
+    "api/research.py"
+  ],
+  "permissions": "沿用当前配方和冻结历史的部门检查、引用链脱敏及撤权校验，不扩大权限。",
+  "data": "仅补缺失的26期历史回算记录；旧回算、正式成本、采购价格、库存、配方及账号保持。原行情缺价按用户确认冻结当前参考价，库存为固定参考而非当期库存。",
+  "lifecycle": "摘要读取省略回算投料明细，完整历史按需读取；批次记录冻结后不重算覆盖。",
+  "exits": "沿用Drawer及采购原料草稿退出保护。",
+  "compatibility": "保持完整历史API、当前双成本与现有摘要响应结构；复用既有精简历史投影。",
+  "recovery": "补算按事务追加；失败回滚全部新增记录和版本标记；保留精确新增键及原始校验值，可仅撤回本次追加。",
+  "verification": {
+    "api": [
+      "tests/test_research_revision.py::test_backfill_summaries_omit_input_details_but_preserve_full_history",
+      "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+    ],
+    "node": [],
+    "browser": [
+      {
+        "file": "scripts/check-workbench-loading.mjs",
+        "id": "research-history-periods-and-material-price-arrows",
+        "apiTest": "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+      }
+    ]
+  }
+}

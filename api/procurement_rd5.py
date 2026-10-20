@@ -286,9 +286,9 @@ def export_preparation(url: str, digest: str, output: Path) -> dict:
         f"文件 SHA-256：`{digest}`。核算采用正式价格版本：v{batch[0] if batch else '—'}。",
         f"导入时在用原料 {result['counts']['active_after']} 项；研发五部分流 {result['counts']['department_after']} 项；原表配方 {result['counts']['recipes']} 组、投料 {result['counts']['recipe_lines']} 行，复配方案 {result['counts']['composites']} 种。",
         f"当前有效配方 {current_counts['recipes']} 组、投料 {current_counts['recipe_lines']} 行，复配方案 {current_counts['composites']} 种。",
-        "现有原料沿用台账价格；新增原料使用录入价格。普通原料最新价优先，其次库存价；复配和产品引用逐层计算。",
+        "现有原料沿用台账价格；新增原料使用录入价格。普通原料行情价格优先，其次库存价；复配和产品引用逐层计算。",
         f"核算记录时间：{package.get('revised_at', package['imported_at'])}。导出不自动刷新价格；后续重新计算时应重新读取正式价格和库存价格。清单小数最多显示六位，数据包保留计算精度。", "",
-        "## 原料补齐清单", "", "| 原料 | 操作 | 表内最新价 | 表内库存价 | 当前核算取价 | 来源行 |", "|---|---|---:|---:|---:|---:|"]
+        "## 原料补齐清单", "", "| 原料 | 操作 | 表内行情价格 | 表内库存价 | 当前核算取价 | 来源行 |", "|---|---|---:|---:|---:|---:|"]
     for row in package["material_mapping"]:
         if row["action"] not in {"restore", "create"}:
             continue
@@ -298,7 +298,7 @@ def export_preparation(url: str, digest: str, output: Path) -> dict:
             taken = package["current_calculation"][package["default_composite"]]["cost"]
         review.append("| " + " | ".join(cell(x) for x in (row["code"], "恢复" if row["action"] == "restore" else "新建", row["latest_price"], row["inventory_price"], display_number(taken), row["source_row"])) + " |")
     review += ["", "## 已有原料映射", "", "以下原料沿用原 ID、台账价格、库存数量和来源，研发表数值仅保留作核对。CF830 本次补上研发五部分流关联。", "",
-               "| 原料 | 原表核算价 | 台账最新价 | 台账库存价 | 来源行 |", "|---|---:|---:|---:|---:|"]
+               "| 原料 | 原表核算价 | 台账行情价格 | 台账库存价 | 来源行 |", "|---|---:|---:|---:|---:|"]
     for row in package["material_mapping"]:
         if row["action"] == "keep":
             p = package["price_inputs"][row["code"]]
@@ -322,7 +322,7 @@ def export_preparation(url: str, digest: str, output: Path) -> dict:
                 target = line["ref"].split(":", 1)[1]
                 review.append(f"| {cell(recipe['name'])} | {'产品' if line['kind'] == 'recipe' else '复配方案'} | {cell(target)} | {line['source_row']} |")
     review += ["", "## 核对事项", "", "- 新增原料库存数量未知，全部留空；原表实际投料不作为库存数量。",
-               "- 分流页面的待定价按最新采购价统计；有库存价的项目仍可按本次规则参与配方核算。",
+               "- 分流页面的待定价按行情价格统计；有库存价的项目仍可按本次规则参与配方核算。",
                "- CF401B采用CF026K 3000 kg＋CF020D 300 kg，收率99.5%；不将复配成本回写采购报价或库存价格。",
                *(["- 2026-09-12 确认仅保留上述复配方案，另外三种方案及对应三组 K172-C 转为历史试算。CF020C 停购、现行用料改用 CF020D；采购台账及历史来源保留。"] if package.get("current_policy") else
                  ["- CF020C缺价，两种相关K172-C配方及两种复配方案待补价。"]),

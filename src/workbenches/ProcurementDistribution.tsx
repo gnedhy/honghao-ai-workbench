@@ -1,5 +1,5 @@
 import { WorkbenchLoading } from "../components/WorkbenchLayout";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Info, SlidersHorizontal } from "lucide-react";
 import { DiscardChangesDialog, useUnsavedChanges } from "../components/Interaction";
 import { fetchProcurementOverview, saveDepartmentMaterials } from "../api";
@@ -25,16 +25,30 @@ export function ProcurementDistribution({ renderLedger, revision }: { renderLedg
   const added = ids.filter(id => !originalIds.includes(id)).length;
   const removed = originalIds.filter(id => !ids.includes(id)).length;
   const dirty = editing && (added > 0 || removed > 0);
-  const load = () => { setError(""); setData(null); return fetchProcurementOverview().then(setData).catch(e => setError(e.message)); };
-  useEffect(() => { void load(); }, [selected]);
-  useEffect(() => { if (revision) void fetchProcurementOverview().then(setData).catch(e => setError(e.message)); }, [revision]);
+  const reads = useRef(0);
+  const load = useCallback((signal?: AbortSignal) => {
+    const sequence = ++reads.current;
+    setError("");
+    return fetchProcurementOverview(signal).then(value => {
+      if (!signal?.aborted && sequence === reads.current) setData(value);
+    }).catch(e => {
+      if (signal?.aborted || sequence !== reads.current) return;
+      if (e?.status === 401 || e?.status === 403) setData(null);
+      setError(e.message);
+    });
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [selected, revision, load]);
   const unsaved = useUnsavedChanges(dirty, busy, "尚未保存的部门范围调整将被放弃。", "procurement-before-leave");
   const group = data?.departments?.find(item => item.id === selected);
   const returnToList = () => { setConfirmReturn(false); setEditing(false); setSelected(null); };
   return <section className={`${styles.section} ${selected ? styles.ledgerSection : styles.subpageSection}`}>
     {unsaved.confirmation}
     {confirmReturn && <DiscardChangesDialog description="返回部门列表后，未保存的范围调整将不会保留。" onCancel={() => setConfirmReturn(false)} onDiscard={returnToList} />}
-    <div className={`${styles.sectionHeading} ${styles.ledgerHeading}`}><div><div className={styles.ledgerTitle}><h2>{group?.name ?? "数据分流"}</h2>{group && <small>{group.material_ids.length} 项原料</small>}</div><p className={styles.sectionDescription}>{!data ? "正在读取价格版本" : data.batches[0] ? `行情价格版本 v${data.batches[0].version} · ${data.batches[0].price_date?.replaceAll("-", ".") ?? "日期未记录"}` : "尚无价格版本"}。启用后自动更新，草稿不影响部门价格。</p></div>{selected && <button className="secondary-button" disabled={busy} onClick={() => { if (dirty) setConfirmReturn(true); else returnToList(); }}>返回部门列表</button>}</div>
+    <div className={`${styles.sectionHeading} ${styles.ledgerHeading}`}><div><div className={styles.ledgerTitle}><h2>{group?.name ?? "数据分流"}</h2>{group && <small>{group.material_ids.length} 项原料</small>}</div><p className={styles.sectionDescription}>{data && `${data.batches[0] ? `行情价格版本 v${data.batches[0].version} · ${data.batches[0].price_date?.replaceAll("-", ".") ?? "日期未记录"}` : "尚无价格版本"}。`}启用后自动更新，草稿不影响部门价格。</p></div>{selected && <button className="secondary-button" disabled={busy} onClick={() => { if (dirty) setConfirmReturn(true); else returnToList(); }}>返回部门列表</button>}</div>
     {error && <p role="alert" className={styles.error}>{error}<button onClick={() => void load()}>重试</button></p>}
 {!data ? !error && <WorkbenchLoading local title="正在读取部门原料价格"/> : !selected ? <div className={styles.tableWrap}><table className={`${styles.table} ${styles.distributionTable}`}><thead><tr><th>部门</th><th>关联原料</th><th>价格状态</th><th>操作</th></tr></thead><tbody>{data.departments?.map(item => { const missing = Math.max(0, item.material_ids.length-item.priced); return <tr key={item.id}><td>{item.name}</td><td>{item.material_ids.length} 项</td><td><span className={missing ? styles.distributionMissing : styles.distributionStatus}>{!item.material_ids.length ? "未关联原料" : missing ? `待定价 ${missing} 项` : "已定价"}</span></td><td><div className={styles.distributionActions}><button className="secondary-button" onClick={() => setSelected(item.id)}>查看明细</button>{data.capabilities?.can_manage_catalog && <button className="secondary-button" onClick={() => {setIds([...item.material_ids]); setOriginalIds([...item.material_ids]); setEditing(true); setSelected(item.id);}}>调整范围</button>}</div></td></tr>; })}</tbody></table>{!data.departments?.length && <p>尚未建立部门原料清单。</p>}</div> : group && <>
       {renderLedger(data, {

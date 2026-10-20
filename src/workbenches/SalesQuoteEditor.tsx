@@ -23,7 +23,7 @@ export function SalesQuoteEditor(props:SalesQuoteSessionOptions & {currentUser:C
    <div className={s.editorRowMain}>
     <div className={s.editorIdentity}><div className={s.editorNameRow}><strong>{row.product.code}</strong><button type="button" className={s.removeProduct} disabled={row.adopted} title={row.adopted?"已采用产品请在报价历史中作废":"从本次报价移除"} aria-label={`移除 ${row.product.code}`} onClick={()=>removeProduct(row.product_id)}><Trash2 size={13}/>移除</button></div>{row.product.name!==row.product.code&&<span>{row.product.name}</span>}<small>{row.product.department} · {productSourceText(row.product)}</small></div>
     <div className={s.editorQuote}>
-     <div className={s.basisSwitch} role="group" aria-label={`${row.product.code}成本口径`}><button type="button" disabled={!canEditQuoteItem(row)} aria-pressed={row.cost_basis==="latest"} onClick={()=>changeCostBasis(row.product_id,"latest")}>最新优先</button><button type="button" disabled={!canEditQuoteItem(row)} aria-pressed={row.cost_basis==="inventory"} onClick={()=>changeCostBasis(row.product_id,"inventory")}>库存优先</button></div>
+     <div className={s.basisSwitch} role="group" aria-label={`${row.product.code}成本口径`}><button type="button" disabled={!canEditQuoteItem(row)} aria-pressed={row.cost_basis==="latest"} onClick={()=>changeCostBasis(row.product_id,"latest")}>行情优先</button><button type="button" disabled={!canEditQuoteItem(row)} aria-pressed={row.cost_basis==="inventory"} onClick={()=>changeCostBasis(row.product_id,"inventory")}>库存优先</button></div>
      <strong className={s.editorPrice}>{money(row.adopted&&!row.adjustment_reason?row.final_price:row.manual?row.final_price:current)}<small>元/kg</small></strong>
     </div>
    </div>

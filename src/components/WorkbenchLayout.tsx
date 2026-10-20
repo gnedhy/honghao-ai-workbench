@@ -19,5 +19,5 @@ export function PageState({ children, error = false, className = "", onRetry }: 
 }
 
 export function WorkbenchLoading({ title = "正在加载工作台", local = false }: { title?: string; local?: boolean }) {
-  return <PageState className={local ? "workspace-detail-empty" : "workbench-detail workspace-detail-empty"}><LoaderCircle className={styles.loadingSpinner} size={26} aria-hidden="true"/><strong>{title}</strong><p>数据加载中，请稍候…</p></PageState>;
+  return <PageState className={local ? "workspace-detail-empty" : "workbench-detail workspace-detail-empty"}><LoaderCircle className={styles.loadingSpinner} size={26} aria-hidden="true"/><strong>{title}</strong></PageState>;
 }

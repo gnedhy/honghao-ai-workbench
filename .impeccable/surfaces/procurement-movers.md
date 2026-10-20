@@ -34,3 +34,7 @@
 用户明确要求主页直接显示10项、左右各5项、不翻页。此要求替代上文主页每页6项的安排：主页截取当前方向的前10项，移除分页控件与轮播语义，不再自动切页；实际不足10项时按实显示。桌面两列五行沿用剩余高度自适应，窄屏单列展示；日期范围和涨降幅切换保留。结果多于10项时，页脚注明显示前10项。完整采购看板仍沿用最多30项、每页10项及分页轮播。
 
 验证：1749×1272 下左右各5项，底部30px边距，无分页控件与轮播语义，间隔检查内容保持不变；390×844 下10项单列、无横向溢出。降幅当前6项按实展示；完整看板仍有3页、每页10项。类型检查、构建和样式检测通过，控制台无错误。当前证据指向 20260911-static10。
+
+## 2026-10-20 isolated candidate: default trend selection
+
+Use the shared `useTrendSelection` contract in `docs/components.md`: authorized candidates only; two distinct valid sample times on the same plotted series within the current range take priority, ties by natural full code. Preserve a manual visible ID in this tab session per account/workbench across preview/full view and remounts; discard inaccessible IDs before rendering. No synthetic prices or financial changes. Procurement reuses its existing price-series request with the movers. This candidate passed isolated validation and was deployed on 2026-10-20 as `20261020-trend-default-selection`; see the dated release record for current evidence and recovery.

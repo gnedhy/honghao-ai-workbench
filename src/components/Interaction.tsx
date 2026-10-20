@@ -136,7 +136,8 @@ export function useMeasuredContent(active = true) {
   useLayoutEffect(() => {
     const element = contentRef.current;
     if (!active || !element) return;
-    const measure = () => setHeight(element.getBoundingClientRect().height);
+    // Layout height must not include the parent dialog's entrance scale.
+    const measure = () => setHeight(element.offsetHeight);
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);

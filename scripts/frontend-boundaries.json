@@ -73,6 +73,17 @@
       "reason": "现有纯图表展示助手，无请求、权限或业务写入",
       "maintainer": "采购分析与研发图表维护者",
       "removeWhen": "共享图表工具提供等效契约且两工作台回归通过"
+    },
+    {
+      "from": "src/workbenches/ResearchCostTrend.tsx",
+      "to": "src/workbenches/procurementAnalytics.ts",
+      "symbols": [
+        "focusedTrendAxis",
+        "moverDateRange"
+      ],
+      "reason": "产品详情走势复用采购现有只读坐标轴及日期范围助手，无请求、权限或成本写入",
+      "maintainer": "采购分析与研发展示维护者",
+      "removeWhen": "共享图表工具提供等效契约时同步迁移采购及研发消费者"
     }
   ]
 }

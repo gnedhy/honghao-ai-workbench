@@ -43,20 +43,6 @@
     {
       "file": "src/workbenches/ProcurementWorkbench.tsx",
       "rule": "react-hooks(exhaustive-deps)",
-      "message": "React Hook useEffect has a missing dependency: 'data.materials'",
-      "anchor": "0ab9e03fb7758ec24387b100b0e404d19af68d451232c91ccf982da4c12a0dab",
-      "line": 164
-    },
-    {
-      "file": "src/workbenches/ProcurementWorkbench.tsx",
-      "rule": "react-hooks(exhaustive-deps)",
-      "message": "React Hook useEffect has a complex expression in the dependency array.",
-      "anchor": "0ab9e03fb7758ec24387b100b0e404d19af68d451232c91ccf982da4c12a0dab",
-      "line": 169
-    },
-    {
-      "file": "src/workbenches/ProcurementWorkbench.tsx",
-      "rule": "react-hooks(exhaustive-deps)",
       "message": "React Hook useEffect has a missing dependency: 'ids'",
       "anchor": "0b10f993272535d951ea6870b27d49e39dc3d64e87109245bda862a18bcb057c",
       "line": 212

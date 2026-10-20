@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "kind": "presentation",
+  "summary": "明确标注不用的原料从日常列表与新增投料候选隐藏，原有配方与历史保留；隔离验收后正式发布。",
+  "modules": [
+    "procurement",
+    "research"
+  ],
+  "files": [
+    "src/materialVisibility.ts",
+    "src/workbenches/ProcurementWorkbench.tsx",
+    "src/workbenches/ResearchMaterialPrices.tsx",
+    "src/workbenches/ResearchFormulaEditor.tsx"
+  ],
+  "consumers": [
+    "src/workbenches/ProcurementWorkbench.tsx",
+    "src/workbenches/ProcurementDistribution.tsx",
+    "src/workbenches/ResearchMaterialPrices.tsx",
+    "src/workbenches/ResearchFormulaEditor.tsx"
+  ],
+  "permissions": "仅收窄已有授权响应的展示；不扩大范围，不改权限、401/403清理或服务端校验。部门关联及已有选择原样保留。",
+  "data": "无业务写入、无归档、无迁移；不移除原配方投料、不按零成本处理、不改变成本或冻结历史。正常缺价原料继续显示。",
+  "lifecycle": "共享纯函数识别完整的不用或停用状态标注；日常搜索、范围数量、走势候选与排行同步过滤，采购历史与研发详情继续读取原始数据。",
+  "exits": "沿用原有草稿与退出保护；筛选不修改编辑器已有投料或试算请求内容。",
+  "compatibility": "保留原GET、POST和类型契约；不新增依赖。销售仍读取原研发成本，本项不修改销售。",
+  "recovery": "已按本轮授权正式发布20261020-unused-material-display；保留前版20261020-trend-default-selection及原指针，可仅回退程序。无迁移或业务写入。",
+  "verification": {
+    "api": [],
+    "node": [
+      {
+        "file": "tests_ui/materialVisibility.test.ts",
+        "id": "明确不用标注隐藏，正常编号、缺价及回收原料仍可查看"
+      },
+      {
+        "file": "tests_ui/materialVisibility.test.ts",
+        "id": "日常台账过滤不修改原始原料、历史、草稿及部门关联"
+      }
+    ],
+    "browser": [
+      {
+        "file": "scripts/check-material-visibility.mjs",
+        "id": "procurement-daily-and-distribution"
+      },
+      {
+        "file": "scripts/check-material-visibility.mjs",
+        "id": "procurement-trend-and-ranking"
+      },
+      {
+        "file": "scripts/check-material-visibility.mjs",
+        "id": "research-daily-scopes-search-and-revocation"
+      },
+      {
+        "file": "scripts/check-material-visibility.mjs",
+        "id": "existing-input-retained-new-options-filtered-and-trial-unchanged"
+      },
+      {
+        "file": "scripts/check-material-visibility.mjs",
+        "id": "existing-detail-and-frozen-history-retained-readonly"
+      }
+    ]
+  }
+}

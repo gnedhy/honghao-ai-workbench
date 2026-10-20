@@ -366,6 +366,15 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
     </div>
     <h3 className="settings-section-label">更新日志</h3>
     <ol className="settings-timeline" tabIndex={0} aria-label="更新日志"><li>
+      <div className="changelog-date"><time dateTime="2026-10-20">2026年10月20日</time></div>
+      <div className="settings-timeline-content">
+        <div><strong>使用说明补充</strong><p>按工作台分层查看操作指引，补齐销售报价与测算工具说明，支持展开、返回和阅读位置保留。</p></div>
+        <div><strong>加载体验优化</strong><p>减少重复加载提示，切换时保留已读内容，完善读取失败后的提示与重试。</p></div>
+        <div><strong>产品成本走势</strong><p>产品详情新增成本走势，随行情优先、库存优先切换；历史记录按价格所属日期排列，缺价保留提示。</p></div>
+        <div><strong>成本口径统一</strong><p>研发、销售及成本导出统一使用“行情优先／库存优先”，成本计算和权限规则保持。</p></div>
+        <div><strong>日常查看优化</strong><p>走势优先展示有有效历史的项目，保留本次手动选择；明确不用的原料从日常列表和新增投料选项隐藏，原配方与历史保留。</p></div>
+      </div>
+    </li><li>
       <div className="changelog-date"><time dateTime="2026-10-19">2026年10月19日</time></div>
       <div className="settings-timeline-content">
         <div><strong>工作台读取提速</strong><p>优化列表分页、缓存和批量成本重算，减少重复读取，保留成本精度及部门权限校验。</p></div>
@@ -459,10 +468,10 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
     </li><li>
       <div className="changelog-date"><time dateTime="2026-09-12">2026年9月12日</time></div>
       <div className="settings-timeline-content">
-        <div><strong>研发五部工作台</strong><p>启用研发看板、产品成本、配方管理和价格历史，65条产品内编分别管理。提供最新优先、库存优先双成本，逐层计入收率，点击产品可查看配方及引用明细。</p></div>
+        <div><strong>研发五部工作台</strong><p>启用研发看板、产品成本、配方管理和价格历史，65条产品内编分别管理。提供行情优先、库存优先双成本，逐层计入收率，点击产品可查看配方及引用明细。</p></div>
         <div><strong>配方管理</strong><p>支持新增、编辑、双成本试算、保存草稿及管理人员核对启用；停用检查引用关系，重新启用保留原编号和历史。草稿重启后保留，并发或试算过期时提示重新核对。</p></div>
         <div><strong>成本历史与自动更新</strong><p>价格、库存或配方启用后自动重算，历史保存当期配方与取价依据。补齐采购V1—V21对应的21期历史回算，明确当前补价依据，与正式记录及原表历史试算分别展示。</p></div>
-        <div><strong>看板与成本比较</strong><p>趋势增加双线图例、日期和产品选择；新增双成本差异排行，支持最新优先和库存优先筛选。台账变化与最近一次不同价格比较，连续同价保留最后变化；日期排行仍按区间首尾比较。</p><p>研发金额显示和悬停统一两位，比较前四舍五入到分；配方内部计算精度保留。</p></div>
+        <div><strong>看板与成本比较</strong><p>趋势增加双线图例、日期和产品选择；新增双成本差异排行，支持行情优先和库存优先筛选。台账变化与最近一次不同价格比较，连续同价保留最后变化；日期排行仍按区间首尾比较。</p><p>研发金额显示和悬停统一两位，比较前四舍五入到分；配方内部计算精度保留。</p></div>
         <div><strong>看板与排行优化</strong><p>采购与研发主页统一字号、布局及十项排行；采购排行原料可直接打开详情。研发排行名称与日期左对齐，长内编悬停显示全名，双成本排行的筛选、行高及分隔线统一对齐。</p></div>
         <div><strong>历史分类与相邻期比较</strong><p>两工作台的价格历史新增带数量的分类筛选。研发版本列表及版本明细按上一期有效成本比较，同价显示“较上期无变化”；首次正式基线显示“成本 v22”，不改写采购版本和冻结历史。台账及产品历史继续保留最近一次不同价格口径。</p></div>
         <div><strong>共用控件与抽屉</strong><p>采购和研发共用换页器、历史分类及内编悬停反馈。研发筛选收为三个下拉字段，已选条件可单独清除；成本显示字段名称简化。简单表单抽屉保持标准宽度，宽表格详情适当加宽，统一进出场动画、关闭及焦点恢复；停用入口移至编辑旁并保留确认。</p></div>

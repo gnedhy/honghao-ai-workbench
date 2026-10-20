@@ -6,9 +6,10 @@ import { WorkbenchOptionMenu } from "../components/WorkbenchMenus";
 import { LedgerPagination } from "../components/LedgerPagination";
 import { salesDepartments, type Product } from "./salesModel";
 import s from "./SalesProductPicker.module.css";
+import { compareCodes } from "../codeOrder";
 
 type Basis = "latest" | "inventory";
-const basisLabel = (basis: Basis) => basis === "inventory" ? "库存优先" : "最新优先";
+const basisLabel = (basis: Basis) => basis === "inventory" ? "库存优先" : "行情优先";
 const amount = (value: string | null | undefined) => value == null ? "—" : Number(value).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export function SalesProductPicker({ products, selected, basis, cost, add = false, excludeIds = [], onSelect }: {
@@ -29,7 +30,7 @@ export function SalesProductPicker({ products, selected, basis, cost, add = fals
   const [page, setPage] = useState(1);
   const departments = salesDepartments(products);
   const matches = products.filter(product => !excludeIds.includes(product.id) && (!source || product.source === source) && (!department || product.department === department)
-    && `${product.code} ${product.name} ${product.department}`.toLowerCase().includes(query.trim().toLowerCase()));
+    && `${product.code} ${product.name} ${product.department}`.toLowerCase().includes(query.trim().toLowerCase())).sort((a,b) => compareCodes(a.code,b.code));
   const currentPage = Math.min(page, Math.max(1, Math.ceil(matches.length / 50)));
   const shown = matches.slice((currentPage - 1) * 50, currentPage * 50);
   const close = (focus = false) => {

@@ -308,7 +308,7 @@ try {
     assert.equal(await adopted.getByRole('button', { name: '库存优先', exact: true }).isDisabled(), true);
     await page.screenshot({ path: '.scratch/w4-20261002/quote-adopted.png', animations: 'disabled' });
     await page.getByLabel('添加产品', { exact: true }).click();
-    await page.getByRole('button', { name: /^CF401B 最新优先/ }).click();
+    await page.getByRole('button', { name: /^CF401B 行情优先/ }).click();
     const added = page.getByRole('dialog', { name: '报价明细', exact: true }).locator('article').filter({ hasText: 'CF401B' });
     await added.getByRole('button', { name: '报价调整', exact: true }).click();
     await added.getByLabel('特殊公摊（元）', { exact: true }).fill('0.3');

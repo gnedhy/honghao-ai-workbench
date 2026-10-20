@@ -56,7 +56,7 @@ export type TierDraft = { panelId: string; stepId: string; rows: Tier[]; error: 
 
 export const dateLabel = (value: string) =>
   new Date(value).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-export const basisLabel = (basis?: Source["basis"]) => basis === "inventory" ? "库存优先" : "最新优先";
+export const basisLabel = (basis?: Source["basis"]) => basis === "inventory" ? "库存优先" : "行情优先";
 export const operationLabel: Record<Operation, string> = { "+": "+", "-": "−", "*": "×", "/": "÷" };
 
 export function defaults(mode: Mode, special = false): Step[] {

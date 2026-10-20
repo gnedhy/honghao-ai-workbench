@@ -64,7 +64,7 @@ try{
  });
  await run('research-import-reference-mean-drilldown',async()=>{
   await page.setViewportSize({width:1440,height:1000});await page.getByRole('button',{name:'均价引用检查',exact:true}).click();
-  await page.getByText('最新优先缺少核算价格：SYN-MISSING。当前口径自动成本待完善。',{exact:true}).waitFor();
+  await page.getByText('行情优先缺少核算价格：SYN-MISSING。当前口径自动成本待完善。',{exact:true}).waitFor();
   const basis='参考原料有价算术平均 · REF-A／REF-B／REF-MISSING（2/3有价）';
   const hint=page.getByLabel(basis,{exact:true});await hint.waitFor();
   assert.equal(await hint.innerText(),'参考均价');assert.equal(await hint.getAttribute('title'),basis);assert.equal(await hint.locator('svg').count(),1);

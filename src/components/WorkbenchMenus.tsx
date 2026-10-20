@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { CalendarDays, Check, ChevronRight, Search, Trash2 } from "lucide-react";
 import styles from "./WorkbenchSurface.module.css";
+import { compareCodes } from "../codeOrder";
 
 export function TrendMaterialMenu({ materials, selected, onSelect, label = "趋势原料", placeholder = "搜索原料编号" }: { materials: { id: string; code: string }[]; selected: string; onSelect: (code: string) => void; label?: string; placeholder?: string }) {
   const menu = useRef<HTMLDetailsElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
-  const matches = materials.filter(item => item.code.toLowerCase().includes(query.trim().toLowerCase()));
+  const matches = materials.filter(item => item.code.toLowerCase().includes(query.trim().toLowerCase())).sort((a,b) => compareCodes(a.code,b.code));
   const close = (focus = false) => { if (menu.current) menu.current.open = false; if (focus) menu.current?.querySelector("summary")?.focus(); };
   useEffect(() => {
     const outside = (event: PointerEvent) => { if (!menu.current?.contains(event.target as Node)) close(); };
