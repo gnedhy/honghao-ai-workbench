@@ -366,6 +366,15 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
     </div>
     <h3 className="settings-section-label">更新日志</h3>
     <ol className="settings-timeline" tabIndex={0} aria-label="更新日志"><li>
+      <div className="changelog-date"><time dateTime="2026-10-21">2026年10月21日</time></div>
+      <div className="settings-timeline-content">
+        <div><strong>配方零投料校验</strong><p>保留原配方的零投料占位行；新增投料或改为非零时，仍校验原料有效性。</p></div>
+        <div><strong>库存数据与含税口径</strong><p>行情表内原料按表中库存价、库存量同步；表外 ERP 库存价统一为含税口径。DM064 含税库存价核对为 7.40 元/kg，库存量保持。</p></div>
+        <div><strong>成本历史修订</strong><p>本次库存同步、含税换算及价格更正合并为成本 V35 的修订，展示最终成本，保留原始记录与修订过程，不额外增加行情期次。</p></div>
+        <div><strong>采购版本说明</strong><p>采购行情仍为 V27，补充库存资料修订说明，行情价格和原始行情快照保持。</p></div>
+        <div><strong>历史分页样式</strong><p>统一历史列表分页条与表格分页的展示，改善边框衔接。</p></div>
+      </div>
+    </li><li>
       <div className="changelog-date"><time dateTime="2026-10-20">2026年10月20日</time></div>
       <div className="settings-timeline-content">
         <div><strong>使用说明补充</strong><p>按工作台分层查看操作指引，补齐销售报价与测算工具说明，支持展开、返回和阅读位置保留。</p></div>

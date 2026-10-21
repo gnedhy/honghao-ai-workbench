@@ -443,6 +443,7 @@ dialog.materialCreate > header { display: flex; align-items: center; justify-con
 .ledgerMode button[aria-pressed="true"] { color: var(--text); background: var(--selected); box-shadow: inset 0 0 0 1px var(--selected-border); }
 .paginationBar { display: flex; min-height: 48px; flex: none; align-items: center; gap: 16px; padding: 7px 10px; border: 1px solid var(--border); border-top: 0; border-radius: 0 0 9px 9px; color: #7a8289; background: #fbfcfc; font-size: calc(11.5px + var(--ui-font-offset)); }
 .paginationBar > span { margin-right: auto; white-space: nowrap; }
+.paginationBar:not(.ledgerTableWrap + .paginationBar) { border: 0; border-top: 1px solid var(--border); border-radius: 0; background: transparent; }
 .pageSizeControl, .pageNavigation { display: flex; align-items: center; gap: 5px; }
 .pageSizeControl button, .pageNavigation button { display: inline-flex; min-height: 28px; align-items: center; gap: 3px; padding: 0 8px; border-radius: 6px; color: #697178; background: transparent; font-size: calc(11.5px + var(--ui-font-offset)); cursor: pointer; }
 .pageSizeControl button[aria-pressed="true"] { color: var(--text); background: var(--selected); font-weight: 600; }

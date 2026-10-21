@@ -36,7 +36,7 @@ OVERVIEW_TABLES = (
     "procurement_price_batches", "procurement_price_batch_items", "procurement_materials",
     "procurement_departments", "procurement_department_materials", "identity_users",
     "identity_user_scopes", "organization_memberships", "organization_departments",
-    "research_activation_grants",
+    "research_activation_grants", "research_event_revisions",
 )
 OVERVIEW_INSTANCE = str(uuid4())  # Reload open tabs after a service/program restart too.
 MATERIAL_TABLES = OVERVIEW_TABLES + (
@@ -673,13 +673,21 @@ class ResearchStore:
         allowed = {"material": {r["code"] for r in options["materials"]}, "recipe": {r["id"] for r in options["recipes"]}, "composite":{r["id"] for r in options["composites"]}}
         if not 1 <= len(body["formula"]["lines"]) <= 500:
             raise ValueError("投料明细应为1至500条")
+        placeholders = [line for line in original["lines"] if line["kind"] == "material" and Decimal(line["quantity"]) == 0]
         for pos, raw in enumerate(body["formula"]["lines"]):
             kind, ref = raw["kind"], raw["ref"]
-            if kind not in allowed or ref not in allowed[kind]:
-                raise ValueError("投料引用已失效或不在在用原料范围：" + ref)
             quantity = decimal_text(input_number(raw["quantity"], raw, "投料量"))
+            placeholder = None
+            if kind not in allowed or ref not in allowed[kind]:
+                match = next((i for i, line in enumerate(placeholders) if kind == "material" and Decimal(quantity) == 0
+                              and line["ref"] == ref and line.get("source_row") == raw.get("source_row")), None)
+                if match is None:
+                    raise ValueError("投料引用已失效或不在在用原料范围：" + ref)
+                # Consume each original zero-input row once; a duplicated/new row must use a valid material.
+                placeholder = placeholders.pop(match)
             # A reordered source row retains its verified provenance; client text cannot invent source cells.
             old = next((line for line in original["lines"] if raw.get("source_row") is not None and line.get("source_row") == raw["source_row"]), {})
+            old = placeholder if placeholder is not None else old
             line = deepcopy(old) if (old.get("kind"),old.get("ref")) == (kind,ref) else {"source_row":None,"source_cells":{}}
             name = ref if kind == "material" else next(r["name"] for r in options["recipes"]+options["composites"] if r["id"] == ref)
             line.update(kind=kind,ref=ref,code=name,quantity=quantity)

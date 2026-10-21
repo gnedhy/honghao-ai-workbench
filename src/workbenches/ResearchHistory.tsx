@@ -10,7 +10,7 @@ import {Drawer,HistoricalFormula,Money,Movement,ProductLink} from "./ResearchPro
 import p from "../components/WorkbenchSurface.module.css";
 import s from "./ResearchWorkbench.module.css";
 
-const versionLabel=(version:Version)=>version.record_type==="backfill"?`采购 v${version.purchase_version??"—"} · 历史回算`:`成本 v${version.cost_version??"—"} · 正式记录`;
+const versionLabel=(version:Version)=>version.record_type==="backfill"?`采购 v${version.purchase_version??"—"} · 历史回算`:`成本 v${version.cost_version??"—"} · ${version.reason.includes("已修订") ? "已修订" : "正式记录"}`;
 type Period=Version&{product_count:number;stats:{up:number;down:number;stable:number;missing:number}};
 type HistoryPage={items:Period[];total:number;scope_total:number;min_date:string;max_date:string;page:number;version:string;counts:{all:number;formal:number;backfill:number}};
 

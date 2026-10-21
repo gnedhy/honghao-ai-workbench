@@ -53,6 +53,7 @@ def isolated_postgres(pg_targets, pg_setup_pools, monkeypatch):
         postgres._check_environment(connection, "test")
         connection.execute("DROP SCHEMA public CASCADE")
         connection.execute("CREATE SCHEMA public")
+        connection.execute("DELETE FROM honghao_meta.read_versions")
         for _, _, _, content in postgres._migration_files()[1:]:
             connection.execute(content)
         _grant_app(connection)

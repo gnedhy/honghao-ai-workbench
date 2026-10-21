@@ -5,6 +5,7 @@ import { DiscardChangesDialog, SettingsGroup, useUnsavedChanges } from "../../sr
 import { Switch } from "../../src/components/Switch";
 import { DecimalInput } from "../../src/components/DecimalInput";
 import { LedgerPagination } from "../../src/components/LedgerPagination";
+import surface from "../../src/components/WorkbenchSurface.module.css";
 import { TrendMaterialMenu, PriceDateRangeMenu } from "../../src/components/WorkbenchMenus";
 import { FormFooter, DashboardPanel, PageState, WorkbenchLoading } from "../../src/components/WorkbenchLayout";
 import { PriceMovement } from "../../src/components/PriceMovement";
@@ -35,6 +36,8 @@ function Examples() {
     <SettingsGroup id="example-records" title="记录" description="展开、收起与键盘操作" summary="11 条" defaultOpen><p>长文案会自然换行，收起后内部按钮不可聚焦。</p><button type="button" className="secondary-button">记录操作</button><LedgerPagination total={11} page={page} pageSize={10} onPageChange={setPage}/></SettingsGroup>
     {confirm&&<DiscardChangesDialog title={enabled?"取消授权？":"确认授权？"} description="确认后才改变实际状态。失败时保留当前状态，可以重试或放弃。长文案完整展示，弹窗内容不会被省略。" confirmLabel={enabled?"取消授权":"确认授权"} cancelLabel="放弃操作" intent={enabled?"danger":"primary"} onCancel={()=>setConfirm(false)} onDiscard={()=>{if(state!=="失败"){setEnabled(!enabled);setConfirm(false);}}}>{state==="失败"&&<p role="alert">模拟请求失败，请放弃操作后选择正常状态重试。</p>}</DiscardChangesDialog>}
     {drawer&&<Drawer title="编辑示例 · 长名称自然换行" label="仅用于组件验收" beforeClose={unsaved.request} onClose={()=>{setDrawer(false);setDirty(false);}} busy={state==="加载"}>{unsaved.confirmation}<label>编辑内容<input aria-label="抽屉填写内容" onChange={()=>setDirty(true)}/></label><p>修改后，通过关闭按钮、Esc 或外部点击检查拦截。</p><FormFooter status={<span role="status">{dirty?"有未保存修改":"尚未修改"}</span>}><button type="button" className="primary-button" onClick={()=>setDirty(false)}>保存示例</button></FormFooter></Drawer>}
+    <section aria-label="表格分页示例"><h2>表格分页</h2><div className={surface.ledgerTableWrap}><table className={surface.table}><thead><tr><th>原料编号</th><th>行情价格</th></tr></thead><tbody><tr><td>示例原料</td><td>¥12.00</td></tr></tbody></table></div><LedgerPagination total={27} page={page} pageSize={10} onPageChange={setPage}/></section>
+    <section aria-label="窄栏分页示例" style={{maxWidth:320}}><h2>独立列表 · 窄栏</h2><p>示例历史记录</p><LedgerPagination total={27} page={page} pageSize={10} onPageChange={setPage}/></section>
   </main>;
 }
 createRoot(document.getElementById("root")!).render(<Examples/>);

@@ -167,5 +167,11 @@ def batch_page(store, *, page=1, page_size=10, status='all', version=None, start
         for row in rows:
             item=dict(zip(('id','version','published_at','item_count','price_date','activated_at','source_name','submitted_by','published_by'),row))
             item.update(status='active' if row[1]==latest else 'historical',comparison=store.batch_comparison(row[0]),provenance=collaboration.provenance(store.url,row[0]),published_by_name=store._user_name(row[8]))
+            item["revision_note"] = revision_note(db,row[0])
             items.append(item)
         return dict(items=items,total=count,scope_total=total,page=page,version=current)
+
+
+def revision_note(db, batch_id):
+    row=db.execute('SELECT note FROM procurement_batch_revisions WHERE batch_id=%s',(batch_id,)).fetchone()
+    return row[0] if row else None

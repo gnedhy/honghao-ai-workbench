@@ -1618,6 +1618,8 @@ class ProcurementStore:
                 """,
                 (batch_id,),
             ).fetchall()
+            from api.procurement_reads import revision_note
+            note = revision_note(connection,batch_id)
             scheduled_activation = connection.execute(
                 """SELECT 1 FROM procurement_update_events WHERE event='scheduled_activation'
                    AND update_id=(SELECT update_id FROM procurement_price_batches WHERE id=%s)""", (batch_id,),
@@ -1637,6 +1639,7 @@ class ProcurementStore:
                 "snapshot_sources": collaboration.snapshot_sources(self.url, batch_id),
                 "comparison": self.batch_comparison(batch_id),
                 "activation_mode": "scheduled" if scheduled_activation else "immediate",
+                "revision_note": note,
                 "status": str(batch[9]),
                 "items": [
                     {
