@@ -63,7 +63,7 @@ def history_record(db,key,event_id,actor):
     if summary[1]=='backfill':
         raw=db.execute(f'SELECT {BACKFILL_DETAIL} FROM research_backfill_records WHERE product_id=%s AND purchase_version=%s',(key,summary[2])).fetchone()
     else:
-        raw=db.execute('SELECT payload FROM research_cost_records WHERE product_id=%s AND event_id=%s',(key,event_id)).fetchone()
+        raw=db.execute('SELECT payload FROM research_cost_records WHERE product_id=%s AND event_id=%s',(key,summary[0].get('source_event_id',event_id))).fetchone()
     if raw is None: raise KeyError('记录不存在')
     row=normalize({**json.loads(raw[0]),**summary[0]})
     access.require(row.get('formula',row))

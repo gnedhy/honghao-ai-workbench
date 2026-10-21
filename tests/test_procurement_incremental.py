@@ -10,7 +10,10 @@ from tests.test_procurement_collaboration import real_data, PREFIX, PASSWORD
 def test_scoped_procurement_history_matches_frozen_prices_and_attribution(real_data):
     settings, client, _ = real_data
     store=ProcurementStore(settings.database_url)
+    with transaction(settings.database_url,write=True) as db:
+        db.execute("INSERT INTO procurement_batch_revisions(batch_id,note,actor,recorded_at) SELECT id,'库存口径已修订','test','2026-10-21' FROM procurement_price_batches ORDER BY version DESC LIMIT 1")
     full_overview=store.overview()
+    assert full_overview['batches'][0]['revision_note']=='库存口径已修订'
     compact_overview=client.get(PREFIX+'/overview?compact=true').json()
     assert compact_overview['materials']==full_overview['materials']
     assert compact_overview['metrics']==full_overview['metrics']

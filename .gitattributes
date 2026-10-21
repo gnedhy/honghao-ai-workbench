@@ -7,3 +7,6 @@ api/migrations/postgresql/0006_read_versions.sql -text whitespace=blank-at-eol,b
 # Migrations 0008-0017 were also applied with CRLF; preserve their recorded bytes.
 api/migrations/postgresql/000[89]_*.sql -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 api/migrations/postgresql/001[0-7]_*.sql -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+
+# Migration 0018 was formally applied with CRLF; preserve its immutable checksum.
+api/migrations/postgresql/0018_research_revision_groups.sql -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

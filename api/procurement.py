@@ -393,9 +393,10 @@ class ProcurementStore:
                 """
             ).fetchall()
             batch_rows = connection.execute(
-                """SELECT id, version, published_at, item_count, price_date, activated_at,
-                          source_name, submitted_by, published_by
-                   FROM procurement_price_batches ORDER BY version DESC LIMIT %s""", (2 if compact else 2147483647,)
+                """SELECT b.id, version, published_at, item_count, price_date, activated_at,
+                          source_name, submitted_by, published_by, r.note
+                   FROM procurement_price_batches b LEFT JOIN procurement_batch_revisions r ON r.batch_id=b.id
+                   ORDER BY version DESC LIMIT %s""", (2 if compact else 2147483647,)
             ).fetchall()
             current_batch_id = str(batch_rows[0][0]) if batch_rows else None
             previous_batch_id = str(batch_rows[1][0]) if len(batch_rows) > 1 else None
@@ -482,6 +483,7 @@ class ProcurementStore:
                         "status": "active" if str(row[0]) == current_batch_id else "historical",
                         "comparison": self.batch_comparison(str(row[0])),
                         "provenance": collaboration.provenance(self.url, str(row[0])),
+                        "revision_note": row[9],
                         "published_by_name": self._user_name(str(row[8])),
                     }
                     for row in batch_rows
@@ -1618,6 +1620,8 @@ class ProcurementStore:
                 """,
                 (batch_id,),
             ).fetchall()
+            from api.procurement_reads import revision_note
+            note = revision_note(connection,batch_id)
             scheduled_activation = connection.execute(
                 """SELECT 1 FROM procurement_update_events WHERE event='scheduled_activation'
                    AND update_id=(SELECT update_id FROM procurement_price_batches WHERE id=%s)""", (batch_id,),
@@ -1637,6 +1641,7 @@ class ProcurementStore:
                 "snapshot_sources": collaboration.snapshot_sources(self.url, batch_id),
                 "comparison": self.batch_comparison(batch_id),
                 "activation_mode": "scheduled" if scheduled_activation else "immediate",
+                "revision_note": note,
                 "status": str(batch[9]),
                 "items": [
                     {

@@ -132,6 +132,14 @@ def linked_histories(db, keys, periods=None, summary=False, series=False):
         if period and period.get('price_date'):
             row.update(effective_date=period['price_date'], purchase_version=period['version'])
         entries[key].append(row)
+    if db.execute('SELECT 1 FROM research_event_revisions LIMIT 1').fetchone():
+        projected = {key:[] for key in keys}
+        originals = {(key,row['event_id']):row for key,rows in entries.items() for row in rows}
+        for key,eid,value in db.execute('SELECT product_id,event_id,payload FROM research_history_reads WHERE product_id=ANY(%s) ORDER BY ordinal DESC',(list(keys),)):
+            raw = originals.get((key,value.get('source_event_id',eid)))
+            if raw is not None:
+                projected[key].append({**raw,**{k:v for k,v in value.items() if k!='_visibility'}})
+        return projected
     return {key:_compare_history(rows) for key,rows in entries.items()}
 
 

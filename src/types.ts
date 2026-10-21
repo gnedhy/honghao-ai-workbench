@@ -135,6 +135,7 @@ export type ProcurementIssue = {
 };
 
 export type ProcurementBatch = {
+  revision_note?: string | null;
   provenance?: { origin: string; filename: string; imported_at: string; imported_by: string; reported_count: number };
   published_by_name?: string | null;
   comparison?: { added_material_ids?: string[]; previous_version: number | null; up: number; down: number; unchanged: number; first: number; missing: number; incomparable?: number; items: Record<string, { previous: string | null; previous_raw?: string | null; change: number | null; kind: string; version?: number; previous_version?: number | null }> };
