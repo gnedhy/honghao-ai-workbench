@@ -16,7 +16,6 @@ export function useProcurementMaterialQuery(materials:ProcurementMaterial[],data
   const serverMode=Boolean(data.read_page)&&!edit;
   const [remote,setRemote]=useState<ProcurementOverview|null>(null);
   const [loadError,setLoadError]=useState("");
-  const [pageLoading,setPageLoading]=useState(false);
   const versionRef=useRef<string|undefined>(undefined);
   const version=page>1?versionRef.current:undefined;
   const filters=JSON.stringify({search:query,movement,scope,editor,sort,direction:sortDirection,source,...(version?{version}:{})});
@@ -25,7 +24,7 @@ export function useProcurementMaterialQuery(materials:ProcurementMaterial[],data
   useEffect(()=>{
     const changed=previousCriteria.current!==criteria;previousCriteria.current=criteria;
     if(!serverMode||(changed&&page>1))return;
-    const controller=new AbortController();setPageLoading(true);setLoadError("");if(changed||page===1)setRemote(null);
+    const controller=new AbortController();setLoadError("");if(changed||page===1)setRemote(null);
     fetchJson<ProcurementOverview>(`/api/workbenches/procurement/overview?read_mode=ledger&page=${page}&page_size=${pageSize}&filters=${encodeURIComponent(filters)}`,{signal:controller.signal}).then(value=>{if(!controller.signal.aborted){versionRef.current=value.read_page?.version;setRemote(previous=>{
       if(ledgerView!=="scroll"||page===1||!previous||value.read_page?.page!==page)return value;
       const ids=new Set(value.materials.map(item=>item.id));
@@ -34,7 +33,7 @@ export function useProcurementMaterialQuery(materials:ProcurementMaterial[],data
         items:[...previous.current_update.items.filter(item=>!ids.has(item.material_id)),...value.current_update.items],
         issues:[...previous.current_update.issues.filter(item=>!ids.has(item.material_id)),...value.current_update.issues]}:value.current_update;
       return {...value,current_update:update,materials:[...previous.materials.filter(item=>!ids.has(item.id)),...value.materials],ledger_comparison:value.ledger_comparison?{...value.ledger_comparison,items:{...previous.ledger_comparison?.items,...value.ledger_comparison.items}}:value.ledger_comparison};
-    });}}).catch(error=>{if(!controller.signal.aborted){if(error?.status===409){setRemote(null);setPage(1);return;}if(error?.status===401||error?.status===403)setRemote(null);setLoadError("原料台账读取失败，请重新读取。");}}).finally(()=>{if(!controller.signal.aborted)setPageLoading(false);});
+    });}}).catch(error=>{if(!controller.signal.aborted){if(error?.status===409){setRemote(null);setPage(1);return;}if(error?.status===401||error?.status===403)setRemote(null);setLoadError("原料台账读取失败，请重新读取。");}});
     return()=>controller.abort();
   },[serverMode,page,pageSize,filters,data,ledgerView,criteria]);
   const effective=serverMode?remote:data;
@@ -55,7 +54,7 @@ export function useProcurementMaterialQuery(materials:ProcurementMaterial[],data
   const pageCount=Math.max(1,Math.ceil(total/pageSize));
   const safePage=Math.min(serverMode?(remote?.read_page?.page??page):page,pageCount);
   const visibleRows=serverMode?rows:ledgerView==="paged"?rows.slice((safePage-1)*pageSize,safePage*pageSize):rows;
-  return {displayedUpdate:effective?.current_update??null,total,scopeTotal:serverMode?(remote?.read_page?.scope_total??data.metrics.material_count):materials.length,loading:serverMode&&(pageLoading||!remote)&&!loadError,loadError,serverMode,query,movement,editor,scope,sort,sortDirection,page,safePage,rows,allRows,visibleRows,selectedPerson,formalComparison,filterNotice,
+  return {displayedUpdate:effective?.current_update??null,total,scopeTotal:serverMode?(remote?.read_page?.scope_total??data.metrics.material_count):materials.length,loading:serverMode&&(!remote||remote.read_page?.page!==page)&&!loadError,loadError,serverMode,query,movement,editor,scope,sort,sortDirection,page,safePage,rows,allRows,visibleRows,selectedPerson,formalComparison,filterNotice,
     actions:{setQuery,setMovement,setEditor,setScope,setSort,setSortDirection,setPage,setFilterNotice,resetSort,
       filterTasks:(next:string)=>{setScope(next);setQuery("");setMovement("all");setPage(1);}}};
 }
