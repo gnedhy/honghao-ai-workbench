@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "零投料保留、V35 合并修订及最终冻结来源读取、采购 V27 修订说明、分页样式和更新日志。",
+  "modules": [
+    "procurement",
+    "research",
+    "sales"
+  ],
+  "files": [
+    "api/migrations/postgresql/0018_research_revision_groups.sql",
+    "api/procurement.py",
+    "api/procurement_reads.py",
+    "api/research.py",
+    "api/research_history.py",
+    "api/research_reads.py",
+    "src/components/SettingsDialog.tsx",
+    "src/components/WorkbenchSurface.module.css",
+    "src/types.ts",
+    "src/workbenches/ProcurementWorkbench.tsx",
+    "src/workbenches/ResearchHistory.tsx",
+    "src/workbenches/ResearchProductView.tsx",
+    "src/workbenches/researchModel.ts"
+  ],
+  "consumers": [
+    "src/workbenches/ProcurementWorkbench.tsx",
+    "src/workbenches/ResearchHistory.tsx",
+    "src/workbenches/ResearchProductView.tsx",
+    "src/workbenches/SalesWorkbench.tsx",
+    "src/components/SettingsDialog.tsx"
+  ],
+  "permissions": "查询先限定当前权限与归属，再计数分页；排队后二次鉴权，撤权清空前端结果，不使用历史缓存替代鉴权。",
+  "data": "迁移 18 增加修订映射与采购说明，保留原始冻结记录。库存更正需独立核对执行；不会在迁移中自动重放。",
+  "lifecycle": "归组后使用最终来源的成本及冻结明细，历史比较排除中间修订；刷新和后续新增记录保持归组，零投料仅保留原配方合法占位。",
+  "exits": "保留草稿、忙碌与退出检查；请求卸载取消，失败保留重试，编辑选项按需读取后进入编辑。",
+  "compatibility": "旧读取接口复用相同投影；原有最终成本、报价冻结记录和权限规则保持。迁移 18 的正式 CRLF 字节已固定。",
+  "recovery": "正式数据已备份并验收。应用回退需匹配数据库迁移版本，服务器数据同步前先保留独立写入。",
+  "verification": {
+    "api": [
+      "tests/test_research_revisions.py::test_revision_projection_retains_final_frozen_source_and_survives_future_records",
+      "tests/test_research_zero_placeholders.py::test_original_zero_placeholders_survive_without_accepting_new_invalid_inputs",
+      "tests/test_inventory_tax.py::test_tax_normalization_keeps_sources_and_rejects_repeat_or_stale_input",
+      "tests/test_research_departments.py::test_foreign_writes_and_membership_revocation_are_denied",
+      "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+    ],
+    "node": [],
+    "browser": [
+      {
+        "file": "scripts/check-workbench-loading.mjs",
+        "id": "research-history-periods-and-material-price-arrows",
+        "apiTest": "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+      }
+    ]
+  }
+}
