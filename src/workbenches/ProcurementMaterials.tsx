@@ -3,7 +3,7 @@ import {HelpHint} from "../components/HelpHint";
 import {SortHeading} from "../components/SortHeading";
 import { useProcurementEditSession } from "./procurementEditSession";
 import { useProcurementMaterialQuery } from "./procurementMaterialQuery";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronRight, Clock3, Columns3, Ellipsis, FileUp, PackageCheck, Pencil, Plus, Search, SlidersHorizontal, X } from "lucide-react";
 import { fetchProcurementPreferences, saveProcurementPreferences } from "../api";
 import type { ProcurementMaterial, ProcurementOverview, ProcurementPage, ProcurementPreferences } from "../types";
@@ -25,6 +25,7 @@ const LEDGER_COLUMNS = [
   ["price_date", "价格日期"], ["modifier", "修改人"], ["status", "状态"], ["previous_latest_price", "上版价格"], ["in_transit_price", "在途价"], ["suggested_price", "建议价"], ["data_source", "数据来源"],
 ] as const;
 const MATERIAL_COLUMN_WIDTH = 240;
+const WORK_COLUMNS = ["unit", "latest_price", "draft_price", "change", "modifier", "status"];
 const LEDGER_COLUMN_WIDTHS: Record<string, number> = {
   inventory_quantity: 120,
   unit: 72,
@@ -59,10 +60,10 @@ export function ProcurementMaterials({ onRequestEdit,department, onOpenDepartmen
   const {setQuery,setMovement,setEditor,setScope,setSort,setSortDirection,setPage,setFilterNotice,filterTasks,resetSort}=queryState.actions;
   const {stopEditing,saveEdits,cancelRound,recover}=session.actions;
   const editors=data.editors??[];
-  const formalChange=(item:ProcurementMaterial)=>formalLedgerChange(item,formalComparison);
+  const formalChange=useCallback((item:ProcurementMaterial)=>formalLedgerChange(item,formalComparison),[formalComparison]);
   const errors=data.read_page?.task_counts?.missing??allRows.filter(row=>row.missing).length;
   const risks=data.read_page?.task_counts?.risk??allRows.filter(row=>row.risk?.status==="open").length;
-  const pending=new Set(allRows.filter(row=>row.pending).map(row=>row.material.id));
+  const pending=useMemo(()=>new Set(allRows.filter(row=>row.pending).map(row=>row.material.id)),[allRows]);
   const toolbar=useRef<HTMLDivElement>(null), moreButton=useRef<HTMLElement|null>(null);
   const saveDialog=useRef<HTMLDialogElement>(null),saveButton=useRef<HTMLButtonElement>(null),cancelRoundButton=useRef<HTMLButtonElement>(null);
   const searchInput=useRef<HTMLInputElement>(null),summary=useRef<HTMLDivElement>(null);
@@ -78,12 +79,14 @@ export function ProcurementMaterials({ onRequestEdit,department, onOpenDepartmen
     document.addEventListener("pointerdown",dismiss,true);return()=>document.removeEventListener("pointerdown",dismiss,true);
   },[]);
   const columnOptions: ReadonlyArray<readonly [string, string]> = current || edit ? [...LEDGER_COLUMNS.map(([id, label]) => [id, id === "status" ? "处理状态" : label] as const), ["draft_price", "待发布价"]] : LEDGER_COLUMNS;
-  const savedColumns = current ? workColumns?.id === current.id ? workColumns.columns : ["unit", "latest_price", "draft_price", "change", "modifier", "status"] : preferences?.ledger_columns ?? DEFAULT_PREFERENCES.ledger_columns;
+  const savedColumns = current ? workColumns?.id === current.id ? workColumns.columns : WORK_COLUMNS : preferences?.ledger_columns ?? DEFAULT_PREFERENCES.ledger_columns;
+  const columns = useMemo(()=>{
   const columns = [...savedColumns];
   if (edit) {
     for (const id of ["unit", "latest_price"]) if (!columns.includes(id)) columns.push(id);
     if (!columns.includes("draft_price")) columns.splice(columns.indexOf("latest_price") + 1, 0, "draft_price");
   }
+  return columns;},[savedColumns,edit]);
   const activeFilterCount = Number(movement !== "all") + Number(scope !== "all") + Number(source !== "all");
   const columnWidth = (id: string) => current && id === "status" ? 150 : current && id === "change" ? 178 : LEDGER_COLUMN_WIDTHS[id] ?? 112;
   const tableWidth = (department?.selection ? 56 : 0) + MATERIAL_COLUMN_WIDTH + columns.reduce((total, id) => total + columnWidth(id), 0);
@@ -119,7 +122,7 @@ export function ProcurementMaterials({ onRequestEdit,department, onOpenDepartmen
     const value = Number(pageSizeInput);
     if (Number.isFinite(value)) setPageSize(value); else setPageSizeInput(String(pageSize));
   };
-  const openMaterial = (id: string, editing = false) => { if (edit || department?.selection) return; if (department) { onOpenDepartmentMaterial(id); return; } setNewPrice(editing); setSelected(id); };
+  const openMaterial = useCallback((id: string, editing = false) => { if (edit || department?.selection) return; if (department) { onOpenDepartmentMaterial(id); return; } setNewPrice(editing); setSelected(id); },[edit,department,onOpenDepartmentMaterial]);
   const startEditing=()=>data.read_page&&onRequestEdit?void onRequestEdit():session.actions.startEditing([...new Set([...rows,...allRows].map(row=>row.material.id))],sort,sortDirection);
   const startRef=useRef({startEditing,onEditStarted});startRef.current={startEditing,onEditStarted};
   useEffect(()=>{if(startInEdit){startRef.current.startEditing();startRef.current.onEditStarted();}},[startInEdit]);
@@ -130,11 +133,11 @@ export function ProcurementMaterials({ onRequestEdit,department, onOpenDepartmen
     window.requestAnimationFrame(() => saveButton.current?.focus({ preventScroll: true }));
   };
   const closePanel = () => { if (busy) return; setPanel(null); window.requestAnimationFrame(() => moreButton.current?.focus({ preventScroll: true })); };
-  const toggleRow=(id:string)=>{
+  const toggleRow=useCallback((id:string)=>{
     actionsRef.current.toggleReview(id);
     if(expanded!==id)requestAnimationFrame(()=>document.getElementById(`ledger-review-${id}`)?.querySelector<HTMLSelectElement>("select")?.focus());
-  };
-  const review=async(issueId:string,materialId:string)=>{if(await actionsRef.current.review(issueId,queryState.displayedUpdate))requestAnimationFrame(()=>document.getElementById(`ledger-material-${materialId}`)?.focus());};
+  },[expanded]);
+  const review=useCallback(async(issueId:string,materialId:string)=>{if(await actionsRef.current.review(issueId,queryState.displayedUpdate))requestAnimationFrame(()=>document.getElementById(`ledger-material-${materialId}`)?.focus());},[queryState.displayedUpdate]);
   const renderedRows=useMemo(()=>visibleRows.map(row => {
       const { material: item, input, risk } = row;
       const change = edit ? draftLedgerChange(item, values[item.id] ?? edit.originals[item.id] ?? "", formalComparison) : input ? draftLedgerChange(item, input.draft_price ?? "", formalComparison) : formalChange(item);
@@ -149,7 +152,7 @@ export function ProcurementMaterials({ onRequestEdit,department, onOpenDepartmen
         }</td>)}</tr>
         {current && expanded === item.id && risk && <tr className={styles.ledgerReviewRow}><td colSpan={columns.length + 1}><div id={`ledger-review-${item.id}`} className={styles.ledgerReview} role="region" aria-label={`${item.code}价格波动确认`}>{risk.status === "reviewed" ? <div className={styles.ledgerReviewCopy}><strong>已确认价格波动</strong><p>确认依据：{risk.review_reason}</p></div> : canConfirm ? <><div className={styles.reviewControl}><ReasonSelect label={`${item.code}确认依据`} options={REVIEW_REASONS} placeholder="请选择确认依据" value={reviewReasons[risk.id]} disabled={busy} onChange={value => actionsRef.current.chooseReviewReason(risk.id,value)} /><button type="button" disabled={busy || !resolveReason(reviewReasons[risk.id])} onClick={() => void review(risk.id, item.id)}>{busy ? "正在确认" : "确认波动"}</button></div>{reviewError && <p className={styles.error} role="alert">{reviewError}</p>}</> : <p>等待采购员确认。</p>}<button className={styles.ledgerTextAction} type="button" disabled={busy} onClick={() => { actionsRef.current.toggleReview(null); document.getElementById(`ledger-material-${item.id}`)?.focus(); }}>收起</button></div></td></tr>}
       </Fragment>;
-    }),[visibleRows,edit,values,formalComparison,department,columns.join("|"),current,expanded,canEdit,canConfirm,busy,reviewReasons,reviewError,data.batches,allRows,onOpenDepartmentMaterial,queryState.displayedUpdate]);
+    }),[visibleRows,edit,values,formalComparison,department,columns,current,expanded,canEdit,canConfirm,busy,reviewReasons,reviewError,data.batches,pending,openMaterial,formalChange,toggleRow,review]);
   return <section className={`${styles.section} ${styles.ledgerSection} ${department ? styles.distributionLedger : ""}`}>
     {unsaved.confirmation}
     {!department && <div className={`${styles.sectionHeading} ${styles.ledgerHeading}`}>
