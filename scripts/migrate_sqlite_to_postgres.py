@@ -21,7 +21,7 @@ from api.postgres import database_lease, transaction
 from api.settings import Settings
 
 # The frozen SQLite baseline predates sales. New PostgreSQL tables stay empty.
-POST_SQLITE_TABLES = {'sales_batches', 'sales_trials', 'sales_records', 'sales_events', 'sales_calculator_saved', 'research_backfill_frozen', 'research_history_reads', 'research_history_versions', 'procurement_price_read_points', 'sales_activity'}
+POST_SQLITE_TABLES = {'sales_batches', 'sales_trials', 'sales_records', 'sales_events', 'sales_calculator_saved', 'research_backfill_frozen', 'research_history_reads', 'research_history_versions', 'procurement_price_read_points', 'sales_activity', 'research_event_revisions', 'procurement_batch_revisions'}
 POST_SQLITE_VERSION = 'workbench_sales_schema_version'
 
 

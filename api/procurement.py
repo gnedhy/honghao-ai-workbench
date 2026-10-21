@@ -366,6 +366,7 @@ class ProcurementStore:
         }
 
     def overview(self, *, compact: bool = False) -> dict[str, Any]:
+        from api.procurement_reads import revision_note
         with transaction(self.url) as connection:
             from api.procurement_inventory import inventory_snapshot
             inventory = inventory_snapshot(connection)
@@ -482,6 +483,7 @@ class ProcurementStore:
                         "status": "active" if str(row[0]) == current_batch_id else "historical",
                         "comparison": self.batch_comparison(str(row[0])),
                         "provenance": collaboration.provenance(self.url, str(row[0])),
+                        "revision_note": revision_note(connection, str(row[0])),
                         "published_by_name": self._user_name(str(row[8])),
                     }
                     for row in batch_rows
