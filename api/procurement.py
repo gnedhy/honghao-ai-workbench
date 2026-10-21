@@ -366,7 +366,6 @@ class ProcurementStore:
         }
 
     def overview(self, *, compact: bool = False) -> dict[str, Any]:
-        from api.procurement_reads import revision_note
         with transaction(self.url) as connection:
             from api.procurement_inventory import inventory_snapshot
             inventory = inventory_snapshot(connection)
@@ -394,9 +393,10 @@ class ProcurementStore:
                 """
             ).fetchall()
             batch_rows = connection.execute(
-                """SELECT id, version, published_at, item_count, price_date, activated_at,
-                          source_name, submitted_by, published_by
-                   FROM procurement_price_batches ORDER BY version DESC LIMIT %s""", (2 if compact else 2147483647,)
+                """SELECT b.id, version, published_at, item_count, price_date, activated_at,
+                          source_name, submitted_by, published_by, r.note
+                   FROM procurement_price_batches b LEFT JOIN procurement_batch_revisions r ON r.batch_id=b.id
+                   ORDER BY version DESC LIMIT %s""", (2 if compact else 2147483647,)
             ).fetchall()
             current_batch_id = str(batch_rows[0][0]) if batch_rows else None
             previous_batch_id = str(batch_rows[1][0]) if len(batch_rows) > 1 else None
@@ -483,7 +483,7 @@ class ProcurementStore:
                         "status": "active" if str(row[0]) == current_batch_id else "historical",
                         "comparison": self.batch_comparison(str(row[0])),
                         "provenance": collaboration.provenance(self.url, str(row[0])),
-                        "revision_note": revision_note(connection, str(row[0])),
+                        "revision_note": row[9],
                         "published_by_name": self._user_name(str(row[8])),
                     }
                     for row in batch_rows
