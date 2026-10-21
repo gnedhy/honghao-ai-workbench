@@ -34,7 +34,10 @@ try{
   const state={allowed:[...ids],denied:false,seriesDenied:false,reads:[],gate:null};const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&!m.text().includes('403'))errors.push(m.text());});
   await page.route('**/api/**',async route=>{
    const request=route.request(),url=new URL(request.url()),pathname=url.pathname;state.reads.push(request.method()+' '+pathname+url.search);assert.equal(request.method(),pathname==='/api/workbenches/sales/read/products'?'POST':'GET');
-   if(state.denied||state.seriesDenied&&pathname.includes('/price-series/'))return route.fulfill({status:403,json:{detail:'权限已撤销'}});
+   // Scope can change while an already authorized request is in flight; mirror the server's denial.
+   const requestedId=/^\/api\/workbenches\/research\/products\/[^/]+\/trend$/.test(pathname)?decodeURIComponent(pathname.split('/').at(-2)):pathname==='/api/workbenches/sales/read/series'?url.searchParams.get('product'):pathname==='/api/workbenches/procurement/price-series/scoped'?url.searchParams.get('material_id'):pathname.startsWith('/api/workbenches/procurement/materials/')?decodeURIComponent(pathname.split('/').at(-1)):null;
+   if(requestedId)assert.ok(ids.includes(requestedId),'Never request an identifier outside the fixture');
+   if(state.denied||requestedId&&!state.allowed.includes(requestedId)||state.seriesDenied&&pathname.includes('/price-series/'))return route.fulfill({status:403,json:{detail:'权限已撤销'}});
    const products=state.allowed.map(row);let payload;
    if(pathname==='/api/workbenches/research/dashboard')payload={products:[],formulas:[],pending:false,versions:[],owners:[],dashboard:{latest_date:'2026-10-15',metrics:{products:products.length,up:0,down:0,missing:0,warnings:0,failed:0,drafts:0,tasks:0,periods:6,recent:'2026-10-15'}}};
    else if(pathname==='/api/workbenches/research/product-options'){
