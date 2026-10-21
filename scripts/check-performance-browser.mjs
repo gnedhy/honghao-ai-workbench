@@ -91,6 +91,12 @@ try {
         assert.deepEqual(errors, [], name + ': console/runtime errors'); assert.deepEqual(unexpected, [], name + ': unexpected requests');
         requestCounts.push(requests); requestSamples.push(requestLog);
         if (index === 0) await page.screenshot({ path: path.join(directory, `${kind}.png`), fullPage: false });
+        if (kind === 'procurement' && index === 0) {
+          await page.route('**/api/workbenches/procurement/overview?**', route => route.fulfill({ status: 403, json: { detail: '权限已撤销' } }));
+          await page.getByRole('textbox', { name: '搜索原料', exact: true }).fill('');
+          await page.getByRole('alert').filter({ hasText: '原料台账读取失败' }).waitFor();
+          assert.equal(await page.locator('tbody tr').count(), 0, 'Denied refresh clears retained rows');
+        }
       } finally { await context.close(); }
     }
     const mount = summarize(ready, policy.fixture.browserSamples), input = summarize(filtered, policy.fixture.browserSamples);
@@ -111,11 +117,13 @@ try {
     const next = page.getByRole('button', { name: '下一页', exact: true });
     await next.evaluate(element => element.setAttribute('data-perf-trigger', 'page'));
     await page.evaluate(observeDOMMeasurement, { trigger: '[data-perf-trigger=page]', event: 'click', selector: 'tbody tr', count: 50, text: 'P00050', property: 'perfPageMs' });
+    if (searchLabel === '搜索原料') await page.evaluate(() => { window.perfTable = document.querySelector('table'); });
     await next.click();
     await page.waitForFunction(() => document.querySelector('tbody tr')?.textContent.includes('P00050'));
     assert.equal(await page.locator('tbody tr').count(), 50);
     await page.waitForFunction(() => Number.isFinite(window.perfPageMs));
     paged.push(await page.evaluate(() => window.perfPageMs));
+    if (searchLabel === '搜索原料') assert.ok(await page.evaluate(() => window.perfTable === document.querySelector('table')), 'Paging preserves the mounted table');
     const code = 'P' + String(rows - 1).padStart(5, '0'), input = page.getByRole('textbox', { name: searchLabel, exact: true });
     await measureFilter(page, input, code, 'tbody tr', 1);
     assert.equal(await page.locator('tbody tr').count(), 1); assert.ok((await page.locator('tbody').innerText()).includes(code));
