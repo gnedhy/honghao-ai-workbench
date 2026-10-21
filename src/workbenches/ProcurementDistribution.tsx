@@ -1,8 +1,9 @@
+import {fetchProcurementOverviewCompact} from "./procurementReads";
 import { WorkbenchLoading } from "../components/WorkbenchLayout";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Info, SlidersHorizontal } from "lucide-react";
 import { DiscardChangesDialog, useUnsavedChanges } from "../components/Interaction";
-import { fetchProcurementOverview, saveDepartmentMaterials } from "../api";
+import { saveDepartmentMaterials } from "../api";
 import type { ProcurementOverview } from "../types";
 import styles from "../components/WorkbenchSurface.module.css";
 
@@ -29,7 +30,7 @@ export function ProcurementDistribution({ renderLedger, revision }: { renderLedg
   const load = useCallback((signal?: AbortSignal) => {
     const sequence = ++reads.current;
     setError("");
-    return fetchProcurementOverview(signal).then(value => {
+    return fetchProcurementOverviewCompact(signal).then(value => {
       if (!signal?.aborted && sequence === reads.current) setData(value);
     }).catch(e => {
       if (signal?.aborted || sequence !== reads.current) return;

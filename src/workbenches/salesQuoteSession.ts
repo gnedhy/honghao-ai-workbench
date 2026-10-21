@@ -1,3 +1,4 @@
+import {selectedSalesProducts} from "./salesReads";
 import { useEffect, useRef, useState } from "react";
 import { fetchJson } from "../api";
 import { createClientId } from "../clientId";
@@ -29,7 +30,7 @@ export function useSalesQuoteSession({products,catalog,existing,accessLevel,onCh
  useEffect(()=>{
   if(!savedBatch||dirty||accessLevel<4)return;
   let active=true;
-  void fetchJson<{products:Product[]}>(base+"/products").then(result=>{if(active)setLiveProducts(result.products);}).catch(()=>{});
+  void selectedSalesProducts(savedBatch.items.map(row=>row.product_id)).then(result=>{if(active)setLiveProducts(result.products);}).catch(()=>{});
   return ()=>{active=false;};
  },[savedBatch,dirty,accessLevel]);
  const guard=useUnsavedChanges(dirty,busy,"放弃尚未保存的报价修改？","sales-before-leave");
@@ -74,7 +75,7 @@ export function useSalesQuoteSession({products,catalog,existing,accessLevel,onCh
    await finishSave(calculated);
   }catch(value){setError(value instanceof Error?value.message:"保存失败，请重试");}finally{writing.current=false;setBusy(false);}};
  const adoptPendingItems=async()=>{if(writing.current||accessLevel<4||!pendingIds.length||!savedBatch||dirty||pendingWrite.current)return;writing.current=true;setBusy(true);setError("");try{
-   const latest=(await fetchJson<{products:Product[]}>(base+"/products")).products;
+   const latest=(await selectedSalesProducts(savedBatch.items.map(row=>row.product_id))).products;
    setLiveProducts(latest);
    const checks=adoptionExceptions(savedBatch.items,latest,pendingIds);
    if((checks.stale.length&&!keepCost)||(checks.belowBreakEven.length&&!confirmLow)){setNotice("请先核对采用前提示");return;}

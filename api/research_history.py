@@ -4,6 +4,19 @@ from copy import deepcopy
 from decimal import Decimal
 
 SUMMARY_PAYLOAD = "summary_payload"
+BACKFILL_DETAIL = """(payload::jsonb || COALESCE((
+    SELECT frozen.payload::jsonb FROM research_backfill_frozen frozen
+    WHERE frozen.id=research_backfill_records.frozen_id
+), '{}'::jsonb))::text"""
+
+
+def save_backfill(db, version, key, signature, payload):
+    """Keep each result while sharing only identical, immutable frozen inputs."""
+    from api.research import packed
+    db.execute('''INSERT INTO research_backfill_records(purchase_version,product_id,signature,payload,frozen_id)
+        SELECT %s,%s,%s,(value - ARRAY['formula','graph','source_hashes'])::text,
+               research_freeze_backfill(value)
+        FROM (SELECT %s::jsonb AS value) input''', (version,key,signature,packed(payload)))
 
 
 def backfill(db):
@@ -56,7 +69,7 @@ def backfill(db):
                 calculations={p:{k:values[k] for k in ids} for p,values in results.items()},
                 missing_materials=sorted(set(left['missing_materials']+right['missing_materials'])),
                 status='missing' if left['missing_materials'] or right['missing_materials'] else 'ready')
-            db.execute('INSERT INTO research_backfill_records(purchase_version,product_id,signature,payload) VALUES(%s,%s,%s,%s)',(version,key,sig,packed(payload)))
+            save_backfill(db,version,key,sig,payload)
             previous[key] = dict(payload,signature=sig)
     db.execute('INSERT INTO research_backfill_runs(id,recorded_at,inputs) VALUES(1,%s,%s)',(date,packed({'current':frozen,'purchase_versions':source_batches})))
     return {'status':'created','versions':len(batches)}
@@ -99,10 +112,19 @@ def linked_histories(db, keys, periods=None, summary=False, series=False):
     entries = {key:[] for key in keys}
     # Historical series need identity/scope and exact costs, not historical input lines.
     slim = f"({payload}::jsonb - ARRAY['latest','inventory','lines'])::text"
-    backfill_payload = slim if series or summary else payload
     formal_payload = f"CASE WHEN sequence=max(sequence) OVER (PARTITION BY product_id) THEN {payload} ELSE {slim} END" if series else payload
-    for key,raw in db.execute(f'SELECT product_id,{backfill_payload} FROM research_backfill_records WHERE product_id=ANY(%s) ORDER BY purchase_version',(list(keys),)):
-        entries[key].append(json.loads(raw))
+    if series or summary:
+        for key,raw in db.execute(f'SELECT product_id,{SUMMARY_PAYLOAD} FROM research_backfill_records WHERE product_id=ANY(%s) ORDER BY purchase_version',(list(keys),)):
+            entries[key].append(json.loads(raw))
+    else:
+        rows=db.execute('SELECT product_id,payload,frozen_id FROM research_backfill_records WHERE product_id=ANY(%s) ORDER BY purchase_version',(list(keys),)).fetchall()
+        ids=list({row[2] for row in rows if row[2] is not None})
+        frozen={key:json.loads(raw) for key,raw in db.execute('SELECT id,payload FROM research_backfill_frozen WHERE id=ANY(%s)',(ids,))} if ids else {}
+        for key,raw,frozen_id in rows:
+            row=json.loads(raw)
+            if frozen_id is not None:
+                row.update(deepcopy(frozen[frozen_id]))
+            entries[key].append(row)
     for key,raw in db.execute(f'SELECT product_id,{formal_payload} FROM research_cost_records WHERE product_id=ANY(%s) ORDER BY sequence',(list(keys),)):
         row=json.loads(raw)
         row.update(record_type='formal',effective_date=row['recorded_at'][:10],product_id=key)

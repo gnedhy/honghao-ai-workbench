@@ -1,5 +1,6 @@
 import {compareCostRecords} from "./researchAnalytics";
 import {ResearchCostTrend} from "./ResearchCostTrend";
+import {ResearchProductHistory} from "./ResearchProductHistory";
 import {HistoryBrowser} from "../components/HistoryBrowser";
 import {useCallback,useEffect,useState,useRef} from "react";
 import {Pencil,Trash2,ChevronRight} from "lucide-react";
@@ -14,12 +15,25 @@ import s from "./ResearchWorkbench.module.css";
 export function ResearchProductDrawer({ id, accessLevel, onClose, onChanged }: { id: string; accessLevel: number; onClose: () => void; onChanged: () => void }) {
   const [path, setPath] = useState<string[]>([id]); const current = path[path.length-1];
   const [policy, setPolicy] = useState<"latest" | "inventory">("latest");
+  const [readRevision,setReadRevision]=useState(0);
   const [detail, setDetail] = useState<Detail | null>(null); const [error, setError] = useState(""); const [editing, setEditing] = useState(false); const [dirty, setDirty] = useState(false); const [record, setRecord] = useState<RecordRow | null>(null);
   const [reasonOpen, setReasonOpen] = useState(false);
   const [adjustment, setAdjustment] = useState<Adjustment>({});
   const reasonBaseline=useRef("");
-  const beginEdit = useCallback((value: Detail) => {
+  const readGeneration=useRef(0);
+  const beginEdit = useCallback(async (value: Detail) => {
     if(writing.current||editorWorking.current)return;
+    const epoch=reads.current.epoch,generation=readGeneration.current;
+    if(value.options_loaded===false){
+      editorWorking.current=true;setEditorBusy(true);setError("");
+      try{
+        const response=await fetch(`${productPath(value.product.id)}/edit-options`,{signal:AbortSignal.timeout(15000),cache:"no-store"});
+        const options=await responseJson<Pick<Detail,"options"|"options_loaded">>(response);
+        if(!reads.current.alive||reads.current.epoch!==epoch||readGeneration.current!==generation)return;
+        value={...value,...options};setDetail(value);
+      }catch(reason){if(reads.current.alive&&reads.current.epoch===epoch&&readGeneration.current===generation){if(reason instanceof Error&&"status" in reason&&(reason.status===401||reason.status===403))setDetail(null);setError(errorText(reason));}return;}
+      finally{editorWorking.current=false;if(reads.current.alive&&reads.current.epoch===epoch)setEditorBusy(false);}
+    }
     const firstFormula = value.product.lifecycle === "draft" && value.product.revision === 0;
     const next={adjustment_reason:value.draft?.formula.adjustment_reason || (firstFormula ? "新增配方" : ""), adjustment_note:value.draft?.formula.adjustment_note || ""};
     reasonBaseline.current=JSON.stringify(next);setAdjustment(next);
@@ -32,10 +46,10 @@ export function ResearchProductDrawer({ id, accessLevel, onClose, onChanged }: {
   const reads=useRef({alive:false,epoch:0,etag:null as string|null,controller:null as AbortController|null});
   const writing=useRef(false);
   const load=useCallback(async (_signal?:AbortSignal,openDraft=false)=>{
-   const state=reads.current;if(!state.alive||_signal?.aborted)return;state.controller?.abort();const controller=new AbortController();state.controller=controller;setError("");
+   const state=reads.current;if(!state.alive||_signal?.aborted)return;++readGeneration.current;state.controller?.abort();const controller=new AbortController();state.controller=controller;setError("");
    const timeout=AbortSignal.timeout(15000);
    const signal=AbortSignal.any([controller.signal,timeout,...(_signal?[_signal]:[])]);
-   try{const response=await fetch(productPath(current),{signal,cache:"no-store",headers:state.etag?{"If-None-Match":state.etag}:{}});if(signal.aborted||!state.alive)return;if(response.status===304)return;const result=await responseJson<Detail>(response);if(!signal.aborted&&state.alive){state.etag=response.headers.get("ETag");setDetail(result);if(openDraft&&result.product.lifecycle==="draft"&&canEdit)beginEdit(result);}}
+   try{const response=await fetch(`${productPath(current)}?history=false`,{signal,cache:"no-store",headers:state.etag?{"If-None-Match":state.etag}:{}});if(signal.aborted||!state.alive)return;if(response.status===304)return;const result=await responseJson<Detail>(response);if(!signal.aborted&&state.alive){state.etag=response.headers.get("ETag");setDetail(result);setReadRevision(value=>value+1);if(openDraft&&result.product.lifecycle==="draft"&&canEdit)beginEdit(result);}}
    catch(error){if(!controller.signal.aborted&&!_signal?.aborted&&state.alive){if(error instanceof Error && "status" in error && (error.status===401||error.status===403||error.status===404)){state.etag=null;setDetail(null);}setError(timeout.aborted ? "详情读取超过15秒，请重试。" : errorText(error));}}
   },[current,canEdit,beginEdit]);
   useEffect(()=>{const state=reads.current;++state.epoch;state.alive=true;state.etag=null;setDetail(null);setEditing(false);setDirty(false);setRecord(null);setReasonOpen(false);setDeleteOpen(false);setDeactivateOpen(false);void load(undefined,true);return()=>{++state.epoch;state.alive=false;state.controller?.abort();};},[load]);
@@ -67,12 +81,14 @@ export function ResearchProductDrawer({ id, accessLevel, onClose, onChanged }: {
     {discardTarget && <DiscardChangesDialog description="本次未保存的配方修改将被放弃，已保存草稿和正式配方保持不变。" onCancel={() => setDiscardTarget(null)} onDiscard={() => { const target = discardTarget; setDiscardTarget(null); setDirty(false); if (target === "close") onClose(); else { setEditing(false); void load(); } }}/>}
     {error && <p role="alert" className={s.notice}>{error}<button className="secondary-button" onClick={() => void load()}>重试</button></p>}
     {!detail || !formula ? error ? null : <WorkbenchLoading local title="正在读取研发配方详情"/> : editing ? <ResearchFormulaEditor key={current} onBusy={reportBusy} adjustment={adjustment} detail={detail} formula={formula} accessLevel={accessLevel} onDirty={setDirty} onBack={(force) => { if (force || !dirty) { setDirty(false); setEditing(false); void load(); } else setDiscardTarget("back"); }} onChanged={() => { onChanged(); void load(); }}/>: <>
-      <div className={s.sectionHeading}><span>{detail.product.owner} · {formulaVersionLabel(detail.product)}</span><div className={p.actions}>{accessLevel >= 3 && current.startsWith("recipe:") && <button className="secondary-button" disabled={deleting||deactivating} onClick={() => beginEdit(detail)}><Pencil size={14}/>{detail.product.lifecycle === "inactive" ? "恢复并编辑" : detail.draft ? "继续编辑草稿" : "编辑配方"}</button>}{accessLevel >= 4 && current.startsWith("recipe:") && detail.product.lifecycle === "active" && <button className={`secondary-button ${s.dangerButton}`} disabled={deactivating} aria-expanded={deactivateOpen} onClick={() => setDeactivateOpen(!deactivateOpen)}>停用配方</button>}</div></div>
+      <div className={s.sectionHeading}><span>{detail.product.owner} · {formulaVersionLabel(detail.product)}</span><div className={p.actions}>{accessLevel >= 3 && current.startsWith("recipe:") && <button className="secondary-button" disabled={editorBusy||deleting||deactivating} onClick={() => void beginEdit(detail)}><Pencil size={14}/>{detail.product.lifecycle === "inactive" ? "恢复并编辑" : detail.draft ? "继续编辑草稿" : "编辑配方"}</button>}{accessLevel >= 4 && current.startsWith("recipe:") && detail.product.lifecycle === "active" && <button className={`secondary-button ${s.dangerButton}`} disabled={deactivating} aria-expanded={deactivateOpen} onClick={() => setDeactivateOpen(!deactivateOpen)}>停用配方</button>}</div></div>
       {accessLevel >= 4 && current.startsWith("recipe:") && detail.product.lifecycle === "active" && deactivateOpen && <div className={s.confirmation}><h3>核对停用影响</h3><p>停用后将从在用产品及投料选择中移除，历史记录继续保留。恢复须重新试算后启用。</p>{detail.referenced_by?.length ? <p role="alert">仍被在用产品引用，不能停用：{detail.referenced_by.map(row => row.name).join("、")}。</p> : <p>当前没有在用产品引用此配方。</p>}<div className={s.actions}><button className="secondary-button" onClick={() => setDeactivateOpen(false)} disabled={deactivating}>取消</button><button className={`secondary-button ${s.dangerButton}`} disabled={deactivating || Boolean(detail.referenced_by?.length)} onClick={() => void deactivate()}>确认停用</button></div></div>}
       {(detail.product.status === "updating" || detail.product.status === "failed") && <div className={s.notice}>成本{detail.product.status === "updating" ? "更新中" : "更新失败，等待重试"}。以下为上次完成的有效成本记录。</div>}
       {detail.product.lifecycle === "inactive" && <p className={s.notice}>此配方已停用，不参与当前产品核算。恢复前须重新试算、保存并启用。</p>}
-      <FormulaDetails busy={editorBusy || deleting || deactivating} formula={detail.history[0]?.formula ?? formula} latest={detail.latest} inventory={detail.inventory} history={detail.history.slice(1)} trend={<ResearchCostTrend key={current} history={detail.history} policy={policy}/>} policy={policy} onPolicyChange={setPolicy} onRef={ref => {if(!writing.current&&!editorWorking.current)setPath([...path, ref]);}}/>
+      <FormulaDetails busy={editorBusy || deleting || deactivating} formula={detail.history[0]?.formula ?? formula} latest={detail.latest} inventory={detail.inventory} history={detail.line_history??detail.history.slice(1)} trend={<ResearchCostTrend key={current} history={detail.history} productId={detail.history_total!=null?current:undefined} endDate={detail.max_date} revision={readRevision} policy={policy}/>} policy={policy} onPolicyChange={setPolicy} onRef={ref => {if(!writing.current&&!editorWorking.current)setPath([...path, ref]);}}/>
+      {detail.history_total!=null?<ResearchProductHistory key={current} id={current} policy={policy} revision={readRevision} busy={editorBusy || deleting || deactivating}/>:<>
       <section className={s.historySection}><div className={s.sectionHeading}><h3>成本历史</h3><span title="按价格所属日期倒序，同日正式记录优先；涨跌保留原核算基准">行情优先 · {detail.history.length} 条</span></div><HistoryBrowser key={current} items={orderedHistory} date={recordDate} text={item=>`${recordDate(item)} ${item.reason??""} ${item.purchase_version==null?"":`v${item.purchase_version}`}`} empty="尚未建立成本记录；配方启用并完成核算后可查看。">{items=>items.map((item,index) => { const expanded = record?.event_id === item.event_id && record?.recorded_at === item.recorded_at; return <div key={`${item.event_id}-${index}`} className={s.inlineRecord}><button className={s.historyRow} aria-expanded={expanded} onClick={() => setRecord(expanded ? null : item)}><span title={`记录时间：${date(item.recorded_at)}`}>{recordDate(item)}<small>{item.record_type === "backfill" ? "历史回算 · " : ""}{item.reason ?? "成本核算"}{item.purchase_version != null && item.record_type === "formal" && ` · 采购 v${item.purchase_version}`}</small></span><Money value={item.latest_cost}/><Movement change={item.change} comparisonBasis={item.comparison_basis}/><ChevronRight size={15} style={{transform:expanded?"rotate(90deg)":undefined}}/></button>{expanded && <div className={s.expandedRecord}><HistoricalFormula busy={editorBusy || deleting || deactivating} key={`${record!.event_id}-${record!.recorded_at}`} record={record!} initialPolicy={policy}/><button className={s.back} onClick={() => setRecord(null)}>收起本期明细</button></div>}</div>; })}</HistoryBrowser></section>
+      </>}
 
 
     </>}

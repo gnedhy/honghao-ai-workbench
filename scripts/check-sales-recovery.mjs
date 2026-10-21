@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
 import { chromium } from 'playwright';
+import { mkdirSync, writeFileSync } from 'node:fs';
 
 // Started only by the isolated pytest fixture. No default port or production proxy.
 const api = new URL(process.env.W2_TEST_API ?? '');
@@ -48,7 +49,10 @@ try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
     const page = await context.newPage();
     page.setDefaultTimeout(7000);
-    const errors = [], writes = [];
+    const errors = [], writes = [], reads = [], requests = [];
+    let navigationMs = 0;
+    page.on('request',request=>{const url=new URL(request.url());if(url.pathname.startsWith('/api/')||url.pathname.endsWith('.tsx'))requests.push({path:url.pathname,atMs:Math.round(performance.now()-started)});});
+    page.on('response',response=>{const url=new URL(response.url());if(url.pathname.startsWith('/api/'))reads.push({path:url.pathname,status:response.status(),atMs:Math.round(performance.now()-started)});});
     let injected = false, release, closing = false;
     const gate = new Promise(resolve => { release = resolve; });
     page.on('pageerror', error => errors.push(error.message));
@@ -101,6 +105,7 @@ try {
     });
     try {
       await page.goto(origin + 'w2-recovery' + (app ? '?app=1' : existing ? '?existing=1' : ''));
+      navigationMs = Math.round(performance.now() - started);
       if (app) {
         await page.getByRole('button', { name: /销售部.*产品报价管理/ }).click();
         await page.getByRole('button', { name: '进入工作台', exact: true }).click();
@@ -136,6 +141,15 @@ try {
       if (recoveryCounts[name]) assert.deepEqual([detail.batch.revision, trials.length, detail.events.length], recoveryCounts[name]);
       results.push({ name, status: 'passed', batches: batches.length, id: detail?.batch.id, revision: detail?.batch.revision, trials: trials.length, events: detail?.events.length, writes, milliseconds: Math.round(performance.now() - started) });
     } catch (error) {
+      try {
+        mkdirSync('.scratch/sales-recovery', { recursive: true });
+        await page.screenshot({ path: `.scratch/sales-recovery/${name}-failed.png` });
+        writeFileSync(`.scratch/sales-recovery/${name}-failed.json`, JSON.stringify({
+          errors, navigationMs, reads, requests, body: await page.locator('body').innerText(),
+        }, null, 2));
+      } catch (diagnosticError) {
+        errors.push(`Failure diagnostics unavailable: ${diagnosticError.message}`);
+      }
       results.push({ name, status: 'failed', error: error.message, alerts: await page.getByRole('alert').allTextContents(), writes, milliseconds: Math.round(performance.now() - started) });
     } finally { closing = true; release(); await page.unrouteAll({ behavior: 'ignoreErrors' }); await context.close(); }
   }

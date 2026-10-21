@@ -1,3 +1,4 @@
+import {compareCodes} from "../codeOrder.ts";
 import type { ProcurementBatch, ProcurementIssue, ProcurementMaterial, ProcurementUpdate } from "../types";
 
 export function editedPriceChange(value: string, reference: string | null | undefined): number | null {
@@ -92,7 +93,7 @@ export function filterLedgerRows(rows: ReturnType<typeof buildLedgerRows>, optio
     if (editOrder) return (editOrder.get(a.material.id) ?? rows.length) - (editOrder.get(b.material.id) ?? rows.length);
     const pendingOrder = Number(Boolean(b.input)) - Number(Boolean(a.input));
     if (pendingOrder) return pendingOrder;
-    const codeOrder = a.material.code.localeCompare(b.material.code, "zh-CN", { numeric: true });
+    const codeOrder = compareCodes(a.material.code,b.material.code);
     if (sort === "code") return sortDirection === "ascending" ? codeOrder : -codeOrder;
     const av = value(a), bv = value(b);
     if (av === null || bv === null) return av === bv ? codeOrder : av === null ? 1 : -1;

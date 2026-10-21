@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "revisions": [
+    {
+      "metric": "browser.procurement.requests",
+      "from": 1,
+      "to": 4,
+      "reason": "日常原料表从组件内预装2000行后本地翻页，改为有界服务端读取。固定场景需1次preferences及3次ledger（首屏、下一页、搜索）；已消除筛选重置页码产生的过渡请求。",
+      "evidence": "2026-10-21 node scripts/check-performance-browser.mjs；.scratch/performance-budget/browser.json，固定2000原料、CPU四倍、5个新context，逐次均4请求，三次ledger响应50/50/1行；旧fixture预装2000行且API仅preferences。采购就绪595.70/617.40ms、搜索120.70/147.50ms、翻页140.60/170.30ms（中位/最大），全部原耗时阈值未变。原首轮翻页150.70ms超限报告保留browser-pagination-before.json，已移除服务端模式重复本地筛选排序后重测。 后续完整验收翻页178.20ms超限报告保留browser-before-procurement-formatter.json，定位每页100个价格单元格反复创建Intl格式化器，改为模块级复用后同负载5样本中位87.40ms、最大115.50ms；请求数仍4，金额显示与原舍入逐项核对一致。"
+    },
+    {
+      "metric": "browser.sales.requests",
+      "from": 0,
+      "to": 3,
+      "reason": "销售选品性能fixture切换实际remote消费者，2000产品/4000成本选项的目录改为服务端分页与搜索；固定场景需要首屏、第二页和搜索3次catalog，不再预装全部2000产品。",
+      "evidence": "2026-10-21 node scripts/check-performance-browser.mjs；.scratch/performance-budget/browser.json，固定2000产品、CPU四倍、5个新context，逐次均3请求，响应50/50/1产品。保持第二页P00050、搜索P01999并真实选择的断言。旧fixture本地传2000产品且0请求。销售就绪456.70/471.80ms、搜索65.40/71.40ms（中位/最大），耗时阈值全部未变；已修复远程翻页焦点丢失关闭菜单问题。"
+    }
+  ]
+}

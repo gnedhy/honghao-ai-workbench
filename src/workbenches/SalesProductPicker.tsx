@@ -1,3 +1,4 @@
+import {useSalesRead,type SalesCatalog} from "./salesReads";
 import {FilterSummary} from "../components/FilterSummary";
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Plus, Search } from "lucide-react";
@@ -12,8 +13,9 @@ type Basis = "latest" | "inventory";
 const basisLabel = (basis: Basis) => basis === "inventory" ? "库存优先" : "行情优先";
 const amount = (value: string | null | undefined) => value == null ? "—" : Number(value).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function SalesProductPicker({ products, selected, basis, cost, add = false, excludeIds = [], onSelect }: {
+export function SalesProductPicker({ products, selected, basis, cost, add = false, excludeIds = [], remote=false, onSelect }: {
   products: Product[];
+  remote?: boolean;
   selected?: Product;
   basis?: Basis;
   cost?: string | null;
@@ -28,11 +30,12 @@ export function SalesProductPicker({ products, selected, basis, cost, add = fals
   const [source, setSource] = useState("research");
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(1);
-  const departments = salesDepartments(products);
-  const matches = products.filter(product => !excludeIds.includes(product.id) && (!source || product.source === source) && (!department || product.department === department)
-    && `${product.code} ${product.name} ${product.department}`.toLowerCase().includes(query.trim().toLowerCase())).sort((a,b) => compareCodes(a.code,b.code));
-  const currentPage = Math.min(page, Math.max(1, Math.ceil(matches.length / 50)));
-  const shown = matches.slice((currentPage - 1) * 50, currentPage * 50);
+  const remoteRead=useSalesRead<SalesCatalog>(remote&&open?`/read/catalog?${new URLSearchParams({page:String(page),page_size:"50",search:query,source,department,exclude:excludeIds.join(",")})}`:null);
+  const departments=remote?remoteRead.data?.departments??[]:salesDepartments(products);
+  const matches=products.filter(product=>!excludeIds.includes(product.id)&&(!source||product.source===source)&&(!department||product.department===department)&&`${product.code} ${product.name} ${product.department}`.toLowerCase().includes(query.trim().toLowerCase())).sort((a,b)=>compareCodes(a.code,b.code));
+  const total=remote?remoteRead.data?.total??0:matches.length;
+  const currentPage=remote?remoteRead.data?.page??page:Math.min(page,Math.max(1,Math.ceil(total/50)));
+  const shown=remote?remoteRead.data?.products??[]:matches.slice((currentPage-1)*50,currentPage*50);
   const close = (focus = false) => {
     setOpen(false);
     if (menu.current) menu.current.open = false;
@@ -93,7 +96,7 @@ export function SalesProductPicker({ products, selected, basis, cost, add = fals
           options={[{value:"",label:"全部来源"},{value:"research",label:"研发产品"},{value:"procurement",label:"采购原料"}]}
           onSelect={value => {setSource(value);setPage(1);}} className={s.departmentMenu} />
       </div>
-      <FilterSummary count={matches.length} items={[query && `搜索：${query}`,department && `部门：${department}`,source !== "research" ? `来源：${source === "procurement" ? "采购原料" : "全部来源"}` : ""]} onClear={()=>{setQuery("");setDepartment("");setSource("research");setPage(1);}}/>
+      <FilterSummary count={total} items={[query && `搜索：${query}`,department && `部门：${department}`,source !== "research" ? `来源：${source === "procurement" ? "采购原料" : "全部来源"}` : ""]} onClear={()=>{setQuery("");setDepartment("");setSource("research");setPage(1);}}/>
       <div className={s.options}>
         {shown.map(product => <div className={s.option} key={product.id}>
           <div className={s.identity}><strong title={product.code}>{product.code}</strong>{product.name && product.name !== product.code && <small title={product.name}>{product.name}</small>}<small title={product.department}>{product.department}</small></div>
@@ -107,9 +110,9 @@ export function SalesProductPicker({ products, selected, basis, cost, add = fals
             </button>;
           })}
         </div>)}
-        {!matches.length && <p role="status">{excludeIds.length && excludeIds.length === products.length ? "所有产品均已加入" : "没有匹配的产品"}</p>}
+        {remoteRead.error&&<p role="alert">{remoteRead.error}<button onClick={remoteRead.retry}>重试</button></p>}{remoteRead.loading&&<p role="status">正在读取产品</p>}{!remoteRead.loading&&!remoteRead.error&&!total && <p role="status">{excludeIds.length && excludeIds.length === products.length ? "所有产品均已加入" : "没有匹配的产品"}</p>}
       </div>
-      <LedgerPagination total={matches.length} page={currentPage} pageSize={50} onPageChange={setPage} />
+      <LedgerPagination total={total} page={currentPage} pageSize={50} onPageChange={next=>{search.current?.focus();setPage(next);}} />
     </div>}
   </details>;
 }

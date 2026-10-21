@@ -1,5 +1,7 @@
+import {LedgerPagination} from "../components/LedgerPagination";
+import {fetchProcurementOverviewCompact,fetchProcurementSummary} from "./procurementReads";
+import {fetchProcurementMaterialCompact} from "./procurementReads";
 import {useTrendSelection} from "../components/useTrendSelection";
-import {trendEligibleIds} from "../codeOrder";
 import {dailyProcurementOverview, isDailyMaterial} from "../materialVisibility";
 import { ProcurementMaterials } from "./ProcurementMaterials";
 import { useUnsavedChanges } from "../components/Interaction";
@@ -17,8 +19,8 @@ import { createPortal } from "react-dom";
 import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, CalendarDays, Check, ChevronRight, Clock3, FileUp, PackageCheck, RefreshCw, TrendingDown, TrendingUp, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { fetchJson, createProcurementMaterial, cancelProcurementSchedule, confirmProcurementImport, fetchProcurementBatch, fetchProcurementMaterial, fetchProcurementOverview, previewProcurementImport, publishProcurementUpdate} from "../api";
-import type { ProcurementBatchDetail, ProcurementImportPreview, ProcurementMaterialDetail, ProcurementOverview, ProcurementPage, ProcurementUpdate} from "../types";
+import { fetchJson, createProcurementMaterial, cancelProcurementSchedule, confirmProcurementImport, fetchProcurementBatch, previewProcurementImport, publishProcurementUpdate} from "../api";
+import type { ProcurementBatchDetail, ProcurementImportPreview, ProcurementOverview, ProcurementPage, ProcurementUpdate} from "../types";
 import { type PriceSeries, buildRangeDistribution, buildPublishedPriceMovement, buildVersionMovers, focusedTrendAxis, moverDateRange, sortBatchPrices } from "./procurementAnalytics";
 import { defaultProcurementPage } from "./procurementWorkflow";
 import { summarizeUpdate } from "./procurementLedger";
@@ -29,31 +31,25 @@ import { ProcurementDistribution, type DepartmentLedger } from "./ProcurementDis
 import { ProcurementNews, type NewsData } from "./ProcurementNews";
 
 type PriceSeriesState = {history:PriceSeries[]|null;failed:boolean;denied:boolean;reload:()=>void};
-function usePriceSeries(batches:ProcurementOverview["batches"], active:boolean):PriceSeriesState {
+function usePriceSeries(batches:ProcurementOverview["batches"], active:boolean, params:string):PriceSeriesState {
   const [history,setHistory]=useState<PriceSeries[]|null>(null),[failed,setFailed]=useState(false),[retry,setRetry]=useState(0);
   const [denied,setDenied]=useState(false);
   const loaded=useRef("");
-  const historyKey=JSON.stringify(batches);
+  const historyKey=JSON.stringify(batches)+params;
   useEffect(()=>{
     if(!active||loaded.current===historyKey)return;
-    const controller=new AbortController();setFailed(false);
-    fetchJson<{batches:PriceSeries[]}>("/api/workbenches/procurement/price-series",{signal:controller.signal}).then(value=>{
+    const controller=new AbortController();loaded.current="";setHistory(null);setFailed(false);
+    fetchJson<{batches:PriceSeries[]}>(`/api/workbenches/procurement/price-series/scoped?${params}`,{signal:controller.signal}).then(value=>{
       if(!controller.signal.aborted){loaded.current=historyKey;setHistory(value.batches);}
     }).catch(error=>{if(!controller.signal.aborted){setFailed(true);if(error?.status===401||error?.status===403){setHistory(null);setDenied(true);loaded.current="";}}});
     return()=>controller.abort();
-  },[historyKey,active,retry]);
+  },[historyKey,active,retry,params]);
   return {history,failed,denied,reload:()=>{loaded.current="";setDenied(false);setRetry(value=>value+1);}};
 }
 
 export function ProcurementWorkbench({ userId, accessLevel, view, page, onPageChange, onEnter }: { userId:string; accessLevel: number; view: "preview" | "full"; page: ProcurementPage; onPageChange: (page: ProcurementPage) => void; onEnter: () => void }) {
   const [data, setData] = useState<ProcurementOverview | null>(null);
-  const series=usePriceSeries(data?.batches??[],Boolean(data)&&(view==="preview"||page==="dashboard"));
   const dailyData=useMemo(()=>data?dailyProcurementOverview(data):null,[data]);
-  const dailyHistory=useMemo(()=>{
-    const hidden=new Set(data?.materials.filter(item=>!isDailyMaterial(item)).map(item=>item.id));
-    return series.history?.map(batch=>({...batch,items:batch.items.filter(item=>isDailyMaterial(item)&&!hidden.has(item.material_id))}))??null;
-  },[series.history,data]);
-  const dailySeries={...series,history:dailyHistory};
   const reads = useRef(0);
   const acceptOverview = useCallback((overview: ProcurementOverview) => { reads.current++; setData(overview); }, []);
   const newsCache = useRef<NewsData | null>(null);
@@ -76,7 +72,7 @@ export function ProcurementWorkbench({ userId, accessLevel, view, page, onPageCh
   const load = useCallback((signal?: AbortSignal) => {
     const sequence = ++reads.current;
     setState(current => current === "ready" ? "ready" : "loading");
-    return fetchProcurementOverview(signal)
+    return fetchProcurementSummary(signal)
       .then((overview) => { if (!signal?.aborted && sequence === reads.current) { setData(overview); setState("ready"); } })
       .catch((error: unknown) => {
         if (!signal?.aborted && sequence === reads.current && !(error instanceof DOMException && error.name === "AbortError")) {
@@ -91,16 +87,15 @@ export function ProcurementWorkbench({ userId, accessLevel, view, page, onPageCh
     const controller = new AbortController();
     void load(controller.signal);
     return () => controller.abort();
-  }, [load, page]);
+  }, [load]);
   useEffect(() => { if (page !== "materials") setLocateCode(""); }, [page]);
 
-  if (series.denied) return <ModuleState title="采购工作台暂时不可用" retry={()=>{setData(null);setState("loading");series.reload();void load();}} />;
   if (state === "loading") return <WorkbenchLoading title="正在读取采购数据" />;
   if (state === "error" || !data || !dailyData) return <ModuleState title="采购工作台暂时不可用" retry={() => void load()} />;
 
-  const renderLedger = (ledgerData: ProcurementOverview, department?: DepartmentLedger) => <ProcurementMaterials startInEdit={editFromDashboard} onEditStarted={() => setEditFromDashboard(false)} locateCode={locateCode} data={dailyProcurementOverview(ledgerData)} accessLevel={accessLevel} onRefresh={() => load()} onSaved={acceptOverview} onCreate={() => setCatalogOpen(true)} onImport={() => setImportOpen(true)} onPublish={() => {publishTrigger.current = document.activeElement as HTMLElement; setPublishOpen(true);}} onPageChange={onPageChange} focusPending={page === "updates"} department={department} onOpenDepartmentMaterial={id => { distributionTrigger.current = document.activeElement as HTMLElement; setDistributionMaterial(id); }} />;
+  const renderLedger = (ledgerData: ProcurementOverview, department?: DepartmentLedger) => <ProcurementMaterials onRequestEdit={async()=>{setEditFromDashboard(false);try{const full=await fetchProcurementOverviewCompact();setData(full);setEditFromDashboard(true);}catch{setNotice("编辑台账读取失败，请重试。");}}} startInEdit={editFromDashboard} onEditStarted={() => setEditFromDashboard(false)} locateCode={locateCode} data={dailyProcurementOverview(ledgerData)} accessLevel={accessLevel} onRefresh={() => load()} onSaved={acceptOverview} onCreate={() => {void fetchProcurementOverviewCompact().then(full=>{setData(full);setCatalogOpen(true);}).catch(()=>setNotice("原料目录读取失败，请重试。"));}} onImport={() => setImportOpen(true)} onPublish={() => {publishTrigger.current = document.activeElement as HTMLElement;void fetchProcurementOverviewCompact().then(full=>{setData(full);setPublishOpen(true);}).catch(()=>setNotice("本轮价格读取失败，请重试。"));}} onPageChange={onPageChange} focusPending={page === "updates"} department={department} onOpenDepartmentMaterial={id => { distributionTrigger.current = document.activeElement as HTMLElement; setDistributionMaterial(id); }} />;
 
-  if (view === "preview") return <ProcurementPreview userId={userId} data={dailyData} series={dailySeries} onEnter={() => { onPageChange(defaultProcurementPage(data.current_update)); onEnter(); }} />;
+  if (view === "preview") return <ProcurementPreview userId={userId} data={dailyData} onEnter={() => { onPageChange(defaultProcurementPage(data.current_update)); onEnter(); }} />;
 
   return (
     <article className={`workbench-detail ${styles.root} ${styles.full}${page === "materials" || page === "updates" || page === "distribution" ? ` ${styles.ledgerPage}` : ""}`}>
@@ -115,7 +110,7 @@ export function ProcurementWorkbench({ userId, accessLevel, view, page, onPageCh
 
       {notice && <div className={styles.notice}><Check size={14} />{notice}<button type="button" aria-label="关闭提示" onClick={() => setNotice("")}><X size={13} /></button></div>}
 
-      {page === "dashboard" && <Dashboard userId={userId} data={dailyData} series={dailySeries} newsCache={newsCache} onOpenUpdate={() => { setEditFromDashboard(true); onPageChange("materials"); }} />}
+      {page === "dashboard" && <Dashboard userId={userId} data={dailyData} newsCache={newsCache} onOpenUpdate={() => { setEditFromDashboard(true); onPageChange("materials"); }} />}
       {(page === "materials" || page === "updates") && renderLedger(data)}
       {page === "distribution" && <ProcurementDistribution revision={distributionRevision} renderLedger={renderLedger} />}
       {page === "distribution" && distributionMaterial && <ProcurementMaterialDrawer batches={data.batches} materialId={distributionMaterial} canEdit={accessLevel >= 3} canManage={Boolean(data.capabilities?.can_manage_catalog)} currentPriceDate={data.current_update?.price_date} onClose={closeDistributionMaterial} onChanged={() => { closeDistributionMaterial(); setDistributionRevision(value => value + 1); void load(); }} />}
@@ -147,7 +142,7 @@ function ProcurementMetrics({ data, movement }: { data: ProcurementOverview; mov
   return <div className={`${styles.metrics} workbench-metrics`}>{metrics.map(([label, value, note]) => <div key={label}><small>{label}</small><strong>{value}</strong><span>{note}</span></div>)}</div>;
 }
 
-function ProcurementPreview({ userId, data, series, onEnter }: { userId:string; data: ProcurementOverview; series:PriceSeriesState; onEnter: () => void }) {
+function ProcurementPreview({ userId, data, onEnter }: { userId:string; data: ProcurementOverview; onEnter: () => void }) {
   const movement = buildPublishedPriceMovement(data.materials, data.batches[0]?.comparison);
 
   return <article className={`workbench-detail ${styles.root} ${styles.summaryPage}`}>
@@ -156,41 +151,43 @@ function ProcurementPreview({ userId, data, series, onEnter }: { userId:string; 
       <button className="primary-button" type="button" onClick={onEnter}>进入工作台<ArrowRight size={15} /></button>
     </header>
     <ProcurementMetrics data={data} movement={movement} />
-    <PriceTrendPanel userId={userId} series={series} data={data} className={styles.previewTrend} />
-    <PriceMovers batches={data.batches} series={series} compact />
+    <PriceTrendPanel userId={userId} data={data} className={styles.previewTrend} />
+    <PriceMovers batches={data.batches} compact />
   </article>;
 }
 
-function PriceTrendPanel({ userId, data, series, className = "" }: { userId:string; data: ProcurementOverview; series:PriceSeriesState; className?: string }) {
-  const [loadedHistory,setLoadedHistory]=useState<{id:string;rows:ProcurementMaterialDetail["official_history"]}|null>(null);
+function PriceTrendPanel({ userId, data, className = "" }: { userId:string; data: ProcurementOverview; className?: string }) {
   const { period, range, setPeriod } = usePriceDateRange(data.batches, "3m");
-  const [failed, setFailed] = useState(false);
-  const eligible=useMemo(()=>trendEligibleIds((series.history??[]).flatMap(batch=>batch.items.map(item=>({id:item.material_id,date:batch.price_date||batch.published_at,values:[item.latest_price]}))),{start:range.start,end:range.end}),[series.history,range.start,range.end]);
-  const [selectedId,selectId]=useTrendSelection(userId,"procurement",data.materials,eligible);
-  const selectedMaterial=data.materials.find(item=>item.id===selectedId)?.code??"";
-  const setSelectedMaterial=(code:string)=>{const row=data.materials.find(item=>item.code===code);if(row)selectId(row.id);};
-  const waiting=series.history===null&&!series.failed;
-  const history=loadedHistory?.id===selectedId?loadedHistory.rows:null;
-  const trend = (history ?? []).filter(item => item.version_date.slice(0, 10) >= range.start && item.version_date.slice(0, 10) <= range.end && item.latest_price != null && Number.isFinite(Number(item.latest_price))).map(item => ({recordedAt: item.version_date, value: Number(item.latest_price)}));
-  const axis = focusedTrendAxis([{ values: trend.map(item => item.value) }]);
+  const [options,setOptions]=useState<ProcurementOverview|null>(null);
+  const [search,setSearch]=useState("");
+  const [optionError,setOptionError]=useState("");
+  const [retryOptions,setRetryOptions]=useState(0);
   const latestBatchId=data.batches[0]?.id;
-  useEffect(() => {
-    if (!selectedId || waiting) return;
-    const controller = new AbortController(); setLoadedHistory(null); setFailed(false);
-    fetchProcurementMaterial(selectedId, controller.signal).then(item => {if(!controller.signal.aborted)setLoadedHistory({id:selectedId,rows:item.official_history});}).catch(() => { if (!controller.signal.aborted) setFailed(true); });
-    return () => controller.abort();
-  }, [selectedId, waiting, latestBatchId]);
-
-
+  useEffect(()=>{
+    const controller=new AbortController();setOptionError("");
+    let remembered="";try{remembered=sessionStorage.getItem(`trend-selection:${userId}:procurement`)??"";}catch{/* Session memory is optional. */}
+    const filters=encodeURIComponent(JSON.stringify({search,start:range.start,end:range.end,remembered}));
+    fetchJson<ProcurementOverview>(`/api/workbenches/procurement/overview?read_mode=options&page_size=50&filters=${filters}`,{signal:controller.signal}).then(value=>{if(!controller.signal.aborted)setOptions(value);}).catch(()=>{if(!controller.signal.aborted){setOptions(null);setOptionError("原料选项读取失败");}});
+    return()=>controller.abort();
+  },[search,range.start,range.end,latestBatchId,userId,retryOptions]);
+  const candidates=options?.materials??[];
+  const [selectedId,selectId]=useTrendSelection(userId,"procurement",candidates,new Set(options?.read_page?.preferred?[options.read_page.preferred]:[]),options!==null);
+  const selectedMaterial=candidates.find(item=>item.id===selectedId)?.code??"";
+  const setSelectedMaterial=(code:string)=>{const row=candidates.find(item=>item.code===code);if(row)selectId(row.id);};
+  const {history,failed,denied}=usePriceSeries(data.batches,Boolean(selectedId)&&options!==null,`material_id=${encodeURIComponent(selectedId??"")}&start=${range.start}&end=${range.end}`);
+  const waiting=history===null&&!failed;
+  const trend=[...(history??[])].reverse().map(batch=>({recordedAt:batch.price_date||batch.published_at,value:batch.items[0]?.latest_price==null?null:Number(batch.items[0].latest_price)}));
+  const axis=focusedTrendAxis([{values:trend.flatMap(item=>item.value===null?[]:[item.value])}]);
+  if(denied)return <ModuleState title="采购工作台暂时不可用"/>;
 
   return <DashboardPanel className={`${styles.dashboardPanel} ${styles.trendPanel}${className ? ` ${className}` : ""}`}>
-    <div className={styles.panelHeading}><div><span>历史价格记录</span><h2>原料价格走势</h2></div><div className={styles.chartActions}><PriceDateRangeMenu label="走势日期范围" period={period} range={range} onChange={setPeriod} /><TrendMaterialMenu materials={data.materials} selected={selectedMaterial} onSelect={setSelectedMaterial} /></div></div>
-    {!data.materials.length ? <ChartEmpty title="当前没有可查看的原料" detail="新增原料或调整可见范围后可再查看。" /> : failed ? <ChartEmpty title="价格历史暂时不可用" detail="稍后重新进入该页面。" /> : waiting || history === null ? <WorkbenchLoading local title="正在读取采购价格趋势" /> : trend.length < 2 ? <ChartEmpty title="暂无可比较周期" detail="至少需要两期单值价格才会生成趋势线。" /> : <div className={styles.lineChart} aria-label={`${selectedMaterial}价格趋势`}><ResponsiveContainer width="100%" height="100%"><LineChart data={trend} accessibilityLayer margin={{ top: 8, right: 12,bottom:4,left:0 }}><CartesianGrid stroke="#edf0f1" vertical={false} /><XAxis dataKey="recordedAt" tickFormatter={shortDate} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis domain={axis.domain} ticks={axis.ticks} interval="preserveStartEnd" minTickGap={6} tickFormatter={value => Number(value).toFixed(2)} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} width={52} /><Tooltip labelFormatter={(value) => formatPriceDate(String(value))} formatter={(value) => [price(String(value)), "行情价格"]} /><Line type="monotone" dataKey="value" stroke="#2f3337" strokeWidth={2} dot={{ r: 3, fill: "#fff", strokeWidth: 2 }} activeDot={{ r: 4 }} /></LineChart></ResponsiveContainer></div>}
+    <div className={styles.panelHeading}><div><span>历史价格记录</span><h2>原料价格走势</h2></div><div className={styles.chartActions}><PriceDateRangeMenu label="走势日期范围" period={period} range={range} onChange={setPeriod} /><TrendMaterialMenu materials={candidates} selected={selectedMaterial} onSelect={setSelectedMaterial} onSearch={setSearch} loading={!options&&!optionError} error={optionError} onRetry={()=>setRetryOptions(value=>value+1)} /></div></div>
+    {options!==null&&!candidates.length ? <ChartEmpty title="当前没有可查看的原料" detail="新增原料或调整可见范围后可再查看。" /> : failed||optionError ? <ChartEmpty title="价格历史暂时不可用" detail="稍后重新进入该页面。" /> : waiting || history === null ? <WorkbenchLoading local title="正在读取采购价格趋势" /> : trend.length < 2 ? <ChartEmpty title="暂无可比较周期" detail="至少需要两期单值价格才会生成趋势线。" /> : <div className={styles.lineChart} aria-label={`${selectedMaterial}价格趋势`}><ResponsiveContainer width="100%" height="100%"><LineChart data={trend} accessibilityLayer margin={{ top: 8, right: 12,bottom:4,left:0 }}><CartesianGrid stroke="#edf0f1" vertical={false} /><XAxis dataKey="recordedAt" tickFormatter={shortDate} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis domain={axis.domain} ticks={axis.ticks} interval="preserveStartEnd" minTickGap={6} tickFormatter={value => Number(value).toFixed(2)} tick={{ fill: "#858d94", fontSize: 10 }} axisLine={false} tickLine={false} width={52} /><Tooltip labelFormatter={(value) => formatPriceDate(String(value))} formatter={(value) => [price(String(value)), "行情价格"]} /><Line type="monotone" dataKey="value" stroke="#2f3337" strokeWidth={2} dot={{ r: 3, fill: "#fff", strokeWidth: 2 }} activeDot={{ r: 4 }} /></LineChart></ResponsiveContainer></div>}
   </DashboardPanel>;
 }
 
 
-function Dashboard({ userId, data, series, newsCache, onOpenUpdate }: { userId:string; data: ProcurementOverview; series:PriceSeriesState; newsCache: React.RefObject<NewsData | null>; onOpenUpdate: () => void }) {
+function Dashboard({ userId, data, newsCache, onOpenUpdate }: { userId:string; data: ProcurementOverview; newsCache: React.RefObject<NewsData | null>; onOpenUpdate: () => void }) {
   const movement = buildPublishedPriceMovement(data.materials, data.batches[0]?.comparison);
   const editable = Boolean(data.capabilities?.can_edit) && (!data.current_update || ["draft", "returned"].includes(data.current_update.status));
   return <>
@@ -200,9 +197,9 @@ function Dashboard({ userId, data, series, newsCache, onOpenUpdate }: { userId:s
     </section>
     <ProcurementMetrics data={data} movement={movement} />
     <div className={styles.dashboardGrid}>
-      <PriceTrendPanel userId={userId} series={series} data={data} />
+      <PriceTrendPanel userId={userId} data={data} />
       <PriceDistributionPanel data={data} />
-      <PriceMovers batches={data.batches} series={series} />
+      <PriceMovers batches={data.batches} />
       <ProcurementNews cache={newsCache} />
     </div>
   </>;
@@ -212,18 +209,14 @@ function Dashboard({ userId, data, series, newsCache, onOpenUpdate }: { userId:s
 
 function PriceDistributionPanel({ data }: { data: ProcurementOverview }) {
   const { period, range, setPeriod } = usePriceDateRange(data.batches);
-  const [history, setHistory] = useState<ProcurementBatchDetail[] | null>(null);
-  const [failed, setFailed] = useState(false);
-  const selectedBatches = [range.start, range.end].map(date => [...data.batches].sort((a, b) => (b.price_date || b.published_at).localeCompare(a.price_date || a.published_at) || b.version - a.version).find(batch => (batch.price_date || batch.published_at).slice(0, 10) <= date));
-  const ids = [...new Set(selectedBatches.flatMap(batch => batch ? [batch.id] : []))];
-  useEffect(() => {
-    const controller = new AbortController();
-    setHistory(null); setFailed(false);
-    Promise.all(ids.map(id => fetchProcurementBatch(id, controller.signal))).then(value => { if (!controller.signal.aborted) setHistory(value); }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
-    return () => controller.abort();
-  }, [ids.join("|")]);
-  const movement = history ? buildRangeDistribution(history.map(batch=>({...batch,items:batch.items.filter(isDailyMaterial)})), range) : null;
-  const surgeCount = movement?.ranked.filter(item => item.changePercent >= 10).length ?? 0;
+  const [movement,setMovement]=useState<(Omit<NonNullable<ReturnType<typeof buildRangeDistribution>>,"ranked">&{surge:number})|null>(null);
+  const [loading,setLoading]=useState(true),[failed,setFailed]=useState(false);
+  useEffect(()=>{
+    const controller=new AbortController();setLoading(true);setFailed(false);
+    fetchJson<typeof movement>(`/api/workbenches/procurement/dashboard-summary?kind=distribution&start=${range.start}&end=${range.end}`,{signal:controller.signal}).then(value=>{if(!controller.signal.aborted){setMovement(value);setLoading(false);}}).catch(()=>{if(!controller.signal.aborted){setFailed(true);setLoading(false);}});
+    return()=>controller.abort();
+  },[range.start,range.end,data.batches]);
+  const surgeCount=movement?.surge??0;
   const pieData = [
     { name: "大幅上涨", value: surgeCount, color: "#d03730" },
     { name: "上涨", value: (movement?.counts.rising ?? 0) - surgeCount, color: "#c97732" },
@@ -235,19 +228,26 @@ function PriceDistributionPanel({ data }: { data: ProcurementOverview }) {
   ].filter(item => item.value > 0);
   return <DashboardPanel className={styles.dashboardPanel}>
         <div className={styles.panelHeading}><div><span>原料数量占比</span><h2>价格变动分布</h2></div><PriceDateRangeMenu label="分布日期范围" period={period} range={range} onChange={setPeriod} /></div>
-        {failed ? <ChartEmpty title="价格分布读取失败" detail="请重新加载页面。" /> : history === null ? <WorkbenchLoading local title="正在读取采购价格分布" /> : !movement ? <ChartEmpty title="暂无价格版本统计" detail="所选截止日期之前没有价格版本。" /> : <><div className={styles.pieChart}><ResponsiveContainer width="100%" height="100%"><PieChart accessibilityLayer><Pie data={pieData} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={2}>{pieData.map((item) => <Cell key={item.name} fill={item.color} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><strong>{movement.comparable}</strong><span>项可比较</span></div><div className={styles.chartLegend}>{pieData.map((item) => <span key={item.name} className={item.name === "持平" ? styles.stableText : undefined}><i style={{ background: item.color }} />{item.name}<strong>{item.value}</strong></span>)}</div></>}
+        {failed ? <ChartEmpty title="价格分布读取失败" detail="请重新加载页面。" /> : loading ? <WorkbenchLoading local title="正在读取采购价格分布" /> : !movement ? <ChartEmpty title="暂无价格版本统计" detail="所选截止日期之前没有价格版本。" /> : <><div className={styles.pieChart}><ResponsiveContainer width="100%" height="100%"><PieChart accessibilityLayer><Pie data={pieData} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={2}>{pieData.map((item) => <Cell key={item.name} fill={item.color} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><strong>{movement.comparable}</strong><span>项可比较</span></div><div className={styles.chartLegend}>{pieData.map((item) => <span key={item.name} className={item.name === "持平" ? styles.stableText : undefined}><i style={{ background: item.color }} />{item.name}<strong>{item.value}</strong></span>)}</div></>}
       </DashboardPanel>;
 }
 
-function PriceMovers({ batches, series, compact = false }: { batches: ProcurementOverview["batches"]; series:PriceSeriesState; compact?: boolean }) {
+function PriceMovers({ batches, compact = false }: { batches: ProcurementOverview["batches"]; compact?: boolean }) {
   const [selectedMaterial, setSelectedMaterial] = useState<string | null>(null);
   const materialTrigger = useRef<HTMLButtonElement | null>(null);
-  const {history,failed,reload}=series;
   const { period, range, setPeriod } = usePriceDateRange(batches);
-  const rows = useMemo(() => history ? buildVersionMovers(history, { start: range.start, end: range.end }) : null, [history, range.start, range.end]);
-
+  type Movers={up:ReturnType<typeof buildVersionMovers>;down:ReturnType<typeof buildVersionMovers>;up_total:number;down_total:number};
+  const [history,setHistory]=useState<Movers|null>(null),[failed,setFailed]=useState(false),[retry,setRetry]=useState(0);
+  const reload=()=>setRetry(value=>value+1);
+  useEffect(()=>{
+    const controller=new AbortController();setHistory(null);setFailed(false);
+    fetchJson<Movers>(`/api/workbenches/procurement/dashboard-summary?kind=movers&start=${range.start}&end=${range.end}`,{signal:controller.signal}).then(value=>{if(!controller.signal.aborted)setHistory(value);}).catch(()=>{if(!controller.signal.aborted)setFailed(true);});
+    return()=>controller.abort();
+  },[range.start,range.end,batches,retry]);
   const [ranking, setRanking] = useState<"up" | "down">("up");
-  const matchingRows = rows?.filter(row => ranking === "up" ? row.changePercent > 0 : row.changePercent < 0) ?? [];
+  const rows=history;
+  const matchingRows=history?.[ranking]??[];
+  const matchingTotal=history?.[ranking==="up"?"up_total":"down_total"]??0;
   const rankedRows = matchingRows.slice(0, compact ? 10 : 30);
   const pageSize = 10;
   const pages = Math.ceil(rankedRows.length / pageSize);
@@ -265,9 +265,9 @@ function PriceMovers({ batches, series, compact = false }: { batches: Procuremen
           {rankedRows.slice(index * pageSize, (index + 1) * pageSize).map((row, rowIndex) => { const Icon = row.changePercent > 0 ? TrendingUp : TrendingDown; return <div key={`${row.batchId}-${row.materialId}`} style={{ transitionDelay: `${Math.floor(rowIndex / 2) * 30}ms` }}><Icon size={16} /><span><span className={styles.moverLine}><strong><button type="button" className={styles.materialLink} onClick={event => { materialTrigger.current = event.currentTarget; setSelectedMaterial(row.materialId); }}><span><strong title={row.item.code}>{row.item.code}</strong></span><ChevronRight size={16} aria-hidden="true"/></button></strong><span className={styles.moverPrices} title={`比较日期：${formatPriceDate(row.previousDate)} → ${formatPriceDate(row.date)}`}><span>{price(row.previous)}</span><ArrowRight size={12} /><b>{price(row.item.latest_price)}</b><Movement value={row.changePercent} /></span></span><small className={styles.moverVersions}><span>v{row.version}</span>{" · "}<span>{formatPriceDate(row.date)}</span></small></span></div>; })}
         </div>)}
       </div>
-      <footer className={styles.moverCaption}><span>本期{ranking === "up" ? "上涨" : "下降"} {matchingRows.length} 项{compact && matchingRows.length > rankedRows.length && ` · 显示前 ${rankedRows.length} 项`}</span>{controls}</footer>
+      <footer className={styles.moverCaption}><span>本期{ranking === "up" ? "上涨" : "下降"} {matchingTotal} 项{compact && matchingTotal > rankedRows.length && ` · 显示前 ${rankedRows.length} 项`}</span>{controls}</footer>
     </>}
-    {selectedMaterial && createPortal(<ReadOnlyMaterialDrawer batches={batches} materialId={selectedMaterial} loadMaterial={fetchProcurementMaterial} onClose={() => { setSelectedMaterial(null); requestAnimationFrame(() => materialTrigger.current?.focus({preventScroll:true})); }}/>, document.body)}
+    {selectedMaterial && createPortal(<ReadOnlyMaterialDrawer batches={batches} materialId={selectedMaterial} loadMaterial={fetchProcurementMaterialCompact} onClose={() => { setSelectedMaterial(null); requestAnimationFrame(() => materialTrigger.current?.focus({preventScroll:true})); }}/>, document.body)}
   </DashboardPanel>;
 }
 
@@ -315,7 +315,7 @@ function CreateMaterialDialog({ data, onClose, onCreated }: { data: ProcurementO
   const refresh = async () => {
     if (working.current) return;
     working.current = true; setBusy(true); setRefreshed(false);
-    try { setBasis(await fetchProcurementOverview()); setError(""); setRefreshed(true); }
+    try { setBasis(await fetchProcurementOverviewCompact()); setError(""); setRefreshed(true); }
     catch (failure) { setError((failure as Error).message); }
     finally { working.current = false; setBusy(false); }
   };
@@ -362,11 +362,24 @@ function PriceHistory({ published }: { published: ProcurementOverview["batches"]
   const [recordFilter, setRecordFilter] = useState("all");
   const [selected, setSelected] = useState<string | null>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
-  const rows = published.filter(row => recordFilter === "all" || (recordFilter === "active" ? row.status === "active" : row.status !== "active")).sort((a, b) => b.version - a.version);
+  const [page,setPage]=useState(1),[read,setRead]=useState<{items:ProcurementOverview["batches"];total:number;scope_total:number;version:string}|null>(null),[error,setError]=useState(""),[retry,setRetry]=useState(0);
+  const version=page>1?read?.version:undefined;
+  useEffect(()=>{
+    const controller=new AbortController();setError("");
+    const params=new URLSearchParams({page:String(page),status:recordFilter,...(version?{version}:{})});
+    fetchJson<NonNullable<typeof read>>(`/api/workbenches/procurement/batches/page?${params}`,{signal:controller.signal}).then(value=>{if(!controller.signal.aborted)setRead(value);}).catch(error=>{
+      if(controller.signal.aborted)return;
+      if(error?.status===409){setRead(null);setPage(1);}else{setError(error instanceof Error?error.message:"历史读取失败");if([401,403].includes(error?.status))setRead(null);}
+    });return()=>controller.abort();
+  },[page,recordFilter,version,published,retry]);
+  const rows=read?.items??[];
+  const total=read?.scope_total??0;
   const close = () => { setSelected(null); window.requestAnimationFrame(() => trigger.current?.focus({ preventScroll: true })); };
   return <>
-    <RecordFilters label="价格版本分类" value={recordFilter} onChange={setRecordFilter} options={[{value:"all",label:"全部版本",count:published.length},{value:"active",label:"当前生效",count:published.filter(row => row.status === "active").length},{value:"history",label:"历史版本",count:published.filter(row => row.status !== "active").length}]}/>
-    {!rows.length && <Empty title="该分类暂无价格版本" detail="启用价格后，版本及其修改记录将在这里显示。" />}
+    <RecordFilters label="价格版本分类" value={recordFilter} onChange={value=>{setRecordFilter(value);setPage(1);setRead(null);}} options={[{value:"all",label:"全部版本",count:total},{value:"active",label:"当前生效",count:total?1:0},{value:"history",label:"历史版本",count:Math.max(total-1,0)}]}/>
+    {error&&<p role="alert">{error}<button type="button" onClick={()=>setRetry(value=>value+1)}>重试</button></p>}
+    {!read&&!error&&<WorkbenchLoading local title="正在读取价格版本"/>}
+    {read&&!rows.length && <Empty title="该分类暂无价格版本" detail="启用价格后，版本及其修改记录将在这里显示。" />}
     <ol className={styles.historyTimeline}>{rows.map(row => <li key={row.id}>
       <i aria-hidden="true" />
       <button type="button" aria-label={`v${row.version} · 价格日期 ${row.price_date || "未记录"}`} onClick={event => { trigger.current = event.currentTarget; setSelected(row.id); }}>
@@ -376,6 +389,7 @@ function PriceHistory({ published }: { published: ProcurementOverview["batches"]
         <ChevronRight size={17} aria-hidden="true" />
       </button>
     </li>)}</ol>
+    {(read?.total??0)>10&&<LedgerPagination total={read!.total} page={page} pageSize={10} onPageChange={setPage}/>}
     {selected && <PublishedBatchDrawer batchId={selected} onClose={close} />}
   </>;
 }
@@ -511,7 +525,7 @@ function ImportPanel({ current, onClose, onImported }: { current: ProcurementUpd
         if (!preview || !resolveReason(importReason)) return;
         await confirmProcurementImport(source, effectiveDate, content, revision, resolveReason(importReason));
         if (!alive.current) return;
-        const overview = await fetchProcurementOverview();
+        const overview = await fetchProcurementOverviewCompact();
         if (alive.current) onImported(overview);
       } else {
         let text = content;
@@ -536,7 +550,7 @@ function ImportPanel({ current, onClose, onImported }: { current: ProcurementUpd
     <label className={styles.filePicker}><FileUp size={14} />选择 Excel、CSV 或 TXT<input type="file" accept=".xlsx,.csv,.txt" disabled={busy} onChange={event => void readFile(event.target.files?.[0])} /></label>
     {excel && <><label>工作表<select disabled={busy} value={sheet} onChange={e=>{setSheet(e.target.value); setPreview(null); setExcel({...excel,selection:undefined});}}>{excel.sheets.map(item=><option key={item.name}>{item.name}</option>)}</select></label><label>表内价格日期<select disabled={busy} value={effectiveDate} onChange={e=>{setEffectiveDate(e.target.value);setPreview(null);}}>{excel.sheets.find(s=>s.name===sheet)?.dates.map(date=><option key={date}>{date}</option>)}</select></label>{excel.selection && <><p>有效 {excel.selection.valid} · 空白 {excel.selection.unreported} · 异常或冲突 {excel.selection.blocked}。空白不清除现价。</p><div className={styles.previewRows}>{excel.selection.rows.map(row=><div key={row.row}><span>第{row.row}行 · {row.code} · {row.raw_price || "—"}</span><em>{({number:"有效",missing:"空白",range:"区间价，须更正",invalid:"异常，须更正",duplicate:"重复编号",unknown:"未知编号"} as Record<string,string>)[row.state] ?? row.state}</em></div>)}</div></>}</>}
     {!excelFile && <label>CSV、TXT 或粘贴表格<textarea rows={8} disabled={busy} value={content} onChange={(event) => { setContent(event.target.value); setPreview(null); }} placeholder={'编号,名称,单位,行情价格,库存价,在途价\nCF004,示例原料,kg,12.2,13,12.4'} /></label>}
-    {error && <p className={styles.error}>{error}<button type="button" disabled={busy} onClick={async () => {const fresh=await fetchProcurementOverview();if (!alive.current) return;setRevision({update_id:fresh.current_update?.id ?? null,updated_at:fresh.current_update?.updated_at ?? null});setPreview(null);setError("已刷新本轮，请重新检查数据；文件和输入已保留。");}}>读取最新本轮</button></p>}
+    {error && <p className={styles.error}>{error}<button type="button" disabled={busy} onClick={async () => {const fresh=await fetchProcurementOverviewCompact();if (!alive.current) return;setRevision({update_id:fresh.current_update?.id ?? null,updated_at:fresh.current_update?.updated_at ?? null});setPreview(null);setError("已刷新本轮，请重新检查数据；文件和输入已保留。");}}>读取最新本轮</button></p>}
     {preview && <><div className={styles.preview}><strong>{preview.received_count} 行 · {preview.importable_count} 行可导入 · {preview.skipped_count} 行冲突</strong><span>空白保留现价；保存后仍需由有启用权的人员确认异常波动。</span></div><div className={styles.previewRows}>{preview.rows.map((row) => <div key={`${row.code}-${row.name}`}><span><strong>{row.code}</strong>{<Price value={row.reference_price}/>} → {<Price value={row.latest_price}/>} <Movement value={row.change == null ? null : row.change * 100} /></span><em>{row.issues.length ? row.issues.map(importIssueLabel).join("、") : "可导入"}</em></div>)}</div><ReasonSelect label="录价说明" options={PRICE_REASONS} placeholder="请选择说明" value={importReason} disabled={busy} onChange={setImportReason} /></>}
     {unsaved.confirmation}
     </div>
@@ -580,7 +594,7 @@ function Empty({ title, detail }: { title: string; detail: string }) {
 async function publish(update: ProcurementUpdate, baseline_id: string | null, mode: "immediate" | "scheduled", activateAt: string | undefined, onUpdated: (data: ProcurementOverview) => void, onNotice: (message: string) => void) {
   try {
     const result = await publishProcurementUpdate(update.id, { mode, activate_at: activateAt, updated_at: update.updated_at, baseline_id });
-    onUpdated(await fetchProcurementOverview());
+    onUpdated(await fetchProcurementOverviewCompact());
     onNotice(mode === "scheduled" ? "本轮价格已安排定时启用。" : `价格基线 v${"version" in result ? result.version : "—"} 已发布并启用。`);
     return true;
   } catch (reason) {

@@ -188,8 +188,9 @@ def test_formula_management_http_permissions(ready, scope, level, view, create, 
 
 
 def backfill_payloads(store):
+    from api.research_history import BACKFILL_DETAIL
     with transaction(store.url) as db:
-        return [json.loads(row[0]) for row in db.execute('SELECT payload FROM research_backfill_records ORDER BY _order')]
+        return [json.loads(row[0]) for row in db.execute(f'SELECT {BACKFILL_DETAIL} FROM research_backfill_records ORDER BY _order')]
 
 
 def test_backfill_freezes_each_purchase_period_with_explicit_price_basis(ready):

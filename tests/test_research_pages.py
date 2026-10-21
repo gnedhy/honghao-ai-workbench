@@ -103,11 +103,12 @@ def test_different_users_in_same_scope_share_page_rebuild(ready,monkeypatch):
     _,client,admin,store=ready
     identity=IdentityStore(store.url)
     peer=identity.create_user(username='page-peer',display_name='Page peer',department=None,password=TEST_ADMIN_PASSWORD,is_system_admin=True)
-    calls=[];original=ResearchStore.listing
-    def counted(self,actor=None,histories=None):
+    import api.research_reads as reads
+    calls=[];original=reads.ledger_page
+    def counted(db,actor,query):
         calls.append(actor['id']);time.sleep(.05)
-        return original(self,actor,histories)
-    monkeypatch.setattr(ResearchStore,'listing',counted)
+        return original(db,actor,query)
+    monkeypatch.setattr(reads,'ledger_page',counted)
     async def run():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=client.app),base_url='http://testserver',cookies=client.cookies) as first, httpx.AsyncClient(transport=httpx.ASGITransport(app=client.app),base_url='http://testserver') as second:
             assert (await second.post('/api/login',json={'username':peer['username'],'password':TEST_ADMIN_PASSWORD})).status_code==200

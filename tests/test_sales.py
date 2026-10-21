@@ -454,7 +454,7 @@ def test_snapshot_restore_preserves_sales_tables(sales, tmp_path, second_pg):
     store.customer_code(batch['id'], {'revision': batch['revision'], 'customer_code': 'K8065'}, actor)
     with transaction(settings.database_url) as db:
         before = {name: evidence for name, evidence in _table_evidence(db).items() if name.startswith('sales_')}
-    assert set(before) == {'sales_batches', 'sales_trials', 'sales_records', 'sales_events', 'sales_calculator_saved'}
+    assert set(before) == {'sales_batches', 'sales_trials', 'sales_records', 'sales_events', 'sales_calculator_saved', 'sales_activity'}
     assert all(evidence['count'] > 0 for name, evidence in before.items() if name != 'sales_calculator_saved')
     snapshot = create_snapshot(settings, tmp_path / 'sales-snapshots')
     manifest = verify_snapshot(snapshot)
