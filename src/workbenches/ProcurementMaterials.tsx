@@ -1,8 +1,9 @@
+import {WorkbenchLoading} from "../components/WorkbenchLayout";
 import {HelpHint} from "../components/HelpHint";
 import {SortHeading} from "../components/SortHeading";
 import { useProcurementEditSession } from "./procurementEditSession";
 import { useProcurementMaterialQuery } from "./procurementMaterialQuery";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronRight, Clock3, Columns3, Ellipsis, FileUp, PackageCheck, Pencil, Plus, Search, SlidersHorizontal, X } from "lucide-react";
 import { fetchProcurementPreferences, saveProcurementPreferences } from "../api";
 import type { ProcurementMaterial, ProcurementOverview, ProcurementPage, ProcurementPreferences } from "../types";
@@ -24,6 +25,7 @@ const LEDGER_COLUMNS = [
   ["price_date", "价格日期"], ["modifier", "修改人"], ["status", "状态"], ["previous_latest_price", "上版价格"], ["in_transit_price", "在途价"], ["suggested_price", "建议价"], ["data_source", "数据来源"],
 ] as const;
 const MATERIAL_COLUMN_WIDTH = 240;
+const WORK_COLUMNS = ["unit", "latest_price", "draft_price", "change", "modifier", "status"];
 const LEDGER_COLUMN_WIDTHS: Record<string, number> = {
   inventory_quantity: 120,
   unit: 72,
@@ -44,7 +46,7 @@ const DEFAULT_PREFERENCES: ProcurementPreferences = {
   ledger_page_size: 50,
 };
 
-export function ProcurementMaterials({ department, onOpenDepartmentMaterial, data, accessLevel, onRefresh, onSaved, onCreate, onImport, onPublish, onPageChange, focusPending, locateCode, startInEdit, onEditStarted }: { department?: DepartmentLedger; onOpenDepartmentMaterial: (id: string) => void; startInEdit: boolean; onEditStarted: () => void; data: ProcurementOverview; accessLevel: number; onRefresh: () => Promise<void>; onSaved: (data: ProcurementOverview) => void; onCreate: () => void; onImport: () => void; onPublish: () => void; onPageChange: (page: ProcurementPage) => void; focusPending: boolean; locateCode: string }) {
+export function ProcurementMaterials({ onRequestEdit,department, onOpenDepartmentMaterial, data, accessLevel, onRefresh, onSaved, onCreate, onImport, onPublish, onPageChange, focusPending, locateCode, startInEdit, onEditStarted }: { onRequestEdit?:()=>Promise<void>;department?: DepartmentLedger; onOpenDepartmentMaterial: (id: string) => void; startInEdit: boolean; onEditStarted: () => void; data: ProcurementOverview; accessLevel: number; onRefresh: () => Promise<void>; onSaved: (data: ProcurementOverview) => void; onCreate: () => void; onImport: () => void; onPublish: () => void; onPageChange: (page: ProcurementPage) => void; focusPending: boolean; locateCode: string }) {
   const { preferences, update: savePreferences } = useProcurementPreferences();
   const current = department ? null : data.current_update;
   const [source,setSource]=useState("all");
@@ -53,15 +55,15 @@ export function ProcurementMaterials({ department, onOpenDepartmentMaterial, dat
   const pageSize=preferences?.ledger_page_size??DEFAULT_PREFERENCES.ledger_page_size;
   const session=useProcurementEditSession(data,Boolean(department),onSaved,onRefresh);
   const {edit,values,editDate,editReason,editError,saveOpen,expanded,reviewReasons,reviewError,cancelArmed,panelError,busy,edits,dirty,validEdits,pricePreview,unsaved,canEdit,canConfirm}=session;
-  const queryState=useProcurementMaterialQuery(materials,data,current,edit,values,pageSize,ledgerView,focusPending,locateCode,Boolean(department?.selection));
-  const {query,movement,editor,scope,sort,sortDirection,safePage,rows,allRows,visibleRows,selectedPerson,formalComparison,filterNotice}=queryState;
+  const queryState=useProcurementMaterialQuery(materials,data,current,edit,values,pageSize,ledgerView,focusPending,locateCode,Boolean(department?.selection),source);
+  const {total,scopeTotal,loading,loadError,serverMode,query,movement,editor,scope,sort,sortDirection,safePage,rows,allRows,visibleRows,selectedPerson,formalComparison,filterNotice}=queryState;
   const {setQuery,setMovement,setEditor,setScope,setSort,setSortDirection,setPage,setFilterNotice,filterTasks,resetSort}=queryState.actions;
   const {stopEditing,saveEdits,cancelRound,recover}=session.actions;
   const editors=data.editors??[];
-  const formalChange=(item:ProcurementMaterial)=>formalLedgerChange(item,formalComparison);
-  const errors=allRows.filter(row=>row.missing).length;
-  const risks=allRows.filter(row=>row.risk?.status==="open").length;
-  const pending=new Set(allRows.filter(row=>row.pending).map(row=>row.material.id));
+  const formalChange=useCallback((item:ProcurementMaterial)=>formalLedgerChange(item,formalComparison),[formalComparison]);
+  const errors=data.read_page?.task_counts?.missing??allRows.filter(row=>row.missing).length;
+  const risks=data.read_page?.task_counts?.risk??allRows.filter(row=>row.risk?.status==="open").length;
+  const pending=useMemo(()=>new Set(allRows.filter(row=>row.pending).map(row=>row.material.id)),[allRows]);
   const toolbar=useRef<HTMLDivElement>(null), moreButton=useRef<HTMLElement|null>(null);
   const saveDialog=useRef<HTMLDialogElement>(null),saveButton=useRef<HTMLButtonElement>(null),cancelRoundButton=useRef<HTMLButtonElement>(null);
   const searchInput=useRef<HTMLInputElement>(null),summary=useRef<HTMLDivElement>(null);
@@ -77,12 +79,14 @@ export function ProcurementMaterials({ department, onOpenDepartmentMaterial, dat
     document.addEventListener("pointerdown",dismiss,true);return()=>document.removeEventListener("pointerdown",dismiss,true);
   },[]);
   const columnOptions: ReadonlyArray<readonly [string, string]> = current || edit ? [...LEDGER_COLUMNS.map(([id, label]) => [id, id === "status" ? "处理状态" : label] as const), ["draft_price", "待发布价"]] : LEDGER_COLUMNS;
-  const savedColumns = current ? workColumns?.id === current.id ? workColumns.columns : ["unit", "latest_price", "draft_price", "change", "modifier", "status"] : preferences?.ledger_columns ?? DEFAULT_PREFERENCES.ledger_columns;
+  const savedColumns = current ? workColumns?.id === current.id ? workColumns.columns : WORK_COLUMNS : preferences?.ledger_columns ?? DEFAULT_PREFERENCES.ledger_columns;
+  const columns = useMemo(()=>{
   const columns = [...savedColumns];
   if (edit) {
     for (const id of ["unit", "latest_price"]) if (!columns.includes(id)) columns.push(id);
     if (!columns.includes("draft_price")) columns.splice(columns.indexOf("latest_price") + 1, 0, "draft_price");
   }
+  return columns;},[savedColumns,edit]);
   const activeFilterCount = Number(movement !== "all") + Number(scope !== "all") + Number(source !== "all");
   const columnWidth = (id: string) => current && id === "status" ? 150 : current && id === "change" ? 178 : LEDGER_COLUMN_WIDTHS[id] ?? 112;
   const tableWidth = (department?.selection ? 56 : 0) + MATERIAL_COLUMN_WIDTH + columns.reduce((total, id) => total + columnWidth(id), 0);
@@ -118,8 +122,8 @@ export function ProcurementMaterials({ department, onOpenDepartmentMaterial, dat
     const value = Number(pageSizeInput);
     if (Number.isFinite(value)) setPageSize(value); else setPageSizeInput(String(pageSize));
   };
-  const openMaterial = (id: string, editing = false) => { if (edit || department?.selection) return; if (department) { onOpenDepartmentMaterial(id); return; } setNewPrice(editing); setSelected(id); };
-  const startEditing=()=>session.actions.startEditing([...new Set([...rows,...allRows].map(row=>row.material.id))],sort,sortDirection);
+  const openMaterial = useCallback((id: string, editing = false) => { if (edit || department?.selection) return; if (department) { onOpenDepartmentMaterial(id); return; } setNewPrice(editing); setSelected(id); },[edit,department,onOpenDepartmentMaterial]);
+  const startEditing=()=>data.read_page&&onRequestEdit?void onRequestEdit():session.actions.startEditing([...new Set([...rows,...allRows].map(row=>row.material.id))],sort,sortDirection);
   const startRef=useRef({startEditing,onEditStarted});startRef.current={startEditing,onEditStarted};
   useEffect(()=>{if(startInEdit){startRef.current.startEditing();startRef.current.onEditStarted();}},[startInEdit]);
   useEffect(() => { if (saveOpen) saveDialog.current?.showModal(); }, [saveOpen]);
@@ -129,15 +133,30 @@ export function ProcurementMaterials({ department, onOpenDepartmentMaterial, dat
     window.requestAnimationFrame(() => saveButton.current?.focus({ preventScroll: true }));
   };
   const closePanel = () => { if (busy) return; setPanel(null); window.requestAnimationFrame(() => moreButton.current?.focus({ preventScroll: true })); };
-  const toggleRow=(id:string)=>{
-    session.actions.toggleReview(id);
+  const toggleRow=useCallback((id:string)=>{
+    actionsRef.current.toggleReview(id);
     if(expanded!==id)requestAnimationFrame(()=>document.getElementById(`ledger-review-${id}`)?.querySelector<HTMLSelectElement>("select")?.focus());
-  };
-  const review=async(issueId:string,materialId:string)=>{if(await session.actions.review(issueId))requestAnimationFrame(()=>document.getElementById(`ledger-material-${materialId}`)?.focus());};
+  },[expanded]);
+  const review=useCallback(async(issueId:string,materialId:string)=>{if(await actionsRef.current.review(issueId,queryState.displayedUpdate))requestAnimationFrame(()=>document.getElementById(`ledger-material-${materialId}`)?.focus());},[queryState.displayedUpdate]);
+  const renderedRows=useMemo(()=>visibleRows.map(row => {
+      const { material: item, input, risk } = row;
+      const change = edit ? draftLedgerChange(item, values[item.id] ?? edit.originals[item.id] ?? "", formalComparison) : input ? draftLedgerChange(item, input.draft_price ?? "", formalComparison) : formalChange(item);
+      const comparison = formalComparison?.items[item.id];
+      const changeTitle = !edit && !input && comparison?.previous != null && ["up", "down", "unchanged"].includes(comparison.kind) ? `价格变化：${price(comparison.previous)} → ${price(item.published_price)}（v${comparison.previous_version ?? formalComparison?.previous_version} → v${comparison.version ?? data.batches[0]?.version}）${Number(comparison.previous) === 0 && comparison.change == null ? "；比较基准为零，无法计算涨跌幅" : ""}` : undefined;
+      return <Fragment key={item.id}>
+        <tr>{department?.selection && <td data-column="selection"><label className={styles.rangeSelectTarget}><input className={styles.rangeCheckbox} type="checkbox" aria-label={`关联 ${item.code}`} checked={department.selection.ids.includes(item.id)} disabled={department.selection.disabled} onChange={event => department.selection?.toggle(item.id, event.target.checked)} /></label></td>}<td data-column="identity">{department?.selection ? <span className={styles.materialLink}><span><strong title={item.code}>{item.code}</strong>{item.inventory_source && <small title={`库存截至 ${item.inventory_source.as_of}；导入 ${formatShanghaiDateTime(item.inventory_source.imported_at)}`}>{item.inventory_source.catalog_source}</small>}</span></span> : <button id={`ledger-material-${item.id}`} className={styles.materialLink} type="button" disabled={Boolean(edit)} onClick={() => openMaterial(item.id)}><span><strong title={item.code}>{item.code}</strong>{item.inventory_source && <small title={`库存截至 ${item.inventory_source.as_of}；导入 ${formatShanghaiDateTime(item.inventory_source.imported_at)}`}>{item.inventory_source.catalog_source}</small>}</span><ChevronRight size={16} aria-hidden="true" /></button>}</td>{columns.map(id => <td data-column={id} key={id}>{
+          edit && id === "draft_price" ? <DecimalInput className={styles.ledgerPriceInput} aria-label={`${item.code}待发布价`} inputMode="decimal" disabled={busy} value={values[item.id] ?? edit.originals[item.id] ?? ""} placeholder="未调整" aria-invalid={Boolean(values[item.id]?.trim() && !/^\d+(\.\d+)?$/.test(values[item.id].trim()))} onChange={event => actionsRef.current.changePrice(item.id,event.target.value)} onBlur={() => actionsRef.current.retractPrice(item.id)} /> :
+          current && id === "draft_price" ? input ? <strong>{input.draft_price == null ? "缺价" : price(input.draft_price)}</strong> : "—" :
+          current && id === "status" ? <div className={styles.ledgerRowActions}>{edit ? <span>{row.state}</span> : row.missing ? canEdit ? <button className="secondary-button" type="button" onClick={() => openMaterial(item.id, true)}>补录价格</button> : <span>待补价</span> : risk ? <><span className={risk.status === "reviewed" ? undefined : styles.riskText}>{risk.status === "reviewed" ? "已确认" : "待确认"}</span><button className={styles.ledgerTextAction} type="button" disabled={busy} aria-expanded={expanded === item.id} aria-controls={`ledger-review-${item.id}`} onClick={() => toggleRow(item.id)}>{risk.status === "reviewed" ? "查看依据" : canConfirm ? "确认波动" : "查看波动"}</button></> : <span className={input ? undefined : styles.baselineEmpty}>{row.state}</span>}</div> :
+          id === "change" ? <span title={changeTitle}>{typeof change === "string" ? change : <Movement value={change} />}</span> : ledgerCell(item, id, pending.has(item.id))
+        }</td>)}</tr>
+        {current && expanded === item.id && risk && <tr className={styles.ledgerReviewRow}><td colSpan={columns.length + 1}><div id={`ledger-review-${item.id}`} className={styles.ledgerReview} role="region" aria-label={`${item.code}价格波动确认`}>{risk.status === "reviewed" ? <div className={styles.ledgerReviewCopy}><strong>已确认价格波动</strong><p>确认依据：{risk.review_reason}</p></div> : canConfirm ? <><div className={styles.reviewControl}><ReasonSelect label={`${item.code}确认依据`} options={REVIEW_REASONS} placeholder="请选择确认依据" value={reviewReasons[risk.id]} disabled={busy} onChange={value => actionsRef.current.chooseReviewReason(risk.id,value)} /><button type="button" disabled={busy || !resolveReason(reviewReasons[risk.id])} onClick={() => void review(risk.id, item.id)}>{busy ? "正在确认" : "确认波动"}</button></div>{reviewError && <p className={styles.error} role="alert">{reviewError}</p>}</> : <p>等待采购员确认。</p>}<button className={styles.ledgerTextAction} type="button" disabled={busy} onClick={() => { actionsRef.current.toggleReview(null); document.getElementById(`ledger-material-${item.id}`)?.focus(); }}>收起</button></div></td></tr>}
+      </Fragment>;
+    }),[visibleRows,edit,values,formalComparison,department,columns,current,expanded,canEdit,canConfirm,busy,reviewReasons,reviewError,data.batches,pending,openMaterial,formalChange,toggleRow,review]);
   return <section className={`${styles.section} ${styles.ledgerSection} ${department ? styles.distributionLedger : ""}`}>
     {unsaved.confirmation}
     {!department && <div className={`${styles.sectionHeading} ${styles.ledgerHeading}`}>
-      <div><div className={styles.ledgerTitle}><h2>价格台账</h2><small>{rows.length} / {data.materials.length} 条</small></div><p className={styles.sectionDescription}>在台账内编辑价格，或导入报表批量更新；启用前，行情价格保持不变。</p></div>
+      <div><div className={styles.ledgerTitle}><h2>价格台账</h2><small>{total} / {scopeTotal} 条</small></div><p className={styles.sectionDescription}>在台账内编辑价格，或导入报表批量更新；启用前，行情价格保持不变。</p></div>
       <div className={styles.ledgerActions}>
         {canEdit && edit && <><button ref={saveButton} className="primary-button" type="button" disabled={busy || !dirty || !validEdits} onClick={() => session.actions.openSave()}>保存修改{dirty ? `（${edits.length}）` : ""}</button><button className="secondary-button" type="button" disabled={busy} onClick={stopEditing}>取消编辑</button></>}
         {!edit && <>{canEdit && <button className={current ? "secondary-button" : "primary-button"} type="button" onClick={startEditing}><Pencil size={14} />编辑价格</button>}{!current && data.capabilities?.can_manage_catalog && <button className="secondary-button" type="button" onClick={onCreate}><Plus size={14} />新增原料</button>}{!current && canEdit && <button className="secondary-button" type="button" onClick={onImport}><FileUp size={14} />导入报表</button>}</>}
@@ -165,7 +184,7 @@ export function ProcurementMaterials({ department, onOpenDepartmentMaterial, dat
     {!department && data.scheduled_update && <div className={styles.ledgerSchedule}><Clock3 size={15} /><span>等待启用：{formatPriceDate(data.scheduled_update.price_date)} · {formatShanghaiDateTime(data.scheduled_update.activate_at)}，行情价格未改变。</span><button type="button" disabled={Boolean(edit)} onClick={() => onPageChange("batches")}>查看排期</button></div>}
     {current && !edit && <div ref={summary} className={styles.ledgerUpdate} aria-label="本轮更新摘要">
       <div><strong>本轮更新 · {formatPriceDate(current.price_date)}</strong><small>{current.source_name} · {current.status === "revalidation_required" ? "需要重新确认，原排期不会自动启用" : updateStatusLabel(current.status)}</small></div>
-      <div className={styles.ledgerTaskCounts}><button type="button" onClick={() => filterTasks("involved")}>{current.input_items.length} 项涉及</button>{errors > 0 && <button type="button" onClick={() => filterTasks("missing")}>{errors} 项待补价</button>}{risks > 0 && <button type="button" onClick={() => filterTasks("risk")}>{risks} 项待确认</button>}</div>
+      <div className={styles.ledgerTaskCounts}><button type="button" onClick={() => filterTasks("involved")}>{data.read_page?.task_counts?.involved??current.input_items.length} 项涉及</button>{errors > 0 && <button type="button" onClick={() => filterTasks("missing")}>{errors} 项待补价</button>}{risks > 0 && <button type="button" onClick={() => filterTasks("risk")}>{risks} 项待确认</button>}</div>
       <small id="ledger-enable-status" className={styles.ledgerEnable}>{errors || risks ? `还需处理 ${errors} 项补价、${risks} 项波动确认` : canConfirm ? <><Check size={14} aria-hidden="true" />价格问题已处理</> : "等待有启用权的人员启用价格"}</small>
       {canConfirm && <button className="primary-button" type="button" disabled={busy || errors > 0 || risks > 0} aria-describedby="ledger-enable-status" onClick={onPublish}><PackageCheck size={14} />启用价格</button>}
       {data.capabilities?.can_cancel_round && <button ref={cancelRoundButton} className={`secondary-button ${cancelArmed ? styles.cancelArmed : ""}`} type="button" disabled={busy} onBlur={() => session.actions.armCancel(false)} onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); session.actions.armCancel(false); } }} onClick={() => { if (cancelArmed) void cancelRound(); else { session.actions.armCancel(true); } }}>{busy && cancelArmed ? "正在取消…" : cancelArmed ? "确认取消" : "取消更新"}</button>}
@@ -187,7 +206,7 @@ export function ProcurementMaterials({ department, onOpenDepartmentMaterial, dat
       {department?.actions}
     </div>
     {department?.notice}
-    {(query || editor || activeFilterCount > 0) && <div className={styles.filterTags} aria-label="当前筛选"><span>筛选结果 {rows.length} 项</span>{query && <span>搜索：{query}</span>}
+    {(query || editor || activeFilterCount > 0) && <div className={styles.filterTags} aria-label="当前筛选"><span>筛选结果 {total} 项</span>{query && <span>搜索：{query}</span>}
       {source !== "all" && <span>来源：{source}<button type="button" aria-label="清除来源筛选" onClick={() => setSource("all")}><X size={13} /></button></span>}
       {editor && <span>人员：{selectedPerson}<button type="button" aria-label="清除人员筛选" onClick={() => setEditor("")}><X size={13} /></button></span>}
       {movement !== "all" && <span>价格 · {movementLabels[movement]}<button type="button" aria-label="清除价格筛选" onClick={() => setMovement("all")}><X size={13} /></button></span>}
@@ -195,22 +214,10 @@ export function ProcurementMaterials({ department, onOpenDepartmentMaterial, dat
       <button className={styles.clearFilters} type="button" onClick={() => { setQuery(""); setEditor(""); setMovement("all"); setScope("all"); setSource("all"); }}>清除筛选</button>
     </div>}
     {filterNotice && <div role="status" className={styles.comparisonHelp}>{filterNotice}<button type="button" aria-label="关闭筛选提示" onClick={() => setFilterNotice("")}><X size={13} /></button></div>}
-    {!rows.length ? <Empty title={editor && current && scope !== "all" ? "该人员暂无符合条件的待发布修改" : "没有符合条件的原料"} detail="可调整筛选条件或清除筛选。" /> : <div className={`${styles.tableWrap} ${styles.ledgerTableWrap}`}><table className={`${styles.table} ${styles.stickyTable} ${styles.decisionTable}`} style={{ minWidth: `${tableWidth}px` }}><colgroup>{department?.selection && <col style={{ width: 56 }} />}<col style={{ width: MATERIAL_COLUMN_WIDTH }} />{columns.map(id => <col key={id} style={{ width: columnWidth(id) }} />)}</colgroup><thead><tr>{department?.selection && <th data-column="selection">选择</th>}{sortHeader("code", "原料编号")}{columns.map(id => sortHeader(id, columnOptions.find(([column]) => column === id)?.[1] ?? id))}</tr></thead><tbody>{visibleRows.map(row => {
-      const { material: item, input, risk } = row;
-      const change = edit ? draftLedgerChange(item, values[item.id] ?? edit.originals[item.id] ?? "", formalComparison) : input ? draftLedgerChange(item, input.draft_price ?? "", formalComparison) : formalChange(item);
-      const comparison = formalComparison?.items[item.id];
-      const changeTitle = !edit && !input && comparison?.previous != null && ["up", "down", "unchanged"].includes(comparison.kind) ? `价格变化：${price(comparison.previous)} → ${price(item.published_price)}（v${comparison.previous_version ?? formalComparison?.previous_version} → v${comparison.version ?? data.batches[0]?.version}）${Number(comparison.previous) === 0 && comparison.change == null ? "；比较基准为零，无法计算涨跌幅" : ""}` : undefined;
-      return <Fragment key={item.id}>
-        <tr>{department?.selection && <td data-column="selection"><label className={styles.rangeSelectTarget}><input className={styles.rangeCheckbox} type="checkbox" aria-label={`关联 ${item.code}`} checked={department.selection.ids.includes(item.id)} disabled={department.selection.disabled} onChange={event => department.selection?.toggle(item.id, event.target.checked)} /></label></td>}<td data-column="identity">{department?.selection ? <span className={styles.materialLink}><span><strong title={item.code}>{item.code}</strong>{item.inventory_source && <small title={`库存截至 ${item.inventory_source.as_of}；导入 ${formatShanghaiDateTime(item.inventory_source.imported_at)}`}>{item.inventory_source.catalog_source}</small>}</span></span> : <button id={`ledger-material-${item.id}`} className={styles.materialLink} type="button" disabled={Boolean(edit)} onClick={() => openMaterial(item.id)}><span><strong title={item.code}>{item.code}</strong>{item.inventory_source && <small title={`库存截至 ${item.inventory_source.as_of}；导入 ${formatShanghaiDateTime(item.inventory_source.imported_at)}`}>{item.inventory_source.catalog_source}</small>}</span><ChevronRight size={16} aria-hidden="true" /></button>}</td>{columns.map(id => <td data-column={id} key={id}>{
-          edit && id === "draft_price" ? <DecimalInput className={styles.ledgerPriceInput} aria-label={`${item.code}待发布价`} inputMode="decimal" disabled={busy} value={values[item.id] ?? edit.originals[item.id] ?? ""} placeholder="未调整" aria-invalid={Boolean(values[item.id]?.trim() && !/^\d+(\.\d+)?$/.test(values[item.id].trim()))} onChange={event => session.actions.changePrice(item.id,event.target.value)} onBlur={() => session.actions.retractPrice(item.id)} /> :
-          current && id === "draft_price" ? input ? <strong>{input.draft_price == null ? "缺价" : price(input.draft_price)}</strong> : "—" :
-          current && id === "status" ? <div className={styles.ledgerRowActions}>{edit ? <span>{row.state}</span> : row.missing ? canEdit ? <button className="secondary-button" type="button" onClick={() => openMaterial(item.id, true)}>补录价格</button> : <span>待补价</span> : risk ? <><span className={risk.status === "reviewed" ? undefined : styles.riskText}>{risk.status === "reviewed" ? "已确认" : "待确认"}</span><button className={styles.ledgerTextAction} type="button" disabled={busy} aria-expanded={expanded === item.id} aria-controls={`ledger-review-${item.id}`} onClick={() => toggleRow(item.id)}>{risk.status === "reviewed" ? "查看依据" : canConfirm ? "确认波动" : "查看波动"}</button></> : <span className={input ? undefined : styles.baselineEmpty}>{row.state}</span>}</div> :
-          id === "change" ? <span title={changeTitle}>{typeof change === "string" ? change : <Movement value={change} />}</span> : ledgerCell(item, id, pending.has(item.id))
-        }</td>)}</tr>
-        {current && expanded === item.id && risk && <tr className={styles.ledgerReviewRow}><td colSpan={columns.length + 1}><div id={`ledger-review-${item.id}`} className={styles.ledgerReview} role="region" aria-label={`${item.code}价格波动确认`}>{risk.status === "reviewed" ? <div className={styles.ledgerReviewCopy}><strong>已确认价格波动</strong><p>确认依据：{risk.review_reason}</p></div> : canConfirm ? <><div className={styles.reviewControl}><ReasonSelect label={`${item.code}确认依据`} options={REVIEW_REASONS} placeholder="请选择确认依据" value={reviewReasons[risk.id]} disabled={busy} onChange={value => session.actions.chooseReviewReason(risk.id,value)} /><button type="button" disabled={busy || !resolveReason(reviewReasons[risk.id])} onClick={() => void review(risk.id, item.id)}>{busy ? "正在确认" : "确认波动"}</button></div>{reviewError && <p className={styles.error} role="alert">{reviewError}</p>}</> : <p>等待采购员确认。</p>}<button className={styles.ledgerTextAction} type="button" disabled={busy} onClick={() => { session.actions.toggleReview(null); document.getElementById(`ledger-material-${item.id}`)?.focus(); }}>收起</button></div></td></tr>}
-      </Fragment>;
-    })}</tbody></table></div>}
-    {ledgerView === "paged" && <LedgerPagination total={rows.length} page={safePage} pageSize={pageSize} onPageChange={setPage}/>}
+    {loading&&rows.length>0&&<WorkbenchLoading local title="正在读取原料台账"/>}
+    {loading&&!rows.length?<WorkbenchLoading local title="正在读取原料台账"/>:loadError?<p role="alert">{loadError}<button type="button" onClick={()=>void onRefresh()}>重新读取</button></p>:!rows.length ? <Empty title={editor && current && scope !== "all" ? "该人员暂无符合条件的待发布修改" : "没有符合条件的原料"} detail="可调整筛选条件或清除筛选。" /> : <div aria-busy={loading} className={`${styles.tableWrap} ${styles.ledgerTableWrap}`}><table className={`${styles.table} ${styles.stickyTable} ${styles.decisionTable}`} style={{ minWidth: `${tableWidth}px` }}><colgroup>{department?.selection && <col style={{ width: 56 }} />}<col style={{ width: MATERIAL_COLUMN_WIDTH }} />{columns.map(id => <col key={id} style={{ width: columnWidth(id) }} />)}</colgroup><thead><tr>{department?.selection && <th data-column="selection">选择</th>}{sortHeader("code", "原料编号")}{columns.map(id => sortHeader(id, columnOptions.find(([column]) => column === id)?.[1] ?? id))}</tr></thead><tbody>{renderedRows}</tbody></table></div>}
+    {serverMode&&ledgerView==="scroll"&&visibleRows.length<total&&<button type="button" className="secondary-button" onClick={()=>setPage(safePage+1)}>加载更多原料</button>}
+    {ledgerView === "paged" && <LedgerPagination total={total} page={safePage} pageSize={pageSize} onPageChange={setPage}/>}
     </div>
     {current && panel && <LedgerPanel title="本轮操作记录" busy={busy} onClose={closePanel}>
       <p>{formatPriceDate(current.price_date)} · {current.input_items.length} 项原料</p>

@@ -236,6 +236,7 @@ export type ProcurementHistoryBatchDetail = ProcurementHistoryBatch & {
 };
 
 export type ProcurementMaterialDetail = {
+  history_read?: {base:string;version?:string;total:number;start_date:string|null;end_date:string|null};
   comparison?: NonNullable<ProcurementBatch["comparison"]>["items"][string] | null;
   official_history: Array<{id: string; version: number; version_date: string; latest_price?: string | null; price_date: string | null; raw_price?: string | null; price_kind: string; sheet: string | null; cell: string | null; modifier?: PriceModifier | null}>;
   sources: Array<{sheet: string; row: number; purchaser: string | null; filename: string}>;
@@ -258,6 +259,7 @@ export type ProcurementPreferences = {
 };
 
 export type ProcurementOverview = {
+  read_page?: {total:number;scope_total:number;page:number;page_size:number;mode:string;version?:string;preferred?:string;task_counts?:{involved:number;missing:number;risk:number}};
   ledger_comparison?: ProcurementBatch["comparison"] | null;
   editors?: Array<{ id: string; name: string }>;
   environment?: string;
@@ -383,7 +385,7 @@ export type ResearchMaterialPrices = {
   ledger_comparison: ProcurementBatch["comparison"] | null;
   materials: ResearchMaterial[];
 };
-export type ResearchMaterialDetail = Pick<ProcurementMaterialDetail, "material" | "comparison" | "official_history" | "sources" | "adjustments" | "changes">;
+export type ResearchMaterialDetail = Pick<ProcurementMaterialDetail, "material" | "comparison" | "official_history" | "sources" | "adjustments" | "changes" | "history_read">;
 
 
 export type SalesPage = "dashboard" | "calculate" | "estimator" | "quotes";

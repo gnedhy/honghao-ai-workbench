@@ -1,3 +1,4 @@
+import {selectedSalesProducts} from "./salesReads";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchJson } from "../api";
 import { createClientId as id } from "../clientId";
@@ -43,6 +44,8 @@ export function useCalculatorWorkspace(products: Product[], accessLevel: number)
   const [workspace, setWorkspace] = useState(() => fresh(products));
   const { source, panels, active, clean } = workspace;
   const [saved, setSaved] = useState<Saved[]>([]);
+  const historyVersions=useRef({workspace:"",template:""});
+  const [historyPage,setHistoryPage]=useState(1),[templatePage,setTemplatePage]=useState(1),[historyTotal,setHistoryTotal]=useState(0),[templateTotal,setTemplateTotal]=useState(0);
   const [savedError, setSavedError] = useState("");
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState("");
@@ -66,17 +69,19 @@ export function useCalculatorWorkspace(products: Product[], accessLevel: number)
     let mounted = true;
     const version = writes.current;
     setHistoryLoading(true); setHistoryError("");
-    void fetchJson<{ saved: Saved[] }>(endpoint + "/saved")
+    void Promise.all([fetchJson<{saved:Saved[];total:number;page:number;version:string}>(endpoint+`/saved-page?kind=workspace&page=${historyPage}&token=${historyVersions.current.workspace}`),fetchJson<{saved:Saved[];total:number;page:number;version:string}>(endpoint+`/saved-page?kind=template&page=${templatePage}&token=${historyVersions.current.template}`)])
       .then(value => { if (mounted) {
-        if (writes.current === version) setSaved(value.saved);
+        if (writes.current === version) {setSaved([...value[0].saved,...value[1].saved]);setHistoryTotal(value[0].total);setTemplateTotal(value[1].total);setHistoryPage(value[0].page);setTemplatePage(value[1].page);historyVersions.current={workspace:value[0].version,template:value[1].version};}
         else setHistoryRetry(value => value + 1);
       } })
-      .catch(error => { if (mounted) setHistoryError(error instanceof Error ? error.message : "历史测算读取失败"); })
+      .catch(error => { if (mounted) setHistoryError(error instanceof Error ? error.message : "历史测算读取失败");if(error&&typeof error==="object"&&"status" in error&&(error.status===401||error.status===403))setSaved([]); })
       .finally(() => { if (mounted) setHistoryLoading(false); });
     return () => { mounted = false; };
-  }, [historyRetry]);
+  }, [historyRetry,historyPage,templatePage]);
   const evaluation = useCalculatorEvaluation(source, panels);
-  const currentProduct = products.find(row => row.id === source.product_id);
+  const [selectedProduct,setSelectedProduct]=useState<Product|undefined>();
+  useEffect(()=>{let active=true;setSelectedProduct(undefined);if(source.product_id)void selectedSalesProducts([source.product_id]).then(value=>{if(active)setSelectedProduct(value.products[0]);}).catch(error=>{if(active){setSelectedProduct(undefined);setSavedError(error instanceof Error?error.message:'产品成本读取失败');}});return()=>{active=false;};},[source.product_id]);
+  const currentProduct=selectedProduct?.id===source.product_id?selectedProduct:undefined;
   const currentCost = currentProduct ? source.basis === "inventory" ? currentProduct.inventory_cost : currentProduct.latest_cost : null;
   const sourceCost = source.kind === "product" ? currentCost : source.cost;
   const costChanged = source.kind === "snapshot" && !!currentProduct && (source.cost !== currentCost || source.source_version !== (currentProduct.source_version || ""));
@@ -93,8 +98,12 @@ export function useCalculatorWorkspace(products: Product[], accessLevel: number)
   };
   const openWorkspace = async (row: Saved) => {
     if (pending.current || !await guard.request() || !mounted.current) return false;
-    const payload = row.payload as { source: Source; panels: Panel[] };
-    setWorkspace(state => ({ ...payload, active: row, clean: fingerprint(payload.source, payload.panels), epoch: state.epoch + 1 }));
+    pending.current=true;setBusy(true);
+    let loaded:Saved;
+    try{loaded=await fetchJson<Saved>(endpoint+`/saved/${row.id}`);}catch(error){setSavedError(error instanceof Error?error.message:"读取测算失败");return false;}finally{pending.current=false;if(mounted.current)setBusy(false);}
+    if(!mounted.current)return false;
+    const payload = loaded.payload as { source: Source; panels: Panel[] };
+    setWorkspace(state => ({ ...payload, active: loaded, clean: fingerprint(payload.source, payload.panels), epoch: state.epoch + 1 }));
     setPanelDrafts({}); setDeleteTarget(null); setSavedError(""); return true;
   };
   const beginWrite = () => {
@@ -108,7 +117,7 @@ export function useCalculatorWorkspace(products: Product[], accessLevel: number)
     try {
       const row = await request<Saved>("/saved", { kind: "workspace", payload: { source, panels } });
       if (!mounted.current) return;
-      writes.current++; setSaved(rows => [row, ...rows.filter(saved => saved.id !== row.id)]);
+      writes.current++; setHistoryPage(1);setTemplatePage(1);setHistoryRetry(value=>value+1);setSaved(rows => [row, ...rows.filter(saved => saved.id !== row.id)]);
       const payload = row.payload as { source: Source; panels: Panel[] };
       setWorkspace(current => ({ ...current,
         ...(fingerprint(current.source, current.panels) === submitted ? payload : {}),
@@ -122,7 +131,7 @@ export function useCalculatorWorkspace(products: Product[], accessLevel: number)
     try {
       const row = await request<Saved>("/saved", { kind: "template", name: name.trim(), payload: { mode: panel.mode, steps: panel.steps } });
       if (!mounted.current) return false;
-      writes.current++; setSaved(rows => [row, ...rows.filter(saved => saved.id !== row.id)]); return true;
+      writes.current++; setHistoryPage(1);setTemplatePage(1);setHistoryRetry(value=>value+1);setSaved(rows => [row, ...rows.filter(saved => saved.id !== row.id)]); return true;
     } catch (error) { if (mounted.current) setSavedError(error instanceof Error ? error.message : "公式保存失败"); return false; }
     finally { finishWrite(); }
   };
@@ -161,12 +170,19 @@ export function useCalculatorWorkspace(products: Product[], accessLevel: number)
   });
   const addPanel = () => { copyPanel(panels.at(-1)!.id); requestAnimationFrame(() => document.querySelector("[aria-label='公式方案对比'] article:last-of-type")?.scrollIntoView({ block: "nearest", inline: "end", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" })); };
   const deletePanel = (key: string) => setWorkspace(state => state.panels.length <= 1 ? state : { ...state, panels: state.panels.filter(row => row.id !== key) });
-  const loadTemplate = (panelId: string, key: string) => {
+  const templateReads=useRef(new Map<string,number>());
+  const loadTemplate = async (panelId: string, key: string) => {
     const chosen = saved.find(row => row.kind === "template" && row.id === key); if (!chosen) return;
-    const data = chosen.payload as { mode: Panel["mode"]; steps: Step[] };
-    changePanel(panelId, panel => ({ ...panel, mode: data.mode, steps: data.steps.map(step => ({ ...step, id: id() })) }));
+    const generation=(templateReads.current.get(panelId)??0)+1;templateReads.current.set(panelId,generation);
+    const epoch=workspace.epoch,sourceBaseline=JSON.stringify(source),baseline=JSON.stringify(panels.find(panel=>panel.id===panelId));
+    let loaded:Saved;
+    try{loaded=await fetchJson<Saved>(endpoint+`/saved/${key}`);}catch(error){if(mounted.current&&templateReads.current.get(panelId)===generation)setSavedError(error instanceof Error?error.message:"读取模板失败");return;}
+    if(!mounted.current||templateReads.current.get(panelId)!==generation)return;
+    const data = loaded.payload as { mode: Panel["mode"]; steps: Step[] };
+    const steps=data.steps.map(step=>({...step,id:id()}));
+    setWorkspace(state=>state.epoch!==epoch||JSON.stringify(state.source)!==sourceBaseline?state:{...state,panels:state.panels.map(panel=>panel.id===panelId&&JSON.stringify(panel)===baseline?{...panel,mode:data.mode,steps}:panel)});
   };
-  return { ...workspace, ...evaluation, savedError, historyLoading, historyError, busy, dirty, hasPanelDrafts, guard, deleteTarget,
+  return { ...workspace, ...evaluation, historyPage,templatePage,historyTotal,templateTotal,setHistoryPage,setTemplatePage, savedError, historyLoading, historyError, busy, dirty, hasPanelDrafts, guard, deleteTarget,
     templates: saved.filter(row => row.kind === "template"), workspaces: saved.filter(row => row.kind === "workspace"), currentProduct, sourceCost, costChanged, sourceSpecial,
     actions: { changePanel, changeStep, moveStep, movePanel, resetWorkspace, openWorkspace, saveWorkspace, saveTemplate, deleteSaved, selectProduct, selectManual, setManualCost, refreshSource, copyPanel, addPanel, deletePanel, loadTemplate, retryHistory, setDeleteTarget, setPanelDraft },
   };

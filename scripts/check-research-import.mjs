@@ -35,7 +35,7 @@ try{
    assert.ok(pageSize>0&&pageSize<=200&&number>=1);
    return route.fulfill({json:{items:selected.slice((number-1)*pageSize,number*pageSize),total:selected.length,scope_total:products.length,page:number,page_size:pageSize,owners:['合成负责人'],creation_owners:['合成负责人'],department_names:departments,departments:[],pending:false}});
   }
-  const data={'/api/workbenches/research/overview':{products,pending:false,versions:[],formulas:products,owners:['合成负责人']},'/api/workbenches/research/material-prices':{materials:meanMaterials,batches:[]},...Object.fromEntries(referenceCodes.map(code=>['/api/workbenches/research/material-prices/'+code,meanMaterialDetails[code]]))}[url.pathname];
+  const data={'/api/workbenches/research/overview':{products,pending:false,versions:[],formulas:products,owners:['合成负责人']},'/api/workbenches/research/material-prices':{materials:meanMaterials,batches:[]},...Object.fromEntries(referenceCodes.map(code=>['/api/workbenches/research/material-prices/by-code/'+code,meanMaterialDetails[code]]))}[url.pathname];
   assert.ok(data,'Unexpected isolated request: '+url.pathname);return route.fulfill({json:data});
  });
  await page.goto(server.resolvedUrls.local[0]+'research-import-qa');

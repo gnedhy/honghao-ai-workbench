@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "精简历史回算摘要，按内容哈希共享不可变冻结配方和引用图；仅隔离验证。",
+  "modules": ["procurement", "research", "sales"],
+  "files": ["api/research_history.py", "api/postgres.py", "api/migrations/postgresql/0007_backfill_storage.sql"],
+  "consumers": ["api/research.py", "api/sales.py", "api/operations.py", "scripts/migrate_sqlite_to_postgres.py"],
+  "permissions": "继续按产品范围读取并对重组后的历史执行ResearchAccess投影，不增加共享内容HTTP入口。",
+  "data": "候选迁移0007新增冻结内容表和可空外键，只重排历史回算存储；期次、签名、精确金额与正式成本记录保持。",
+  "lifecycle": "新回算内容和记录在同一事务保存，摘要由数据库生成；哈希约束及外键保护被引用内容，事务失败同时回滚。",
+  "exits": "沿用现有页面草稿、忙碌与退出边界，本轮无界面操作变化。",
+  "compatibility": "保留未拆分旧payload读取；v6快照须先由匹配v6程序恢复，再在隔离库迁移v7；正式成本摘要不变。",
+  "recovery": "隔离库先保留原快照，验证v7完整备份恢复；旧应用不能直接读取已拆分的v7库，回退须匹配旧程序与旧快照。",
+  "verification": {
+    "api": [
+      "tests/test_history_storage.py::test_migration_losslessly_shares_inputs_and_preserves_period_signatures",
+      "tests/test_history_storage.py::test_new_records_share_only_identical_inputs_and_rollback_atomically",
+      "tests/test_history_storage.py::test_shared_details_load_once_and_do_not_share_mutable_objects",
+      "tests/test_operations_cli.py::test_restore_requires_confirmation_and_uses_an_empty_target",
+      "tests/test_research_departments.py::test_department_lists_history_details_export_and_reference_cost",
+      "tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"
+    ],
+    "node": [],
+    "browser": [{"file":"scripts/check-workbench-loading.mjs","id":"research-history-periods-and-material-price-arrows","apiTest":"tests/test_research_ui.py::test_browser_dashboard_history_and_price_movements"}]
+  }
+}

@@ -21,6 +21,8 @@ def legacy(tmp_path, pg_targets):
             if table in migration.POST_SQLITE_TABLES:
                 continue
             columns = target.execute("SELECT column_name,data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=%s AND column_name!='_order' AND is_generated='NEVER' ORDER BY ordinal_position", (table,)).fetchall()
+            if table == 'research_backfill_records':
+                columns = [(name, kind) for name, kind in columns if name != 'frozen_id']
             declarations = [migration._quote(name) + (' INTEGER PRIMARY KEY AUTOINCREMENT' if table == 'research_cost_records' and name == 'sequence' else ' ' + ('INTEGER' if kind in {'integer','bigint'} else 'BLOB' if kind == 'bytea' else 'TEXT')) for name, kind in columns]
             source.execute(f'CREATE TABLE {migration._quote(table)} ({",".join(declarations)})')
             names = ','.join(migration._quote(name) for name, _ in columns)
@@ -36,6 +38,7 @@ def legacy(tmp_path, pg_targets):
         source.execute("INSERT INTO procurement_materials(id,code,name,unit,latest_price,inventory_price,updated_at) VALUES('m','M1','测试','kg','0.00000000000000100','0','2026-09-14')")
         source.execute("INSERT INTO research_cost_records VALUES(31,'event','product','signature','{\"price\":\"0.00000\"}')")
         source.execute("UPDATE sqlite_sequence SET seq=80 WHERE name='research_cost_records'")
+        source.execute('INSERT INTO research_backfill_records VALUES(?,?,?,?)', (1,'product','old-signature','{"latest_cost":"0.00000000000000100","graph":[]}'))
     (snapshot / 'environment').write_text('test')
     (snapshot / 'release.json').write_text('{"version":"fixture"}')
     file = snapshot / 'controlled-work/procurement-sources/original.xlsx'
@@ -78,9 +81,11 @@ def test_complete_import_preserves_order_bytes_precision_paths_sequences_and_con
     assert ops._sha256(path) == before
     with postgres.transaction(pg_targets[0]) as db:
         assert db.execute("SELECT value FROM schema_metadata WHERE key='workbench_sales_schema_version'").fetchone() == (2,)
-        assert all(db.execute(f'SELECT COUNT(*) FROM {migration._quote(table)}').fetchone() == (0,) for table in migration.POST_SQLITE_TABLES)
+        counts={table:db.execute(f'SELECT COUNT(*) FROM {migration._quote(table)}').fetchone()[0] for table in migration.POST_SQLITE_TABLES - {"research_history_reads","research_history_versions","procurement_price_read_points","sales_activity"}}
+        assert not any(counts.values()), counts
         assert db.execute('SELECT password_salt,password_hash,_order FROM identity_users').fetchone() == (b'\x00\x01\xff', b'\x00secret-hash\xfe', 19)
         assert db.execute('SELECT latest_price,inventory_price FROM procurement_materials').fetchone() == ('0.00000000000000100','0')
+        assert db.execute('SELECT payload,frozen_id FROM research_backfill_records').fetchone() == ('{"latest_cost":"0.00000000000000100","graph":[]}', None)
         assert db.execute("SELECT stored_path FROM procurement_source_imports").fetchone()[0] == str(settings.data_dir / 'controlled-work/procurement-sources/original.xlsx')
         assert db.execute('SELECT id FROM organization_departments ORDER BY _order').fetchall() == [('child',),('parent',)]
         assert db.execute('SELECT image FROM feedback').fetchone() == (b'\x89PNG\x00\xff',)

@@ -1,20 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CalendarDays, Check, ChevronRight, Search, Trash2 } from "lucide-react";
 import styles from "./WorkbenchSurface.module.css";
 import { compareCodes } from "../codeOrder";
 
-export function TrendMaterialMenu({ materials, selected, onSelect, label = "趋势原料", placeholder = "搜索原料编号" }: { materials: { id: string; code: string }[]; selected: string; onSelect: (code: string) => void; label?: string; placeholder?: string }) {
+export function TrendMaterialMenu({ materials, selected, onSelect, label = "趋势原料", placeholder = "搜索原料编号",onSearch,loading=false,error="",onRetry,footer }: { materials: { id: string; code: string }[]; selected: string; onSelect: (code: string) => void; label?: string; placeholder?: string;onSearch?:(query:string)=>void;loading?:boolean;error?:string;onRetry?:()=>void;footer?:ReactNode }) {
   const menu = useRef<HTMLDetailsElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
-  const matches = materials.filter(item => item.code.toLowerCase().includes(query.trim().toLowerCase())).sort((a,b) => compareCodes(a.code,b.code));
+  const matches = materials.filter(item => onSearch||item.code.toLowerCase().includes(query.trim().toLowerCase())).sort((a,b) => compareCodes(a.code,b.code));
   const close = (focus = false) => { if (menu.current) menu.current.open = false; if (focus) menu.current?.querySelector("summary")?.focus(); };
   useEffect(() => {
     const outside = (event: PointerEvent) => { if (!menu.current?.contains(event.target as Node)) close(); };
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
   }, []);
-  return <details ref={menu} className={`${styles.columnMenu} ${styles.personMenu} ${styles.trendMaterialMenu}`} onToggle={event => { if (event.currentTarget.open) { setQuery(""); search.current?.focus(); } }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) close(); }} onKeyDown={event => {
+  return <details ref={menu} className={`${styles.columnMenu} ${styles.personMenu} ${styles.trendMaterialMenu}`} onToggle={event => { if (event.currentTarget.open) { setQuery("");onSearch?.(""); search.current?.focus(); } }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) close(); }} onKeyDown={event => {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); }
     if (menu.current?.open && ["ArrowDown", "ArrowUp"].includes(event.key)) {
       event.preventDefault();
@@ -26,11 +26,12 @@ export function TrendMaterialMenu({ materials, selected, onSelect, label = "趋�
   }}>
     <summary aria-label={`选择${label}`}><span>{selected || "选择原料"}</span><ChevronRight size={14} /></summary>
     <div>
-      <label className={styles.trendMaterialSearch}><Search size={14} /><input ref={search} aria-label={`搜索${label}`} placeholder={placeholder} value={query} onChange={event => setQuery(event.target.value)} /></label>
+      <label className={styles.trendMaterialSearch}><Search size={14} /><input ref={search} aria-label={`搜索${label}`} placeholder={placeholder} value={query} onChange={event => {setQuery(event.target.value);onSearch?.(event.target.value);}} /></label>
       <div className={`${styles.filterGroup} ${styles.trendMaterialOptions}`}>
         {matches.map(item => <button key={item.id} data-material-option type="button" aria-pressed={selected === item.code} onClick={event => { event.preventDefault(); onSelect(item.code); close(true); }}>{item.code}{selected === item.code && <Check size={14} />}</button>)}
-        {!matches.length && <p role="status">没有匹配的原料</p>}
+        {error?<p role="alert">{error}{onRetry&&<button type="button" onClick={onRetry}>重试</button>}</p>:!matches.length&&<p role="status">{loading?"正在读取…":"没有匹配的记录"}</p>}
       </div>
+      {footer}
     </div>
   </details>;
 }

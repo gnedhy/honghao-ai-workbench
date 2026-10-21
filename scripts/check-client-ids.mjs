@@ -39,7 +39,15 @@ try {
     const errors = [], payloads = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.route("**/api/**", async route => {
-      if (route.request().method() === "GET") return route.fulfill({ json: { saved: [] } });
+      const url = new URL(route.request().url());
+      if (route.request().method() === "GET" && url.pathname.endsWith("/calculator/saved-page")) {
+        assert.ok(["workspace", "template"].includes(url.searchParams.get("kind")));
+        return route.fulfill({ json: { saved: [], total: 0, page: 1, version: "fixed" } });
+      }
+      if (route.request().method() === "POST" && url.pathname.endsWith("/read/products")) {
+        assert.deepEqual(route.request().postDataJSON(), {ids: ["test"]});
+        return route.fulfill({json: {products: [{id:'test',code:'测试产品',name:'测试产品',source:'research',department:'测试',latest_cost:'4.99',inventory_cost:'5.10',status:'ready',special_allocation:false,source_version:'test'}]}});
+      }
       assert.ok(route.request().url().endsWith("/calculator/evaluate"), "Unexpected business request");
       const payload = route.request().postDataJSON();
       payloads.push(payload);

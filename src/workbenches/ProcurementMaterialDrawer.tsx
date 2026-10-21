@@ -1,6 +1,7 @@
+import {fetchProcurementMaterialCompact} from "./procurementReads";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight, CalendarDays, Pencil, X } from "lucide-react";
-import { adjustProcurementPrice, fetchProcurementMaterial, updateProcurementMaterial } from "../api";
+import { adjustProcurementPrice, updateProcurementMaterial } from "../api";
 import type { ResearchMaterialDetail } from "../types";
 import { DiscardChangesDialog, useExitTransition, useUnsavedChanges } from "../components/Interaction";
 import { WorkbenchLoading } from "../components/WorkbenchLayout";
@@ -34,7 +35,7 @@ export function ProcurementMaterialDrawer({ batches, materialId, canEdit, canMan
   const load = useCallback((signal?: AbortSignal) => {
     const sequence=++reads.current;
     setLoadState(state => state === "ready" ? state : "loading");
-    return fetchProcurementMaterial(materialId, signal)
+    return fetchProcurementMaterialCompact(materialId, signal)
       .then((value) => { if(mounted.current&&!signal?.aborted&&sequence===reads.current){setDetail(value);setLoadState("ready");} })
       .catch((failure: unknown) => {
         if (mounted.current&&!signal?.aborted&&sequence===reads.current&&!(failure instanceof DOMException && failure.name === "AbortError")) setLoadState("error");

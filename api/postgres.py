@@ -142,6 +142,8 @@ def migrate(url: str, environment: str) -> int:
         raise ValueError("无效的数据库环境")
     files = _migration_files()
     with transaction(url, write=True) as connection:
+        # Explicit offline migrations can rewrite history; ordinary requests keep their 30s limit.
+        connection.execute("SET LOCAL statement_timeout='5min'")
         initialized = connection.execute(
             "SELECT to_regclass('honghao_meta.schema_migrations')"
         ).fetchone()[0] is not None

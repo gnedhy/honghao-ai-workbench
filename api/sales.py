@@ -138,15 +138,17 @@ class SalesStore:
         if not actor.get('is_system_admin') and actor.get('scope_levels', {}).get('sales', 0) < level:
             raise PermissionError('没有此项销售操作权限')
 
-    def _catalog(self, db):
+    def _catalog(self, db, product_ids=None):
         pending = db.execute("SELECT status FROM research_events WHERE status!='done' ORDER BY _order LIMIT 1").fetchone()
-        records = {row[0]: row[1:] for row in db.execute('''SELECT DISTINCT ON(r.product_id)
-            r.product_id,r.sequence,r.summary_payload,r.event_id,e.recorded_at
-            FROM research_cost_records r LEFT JOIN research_events e ON e.id=r.event_id
-            WHERE r.product_id IN (SELECT id FROM research_formulas WHERE lifecycle='active')
-            ORDER BY r.product_id,r.sequence DESC''')}
+        records = {row[0]: row[1:] for row in db.execute('''SELECT f.id,r.sequence,r.summary_payload,r.event_id,e.recorded_at
+            FROM research_formulas f JOIN LATERAL (SELECT sequence,summary_payload,event_id FROM research_cost_records
+                WHERE product_id=f.id ORDER BY sequence DESC LIMIT 1) r ON TRUE
+            LEFT JOIN research_events e ON e.id=r.event_id
+            WHERE f.lifecycle='active' AND (%s OR f.id=ANY(%s))''',
+            (product_ids is None,[key.removeprefix('research:') for key in product_ids or [] if key.startswith('research:')]))}
+
         products = []
-        for formula_raw in db.execute("SELECT formula FROM research_formulas WHERE lifecycle='active' ORDER BY position"):
+        for formula_raw in db.execute("SELECT formula FROM research_formulas WHERE lifecycle='active' AND (%s OR id=ANY(%s)) ORDER BY position",(product_ids is None,[key.removeprefix("research:") for key in product_ids or [] if key.startswith("research:")])):
             formula = json.loads(formula_raw[0])
             composite = formula['kind'] != 'recipe'
             if composite and formula['id'] != DEFAULT_COMPOSITE:
@@ -165,7 +167,7 @@ class SalesStore:
                 pb.version,pb.published_at,pb.price_date FROM procurement_materials m
                 LEFT JOIN procurement_price_batch_items b ON b.material_id=m.id AND b.batch_id=%s
                 LEFT JOIN procurement_price_batches pb ON pb.id=b.batch_id
-                LEFT JOIN procurement_inventory i ON i.material_id=m.id WHERE m.archived_at IS NULL ORDER BY m.code''', (batch[0] if batch else None,)):
+                LEFT JOIN procurement_inventory i ON i.material_id=m.id WHERE m.archived_at IS NULL AND (%s OR m.id=ANY(%s)) ORDER BY m.code''', (batch[0] if batch else None,product_ids is None,[key.removeprefix('procurement:') for key in product_ids or [] if key.startswith('procurement:')])):
             if code == 'CF401B' or unit.lower().strip() not in ('kg', '公斤', '千克'):
                 continue
             products.append(dict(id='procurement:' + ident, code=code, name=name, source='procurement', department='采购',
@@ -278,7 +280,7 @@ class SalesStore:
                 raise ValueError('批次名称不能为空')
             if body.get('copy_from'):
                 old = self._get(db, body['copy_from'], actor)
-                catalog, _ = self._catalog(db)
+                catalog, _ = self._catalog(db,[item['product_id'] for item in old['items']])
                 batch['mode'] = old['mode']
                 for item in old['items']:
                     if item['product_id'] not in catalog:
@@ -318,7 +320,7 @@ class SalesStore:
                 raise ValueError('已采用批次不能更换报价类型，请新建批次')
             if any(item['adopted'] and ident not in identifiers for ident, item in old.items()):
                 raise ValueError('已采用产品不能删除，请使用作废')
-            catalog, _ = self._catalog(db)
+            catalog, _ = self._catalog(db,list(identifiers))
             items = []
             for incoming in body['items']:
                 ident = incoming['product_id']
@@ -385,7 +387,7 @@ class SalesStore:
             if replayed:
                 return {'batch': batch}
             selected = self._selected(batch, body['product_ids'])
-            catalog, _ = self._catalog(db)
+            catalog, _ = self._catalog(db,body['product_ids'])
             trial_id, stamp = str(uuid4()), now()
             for item in selected:
                 if item['adopted'] and not item.get('adjustment_reason'):
@@ -431,7 +433,7 @@ class SalesStore:
             batch = self._get(db, key, actor, body['revision'])
             if not batch['customer_name'] or not batch['salesperson'] or not (batch['customer_code'] or batch['uncoded']):
                 raise ValueError('采用前须填写客户名称、客户编码或暂未编码、业务员')
-            catalog, _ = self._catalog(db)
+            catalog, _ = self._catalog(db,body['product_ids'])
             selected = self._selected(batch, body['product_ids'])
             for item in selected:
                 if item['adopted'] and not item.get('adjustment_reason'):
@@ -544,6 +546,36 @@ def create_sales_router(store, settings):
         except (ValueError, ArithmeticError) as error:
             raise HTTPException(422, str(error)) from error
 
+    @router.get('/read/catalog')
+    def read_catalog(request: Request, page: int = 1, page_size: int = 50, search: str = '', source: str = '', department: str = '', exclude: str = ''):
+        from api.sales_reads import catalog
+        return run(catalog, store, actor(request), page, page_size, search, source, department, exclude)
+
+    @router.post('/read/products')
+    def read_products(request: Request, body: dict):
+        from api.sales_reads import selected_products
+        return run(selected_products, store, actor(request), body.get('ids'))
+
+    @router.get('/read/overview')
+    def read_overview(request: Request, start: str = '', end: str = '', mode: str = 'domestic_direct'):
+        from api.sales_reads import overview
+        return run(overview, store, actor(request), start, end, mode)
+
+    @router.get('/read/pages/{kind}')
+    def read_page(kind: str, request: Request, page: int = 1, page_size: int = 50, search: str = '', start: str = '', end: str = '', product: str = '', batch: str = '', mode: str = '', status: str = '', token: str = ''):
+        from api.sales_reads import page as sales_page
+        return run(sales_page, store, actor(request), kind, page, page_size, search, start, end, product, batch, mode, status, token)
+
+    @router.get('/read/series')
+    def read_series(request: Request, product: str, start: str, end: str, mode: str):
+        from api.sales_reads import series
+        return run(series, store, actor(request), product, start, end, mode)
+
+    @router.get('/read/{kind}/{key}')
+    def read_record(kind: str, key: str, request: Request):
+        from api.sales_reads import record
+        return run(record, store, actor(request), kind, key)
+
     @router.get('/products')
     def products(request: Request):
         return run(store.products, actor(request))
@@ -596,6 +628,14 @@ def create_sales_router(store, settings):
     def calculator_evaluate(body: dict, request: Request):
         user = actor(request)
         return run(calculator.evaluate, run(Evaluation.model_validate, body), user)
+
+    @router.get('/calculator/saved-page')
+    def calculator_page(request: Request, page: int = 1, page_size: int = 50, kind: str = 'workspace', token: str = ''):
+        return run(calculator.saved_page, actor(request), page, page_size, kind, token)
+
+    @router.get('/calculator/saved/{key}')
+    def calculator_detail(key: str, request: Request):
+        return run(calculator.saved_detail, actor(request), key)
 
     @router.get('/calculator/saved')
     def calculator_saved(request: Request):

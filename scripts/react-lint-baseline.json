@@ -39,20 +39,6 @@
       "message": "React Hook useEffect has a missing dependency: 'key'",
       "anchor": "060644339593779e66bfc7a2048c80e206a1500ac1c6e9d86f3f875141c74038",
       "line": 51
-    },
-    {
-      "file": "src/workbenches/ProcurementWorkbench.tsx",
-      "rule": "react-hooks(exhaustive-deps)",
-      "message": "React Hook useEffect has a missing dependency: 'ids'",
-      "anchor": "0b10f993272535d951ea6870b27d49e39dc3d64e87109245bda862a18bcb057c",
-      "line": 212
-    },
-    {
-      "file": "src/workbenches/ProcurementWorkbench.tsx",
-      "rule": "react-hooks(exhaustive-deps)",
-      "message": "React Hook useEffect has a complex expression in the dependency array.",
-      "anchor": "0b10f993272535d951ea6870b27d49e39dc3d64e87109245bda862a18bcb057c",
-      "line": 214
     }
   ]
 }

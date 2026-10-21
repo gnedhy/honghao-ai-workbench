@@ -61,12 +61,12 @@ try {
   async function run(name, kind, respond, check) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } }); page.setDefaultTimeout(7000);
     const errors = [], unexpected = []; page.on('pageerror', error => errors.push(error.message));
-    const salesPaths = ['products', 'batches', 'history', 'records'].map(path => 'GET /api/workbenches/sales/' + path);
-    const expected = ['material-edit','material-read'].includes(kind) ? ['GET /api/workbenches/procurement/materials/sample'] : kind.startsWith('grants-') ? ['GET /api/workbenches/'+kind.slice(7)+'/activation-grants'] : kind.startsWith('sales') ? salesPaths : kind === 'calculator' ? [...salesPaths, 'GET /api/workbenches/sales/calculator/saved', 'POST /api/workbenches/sales/calculator/evaluate']
-      : kind === 'research-detail' ? ['GET /api/workbenches/research/products/recipe%3Afeedback', 'GET /api/workbenches/research/products/recipe%3Anested', 'GET /api/workbenches/research/material-prices', ...['CF004','CF132','CF014'].map(code=>'GET /api/workbenches/research/material-prices/material-'+code)]
+    const salesPaths = ['read/catalog','read/overview','read/series','read/pages/records'].map(path => 'GET /api/workbenches/sales/' + path).concat(['POST /api/workbenches/sales/read/products']);
+    const expected = ['material-edit','material-read'].includes(kind) ? ['GET /api/workbenches/procurement/materials/sample'] : kind.startsWith('grants-') ? ['GET /api/workbenches/'+kind.slice(7)+'/activation-grants'] : kind.startsWith('sales') ? salesPaths : kind === 'calculator' ? [...salesPaths, 'GET /api/workbenches/sales/calculator/saved-page', 'POST /api/workbenches/sales/calculator/evaluate']
+      : kind === 'research-detail' ? ['GET /api/workbenches/research/products/recipe%3Afeedback', 'GET /api/workbenches/research/products/recipe%3Anested', ...['CF004','CF132','CF014'].flatMap(code=>['GET /api/workbenches/research/material-prices/by-code/'+code,...['official-history','trend'].map(suffix=>'GET /api/workbenches/research/material-prices/material-'+code+'/'+suffix)])]
       : kind === 'material-prices' ? ['GET /api/workbenches/research/material-prices', ...['BOTH','MARKET','STOCK','NONE','INFO'].map(code=>'GET /api/workbenches/research/material-prices/'+code)]
       : kind === 'research-pages' ? ['GET /api/workbenches/research/pages/products']
-      : kind === 'research' ? ['overview', 'products/recipe%3Atest'].map(path => 'GET /api/workbenches/research/' + path)
+      : kind === 'research' ? ['dashboard','product-options','dashboard-movers','dashboard-gaps','products/recipe%3Atest/trend'].map(path => 'GET /api/workbenches/research/' + path)
       : ['GET /api/workbenches/procurement/' + (kind === 'news' ? 'news' : 'overview')];
     await page.route('**/*', async route => {
       try {
@@ -237,19 +237,21 @@ try {
       await page.getByText(/暂时不可用|暂时无法读取|读取失败|合成读取失败/).first().waitFor();
     });
   }
+  const researchDashboard={products:[],pending:false,versions:[],formulas:[],owners:[],dashboard:{latest_date:'2026-10-15',metrics:{products:1,up:0,down:0,missing:0,warnings:0,failed:0,drafts:0,tasks:0,periods:2,recent:'2026-10-15'}}};
+  const researchRead=(path)=>path.endsWith('/dashboard')?researchDashboard:path.endsWith('/product-options')?{items:[{id:'recipe:test',code:'测试产品'}],total:1,page:1,selected:null,default:{id:'recipe:test',code:'测试产品'}}:path.endsWith('/trend')?{versions:[]}:{items:[],total:0};
   const trendPending=gate();
   await run('research trend: pending distinct from empty', 'research', async (route,path)=>{
-    assert.ok(path.endsWith('/overview'));
-    await trendPending.promise;
-    return route.fulfill({json:{products:[{id:'recipe:test',name:'测试产品',status:'ready',yield:'100',change:null,latest_cost:'1',inventory_cost:'1'}],pending:false,versions:[],formulas:[],owners:[]}});
+    if(path.endsWith('/trend'))await trendPending.promise;
+    return route.fulfill({json:researchRead(path)});
   },async page=>{
     await page.locator('[role="status"]').first().waitFor();
     assert.equal(await page.getByText('当前范围没有成本记录',{exact:true}).count(),0);
     trendPending.release();await page.getByText('当前范围没有成本记录',{exact:true}).waitFor();
   });
-  await run('research trend reuses authorized overview without detail request', 'research', async (route, path) => {
-    assert.ok(path.endsWith('/overview'), 'Chart must not load formula, editing options or full history graphs');
-    return route.fulfill({ json: { products: [{ id: 'recipe:test', name: '测试产品', status: 'ready', yield: '100', change: null, latest_cost: '1', inventory_cost: '1' }], pending: false, versions: [], formulas: [], owners: [] } });
+  await run('research single-product trend excludes full formula details', 'research', async (route, path) => {
+    assert.ok(['/dashboard','/product-options','/dashboard-movers','/trend'].some(suffix=>path.endsWith(suffix)), 'Chart must not load formula, editing options or full history graphs');
+    if(path.endsWith('/trend')){const url=new URL(route.request().url());assert.ok(url.searchParams.get('start')&&url.searchParams.get('end'),'Trend reads are date bounded');}
+    return route.fulfill({json:researchRead(path)});
   }, async page => {
     await page.getByText('当前范围没有成本记录', { exact: true }).waitFor();
     assert.equal(await page.getByText('正在读取研发成本走势', { exact: true }).count(), 0);
@@ -257,10 +259,10 @@ try {
   const sales = [gate(), gate()]; let retry = false;
   const blockedRead=gate();let readCalls=0,readRecovered=false;
   await run('research-read-timeout-retains-error-and-retries', 'research', async (route,path)=>{
-    if(!path.endsWith('/overview'))return route.fulfill({json:{history:[]}});
+    if(!path.endsWith('/dashboard'))return route.fulfill({json:researchRead(path)});
     readCalls++;
     if(!readRecovered)await blockedRead.promise;
-    await route.fulfill({json:{products:[],pending:false,versions:[],formulas:[],owners:[]}});
+    await route.fulfill({json:researchDashboard});
   },async page=>{
     await page.getByText('数据读取超过15秒，请重试。',{exact:true}).waitFor({timeout:22000});
     assert.equal(await page.getByText('正在读取产品成本',{exact:true}).count(),0);
@@ -272,7 +274,7 @@ try {
     await page.getByRole('heading',{name:'产品成本计算',exact:true}).waitFor();
     assert.equal(await page.getByText('数据读取超过15秒，请重试。',{exact:true}).count(),0);
   });
-  const empty = path => ({ [path.endsWith('/products') ? 'products' : path.endsWith('/batches') ? 'batches' : path.endsWith('/history') ? 'trials' : 'records']: [] });
+  const empty = path => path.endsWith('/catalog')?{products:[],total:0,page:1,departments:[]}:path.endsWith('/overview')?{counts:{pending:0,partial:0,adopted:0},active:0,pending:[],recent:[],hot:[],eligible:[]}:path.includes('/pages/')?{items:[],total:0,page:1,page_size:10,version:'fixed',reset:false}:path.endsWith('/products')?{products:[]}:{records:[]};
   await run('sales: pending -> failure -> retry -> empty', 'sales', async (route, path) => {
     await sales[retry ? 1 : 0].promise;
     await route.fulfill(retry ? { json: empty(path) } : { status: 500, json: { detail: '合成读取失败' } });
@@ -284,9 +286,9 @@ try {
   });
   const history = [gate(), gate()], evaluations = []; let historyRetry = false;
   await run('calculator: history pending/failure/retry/empty; evaluation failure and out-of-order responses', 'calculator', async (route, path) => {
-    if (path.endsWith('/calculator/saved')) {
+    if (path.endsWith('/calculator/saved-page')) {
       await history[historyRetry ? 1 : 0].promise;
-      return route.fulfill(historyRetry ? { json: { saved: [] } } : { status: 500, json: { detail: '合成历史读取失败' } });
+      return route.fulfill(historyRetry ? { json: { saved: [],total:0,page:1,version:'fixed' } } : { status: 500, json: { detail: '合成历史读取失败' } });
     }
     if (path.endsWith('/calculator/evaluate')) { evaluations.push(route); return; }
     await route.fulfill({ json: empty(path) });
@@ -308,9 +310,8 @@ try {
   mkdirSync('.scratch/dashboard-feedback', {recursive:true});
   const hotProduct = {id:'research:recipe:feedback',code:'K10-K',name:'合成产品',source:'research',department:'测试研发',status:'ready',latest_cost:'12.55',inventory_cost:'10.93',source_version:'fixed',special_allocation:false};
   await run('sales-hot-product-existing-drawer', 'sales-dashboard', async (route,path) => {
-    const json = path.endsWith('/products') ? {products:[hotProduct]} : path.endsWith('/batches') ? {batches:[]}
-      : path.endsWith('/history') ? {trials:[{batch_id:'batch-1',items:[{product_id:hotProduct.id}]}]}
-      : {records:[{id:'quote-1',product_id:hotProduct.id,status:'active',mode:'domestic_direct',customer_name:'合成客户',created_at:'2026-09-30T00:00:00Z',version:1,item:{cost:'12.55',final_price:'14',result:{normal_price:'14'}}}]};
+    const record={id:'quote-1',product_id:hotProduct.id,status:'active',mode:'domestic_direct',customer_name:'合成客户',created_at:'2026-09-30T00:00:00Z',version:1,item:{cost:'12.55',final_price:'14',result:{normal_price:'14'}}};
+    const json=path.endsWith('/catalog')?{products:[hotProduct],total:1,page:1,departments:[]}:path.endsWith('/products')?{products:[hotProduct]}:path.endsWith('/overview')?{counts:{pending:0,partial:0,adopted:1},active:1,pending:[],recent:[],hot:[{product_id:hotProduct.id,batches:1,adopted:1}],eligible:[]}:path.includes('/pages/')?{items:[record],total:1,page:1,page_size:10,version:'fixed',reset:false}:{records:[record]};
     await route.fulfill({json});
   }, async page => {
     for (const kind of ['sales-dashboard','sales-preview']) {
@@ -384,16 +385,19 @@ try {
   const materialReads = [];
   await run('research-material-drilldown-return-history-and-focus', 'research-detail', async (route,path) => {
     materialReads.push(path);
-    if(path.endsWith('/material-prices')) return route.fulfill({json:{batches:[],materials:(omitMaterial?[]:['CF004','CF132','CF014']).map(code=>({id:'material-'+code,code}))}});
     if(path.includes('/material-prices/')) {
       if(delayMaterial) await delayMaterial.promise;
       if(failMaterial) return route.fulfill({status:503,json:{detail:'合成原料读取失败'}});
-      const code=path.split('material-').at(-1);
-      return route.fulfill({json:{material:{id:'material-'+code,code,unit:'kg',inventory_price:'8.801234',inventory_quantity:'123.456789',inventory_source:{source:'ERP 库存',catalog_source:'ERP 库存',as_of:'2026-10-07',imported_at:'2026-10-15T04:03:00Z'}},comparison:null,sources:[],adjustments:[],official_history:[{id:'price-23',version:23,version_date:'2026-09-21',price_date:'2026-09-21',latest_price:'10.80',modifier:null},{id:'price-24',version:24,version_date:'2026-09-28',price_date:'2026-09-28',latest_price:'10.60',modifier:null}]}});
+      if(omitMaterial) return route.fulfill({status:404,json:{detail:'原料不存在'}});
+      const code=path.includes('/by-code/')?path.split('/').at(-1):path.split('material-').at(-1).split('/')[0];
+      const items=[{id:'price-23',version:23,version_date:'2026-09-21',price_date:'2026-09-21',latest_price:'10.80',modifier:null},{id:'price-24',version:24,version_date:'2026-09-28',price_date:'2026-09-28',latest_price:'10.60',modifier:null}];
+      if(path.endsWith('/official-history'))return route.fulfill({json:{items,total:2,scope_total:2,start_date:'2026-09-21',end_date:'2026-09-28',version:'fixture-v1',page:1}});
+      if(path.endsWith('/trend'))return route.fulfill({json:{batches:items.map(item=>({...item,items:[{material_id:'material-'+code,code,latest_price:item.latest_price}]}))}});
+      return route.fulfill({json:{history_read:{base:'/api/workbenches/research/material-prices/material-'+code,total:2,start_date:'2026-09-21',end_date:'2026-09-28',version:'fixture-v1'},material:{id:'material-'+code,code,unit:'kg',inventory_price:'8.801234',inventory_quantity:'123.456789',inventory_source:{source:'ERP 库存',catalog_source:'ERP 库存',as_of:'2026-10-07',imported_at:'2026-10-15T04:03:00Z'}},comparison:null,sources:[],adjustments:[],official_history:[{id:'price-23',version:23,version_date:'2026-09-21',price_date:'2026-09-21',latest_price:'10.80',modifier:null},{id:'price-24',version:24,version_date:'2026-09-28',price_date:'2026-09-28',latest_price:'10.60',modifier:null}]}});
     }
     return route.fulfill({json:{product:{...formula,status:'ready',lifecycle:'active'},recipes:[formula],latest,inventory,history:feedbackHistory,draft:null,draft_revision:0,options:{owners:[],materials:[],recipes:[],composites:[]}}});
   }, async page => {
-    const consoleFailures=[]; page.on('console',message=>{if(['error','warning'].includes(message.type())&&!/^Failed to load resource: the server responded with a status of 5\d\d/.test(message.text()))consoleFailures.push(message.text());});
+    const consoleFailures=[]; page.on('console',message=>{if(['error','warning'].includes(message.type())&&!/^Failed to load resource: the server responded with a status of (?:404|5\d\d)/.test(message.text()))consoleFailures.push(message.text());});
     assert.ok(new URL(page.url()).pathname==='/loading-check');
     assert.ok(await page.locator('body').innerText());
     assert.equal(await page.locator('vite-error-overlay').count(),0);
@@ -414,7 +418,7 @@ try {
     const child=page.getByRole('dialog',{name:'CF132',exact:true}); await child.waitFor();
     await child.getByText('2026-09-21 历史成本中的核算单价为 ¥8.80 元/kg（库存价格）。',{exact:false}).waitFor();
     await child.getByRole('heading',{name:'行情价格走势',exact:true}).waitFor();
-    await child.getByText('2 期有效价格',{exact:true}).waitFor();
+    await child.getByText('2 期价格记录',{exact:true}).waitFor();
     await child.getByRole('tab',{name:/库存价格/}).click();
     await child.getByRole('heading',{name:'库存信息',exact:true}).waitFor();
     assert.equal(await child.locator('[title="¥8.801234"]').innerText(),'¥8.80');
@@ -433,7 +437,7 @@ try {
     assert.equal(await expanded.getByRole('tab',{name:/产品成本 · 库存优先/}).getAttribute('aria-selected'),'true');
     assert.equal(await link.evaluate(e=>e===document.activeElement),true);
     assert.ok(Math.abs(await parent.locator(':scope > [class*="drawerBody"]').evaluate(e=>e.scrollTop)-scroll)<2);
-    await link.click(); await child.getByText('2 期有效价格',{exact:true}).waitFor();
+    await link.click(); await child.getByText('2 期价格记录',{exact:true}).waitFor();
     await page.keyboard.press('Escape'); await child.waitFor({state:'detached'});
     await singleDrawer('RH-13');
     assert.equal(await parent.evaluate(e=>e.open),true);
@@ -442,7 +446,7 @@ try {
     await link.click(); await child.getByText('原料详情暂时不可用',{exact:true}).waitFor();
     await child.getByRole('alert').getByText('合成原料读取失败',{exact:false}).waitFor(); await singleDrawer('CF132');
     failMaterial=false; await child.getByRole('button',{name:'重新加载',exact:true}).click();
-    await child.getByText('2 期有效价格',{exact:true}).waitFor();
+    await child.getByText('2 期价格记录',{exact:true}).waitFor();
     await page.setViewportSize({width:390,height:844}); await page.emulateMedia({reducedMotion:'reduce'});
     await singleDrawer('CF132');
     assert.ok(await child.evaluate(e=>e.getBoundingClientRect().right<=innerWidth));
@@ -460,7 +464,7 @@ try {
     await history.click(); await page.setViewportSize({width:1280,height:900}); await page.emulateMedia({reducedMotion:'no-preference'});
     await parent.getByRole('tab',{name:/产品成本 · 行情优先/}).click();
     const currentLink=parent.getByRole('button',{name:'CF132',exact:true});
-    omitMaterial=true; await currentLink.click(); await child.getByRole('alert').getByText('此投料未关联当前原料价格目录',{exact:true}).waitFor(); await singleDrawer('CF132');
+    omitMaterial=true; await currentLink.click(); await child.getByRole('alert').getByText('原料不存在',{exact:true}).waitFor(); await singleDrawer('CF132');
     assert.equal(await child.getByRole('heading',{name:'行情价格走势',exact:true}).count(),0);
     omitMaterial=false; await child.getByRole('button',{name:'重新加载',exact:true}).click();
     await child.getByText('本层成本中的核算单价为 ¥10.60 元/kg（行情价格）。',{exact:false}).waitFor();
@@ -468,6 +472,7 @@ try {
     await child.getByRole('button',{name:'返回配方与成本',exact:true}).click(); await child.waitFor({state:'detached'});
     await singleDrawer('RH-13');
     assert.equal(await currentLink.evaluate(e=>e===document.activeElement),true);
+    assert.equal(materialReads.some(path=>path.endsWith('/material-prices')),false,'Material drilldown must not load the complete catalog');
     assert.deepEqual(consoleFailures,[]);
   });
   const nestedFormula={...formula,id:'recipe:nested',name:'K10-K'};

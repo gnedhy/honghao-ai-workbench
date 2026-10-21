@@ -4,17 +4,20 @@ import {HelpHint} from "../components/HelpHint";
 import {PriceDateRangeMenu} from "../components/WorkbenchMenus";
 import {focusedTrendAxis, moverDateRange} from "./procurementAnalytics";
 import {dailyCostRecords, priceCents} from "./researchAnalytics";
-import {type RecordRow, date, recordDate} from "./researchModel";
+import {type RecordRow, type Version, date, recordDate, productPath} from "./researchModel";
+import {useResearchRead} from "./researchData";
+import {WorkbenchLoading} from "../components/WorkbenchLayout";
 import {Money} from "./ResearchProductView";
 import p from "../components/WorkbenchSurface.module.css";
 import s from "./ResearchWorkbench.module.css";
 
 type Period = "14d" | "1m" | "3m" | {start:string;end:string};
-export function ResearchCostTrend({history, policy}: {history:RecordRow[];policy:"latest"|"inventory"}) {
+export function ResearchCostTrend({history=[], policy,productId,endDate,revision=0}: {history?:RecordRow[];policy:"latest"|"inventory";productId?:string;endDate?:string;revision?:number}) {
   const [period, setPeriod] = useState<Period>("3m");
-  const days = useMemo(()=>dailyCostRecords(history),[history]);
-  const end = days.at(-1) ? recordDate(days.at(-1)!) : new Date().toISOString().slice(0,10);
+  const end = endDate || (history.length ? history.map(recordDate).sort().at(-1)! : new Date().toISOString().slice(0,10));
   const range = typeof period === "string" ? moverDateRange(end,period) : period;
+  const remote=useResearchRead<{versions:Version[]}>(productId?`${productPath(productId)}/trend?${new URLSearchParams(range)}`:null,revision);
+  const days = useMemo(()=>dailyCostRecords(productId?(remote.data?.versions.flatMap(version=>version.products)??[]):history),[history,productId,remote.data]);
   const label = policy === "latest" ? "行情优先" : "库存优先";
   const points = days.filter(row=>recordDate(row)>=range.start&&recordDate(row)<=range.end).map(row=>{
     const raw = policy === "latest" ? row.latest_cost : row.inventory_cost;
@@ -29,7 +32,7 @@ export function ResearchCostTrend({history, policy}: {history:RecordRow[];policy
     <div className={s.sectionHeading}><div className={s.detailTrendTitle}><h3>产品成本走势 · {label}</h3><HelpHint detail="按价格所属日期绘制；同日优先正式核算记录，再取最近生成的一条。全部条目仍保留在成本历史中。历史回算采用冻结配方和参考价格，不代表当时实际成本。"/></div><PriceDateRangeMenu label="产品详情走势日期范围" period={period} range={range} onChange={setPeriod}/></div>
     <div key={policy} className={p.materialPricePanel}>
       <div className={p.detailChart}>
-        {valid.length<2 ? <div className={s.chartEmpty}><strong>暂无走势</strong><span>{valid.length===1?"当前范围仅有一期有效成本记录。":"当前范围没有有效成本记录。"}</span><span>可调整日期范围查看。</span></div> : <ResponsiveContainer width="100%" height="100%"><LineChart data={points} accessibilityLayer margin={{top:12,right:16,bottom:8,left:0}}>
+        {productId&&remote.error?<div role="alert" className={s.chartEmpty}><span>{remote.error}</span><button className="secondary-button" onClick={remote.reload}>重试</button></div>:productId&&remote.loading&&!remote.data?<WorkbenchLoading local title="正在读取产品成本走势"/>:valid.length<2 ? <div className={s.chartEmpty}><strong>暂无走势</strong><span>{valid.length===1?"当前范围仅有一期有效成本记录。":"当前范围没有有效成本记录。"}</span><span>可调整日期范围查看。</span></div> : <ResponsiveContainer width="100%" height="100%"><LineChart data={points} accessibilityLayer margin={{top:12,right:16,bottom:8,left:0}}>
           <CartesianGrid stroke="#edf0f1" vertical={false}/><XAxis dataKey="day" tickFormatter={value=>String(value).slice(5).replace("-","/")} tick={{fill:"#69747d",fontSize:11}} axisLine={false} tickLine={false} minTickGap={24}/>
           <YAxis domain={axis.domain} ticks={axis.ticks} tickFormatter={value=>Number(value).toFixed(2)} tick={{fill:"#69747d",fontSize:11}} width={52} axisLine={false} tickLine={false}/>
           <Tooltip filterNull={false} content={({active,payload})=>{

@@ -21,7 +21,7 @@ from api.postgres import database_lease, transaction
 from api.settings import Settings
 
 # The frozen SQLite baseline predates sales. New PostgreSQL tables stay empty.
-POST_SQLITE_TABLES = {'sales_batches', 'sales_trials', 'sales_records', 'sales_events', 'sales_calculator_saved'}
+POST_SQLITE_TABLES = {'sales_batches', 'sales_trials', 'sales_records', 'sales_events', 'sales_calculator_saved', 'research_backfill_frozen', 'research_history_reads', 'research_history_versions', 'procurement_price_read_points', 'sales_activity'}
 POST_SQLITE_VERSION = 'workbench_sales_schema_version'
 
 
@@ -120,6 +120,14 @@ def _source_paths(source: sqlite3.Connection, staging: Path, target: Path, recor
 
 def _legacy_evidence(db, mappings=None):
     evidence = {key: value for key, value in ops._table_evidence(db, mappings, include_generated=False).items() if key not in POST_SQLITE_TABLES}
+    # Legacy imports retain their full payload; the new nullable reference is not a source column.
+    cursor = db.execute('SELECT purchase_version,product_id,signature,payload,_order FROM research_backfill_records ORDER BY _order')
+    digest = hashlib.sha256()
+    count = 0
+    for row in cursor:
+        digest.update(json.dumps(row, ensure_ascii=False, separators=(',', ':')).encode('utf-8') + b'\n')
+        count += 1
+    evidence['research_backfill_records'] = {'count': count, 'sha256': digest.hexdigest(), 'columns': [c.name for c in cursor.description]}
     rows = db.execute('SELECT * FROM schema_metadata WHERE key!=%s ORDER BY _order', (POST_SQLITE_VERSION,)).fetchall()
     digest = hashlib.sha256()
     for row in rows:
@@ -140,11 +148,13 @@ def _target_check(db, settings: Settings, tables: dict) -> None:
 
 
 def _copy_rows(source: sqlite3.Connection, db, tables: dict, mappings: dict[str, str]) -> dict:
+    projection_triggers=ops._projection_triggers(db)
+    for command in ops._projection_trigger_sql(projection_triggers):db.execute(command)
     graph = {table: set() for table in tables}
     for table, parent in db.execute("SELECT child.relname,parent.relname FROM pg_constraint c "
             "JOIN pg_class child ON child.oid=c.conrelid JOIN pg_class parent ON parent.oid=c.confrelid "
             "JOIN pg_namespace n ON n.oid=child.relnamespace WHERE c.contype='f' AND n.nspname='public'"):
-        if table in graph and table != parent:
+        if table in graph and parent in graph and table != parent:
             graph[table].add(parent)
     order = tuple(TopologicalSorter(graph).static_order())
     db.execute(sql.SQL('TRUNCATE {} RESTART IDENTITY').format(sql.SQL(',').join(sql.Identifier('public', name) for name in ops._table_names(db))))
@@ -158,6 +168,10 @@ def _copy_rows(source: sqlite3.Connection, db, tables: dict, mappings: dict[str,
                     index = columns.index('stored_path')
                     row[index] = mappings[row[index]]
                 copier.write_row(row)
+    # Legacy evidence has no projections; derive them only after all original rows are present.
+    db.execute('DO $$ DECLARE row RECORD; BEGIN FOR row IN SELECT product_id FROM research_cost_records UNION SELECT product_id FROM research_backfill_records LOOP PERFORM research_refresh_history(row.product_id); END LOOP; END $$')
+    db.execute('SELECT refresh_procurement_price_read(id) FROM procurement_price_batches')
+    for command in ops._projection_trigger_sql(projection_triggers,restore=True):db.execute(command)
     # COPY checks native FKs (including self references) at statement end. No constraints are disabled.
     actual = _legacy_evidence(db, {new: old for old, new in mappings.items()})
     if actual != tables:

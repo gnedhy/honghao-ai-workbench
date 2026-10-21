@@ -5,9 +5,9 @@ import {ChevronRight, Check, ArrowLeft, ArrowUp, ArrowDown} from "lucide-react";
 import {yieldNeedsReview, linePriceMovement, basisLabel} from "./researchAnalytics";
 import {Drawer as SharedDrawer} from "../components/Drawer";
 import {fetchJson} from "../api";
-import type {ResearchMaterialDetail, ResearchMaterialPrices} from "../types";
+import type {ResearchMaterialDetail} from "../types";
 import {ReadOnlyMaterialDrawer} from "./ProcurementMaterialView";
-import {type Adjustment, type Calculation, type Product, type ComparisonBasis, type Formula, type RecordRow, cost, numberText, yieldValue, yieldText, yieldBasis, basisText, adjustmentReasons} from "./researchModel";
+import {type Adjustment, type Calculation, type Product, type ComparisonBasis, type Formula, type RecordRow, type LineHistory, cost, numberText, yieldValue, yieldText, yieldBasis, basisText, adjustmentReasons} from "./researchModel";
 import p from "../components/WorkbenchSurface.module.css";
 import s from "./ResearchWorkbench.module.css";
 export function ProductLink({ name, onClick, disabled = false }: { name: string; onClick: () => void; disabled?: boolean }) { return <button className={p.materialLink} type="button" disabled={disabled} onClick={onClick}><span><strong title={name}>{name}</strong></span><ChevronRight size={16} aria-hidden="true"/></button>; }
@@ -60,27 +60,19 @@ function MaterialDrilldown({line, historicalDate, onClose}: {line: Calculation["
   const references = line.price_refs ?? [line.price_ref ?? line.ref];
   const [selectedReference, setSelectedReference] = useState(references[0]);
   const reference = references.includes(selectedReference) ? selectedReference : references[0];
-  const [batches, setBatches] = useState<ResearchMaterialPrices["batches"]>([]);
-  const loadMaterial = useCallback(async (code: string, signal?: AbortSignal) => {
-    const base = "/api/workbenches/research/material-prices";
-    const catalog = await fetchJson<ResearchMaterialPrices>(base, {signal});
-    const material = catalog.materials.find(item => item.code === code);
-    if (!material) throw new Error("此投料未关联当前原料价格目录");
-    const detail = await fetchJson<ResearchMaterialDetail>(`${base}/${encodeURIComponent(material.id)}`, {signal});
-    if (!signal?.aborted) setBatches(catalog.batches);
-    return detail;
-  }, []);
-  return <ReadOnlyMaterialDrawer materialId={reference} batches={batches} loadMaterial={loadMaterial} refreshEveryMs={60000} onClose={onClose} backLabel="返回配方与成本" notice={<><p className={s.explanation}>当前原料价格与完整价格历史。{historicalDate ? `${historicalDate} 历史成本中的` : "本层成本中的"}核算单价为 {cost(line.unit_cost)} 元/kg（{basisText(line)}）。</p>{references.length > 1 && <Menu title={`查看参考料：${reference}`}><Options options={references.map(code => ({value: code, label: `${code} · ${cost(line.price_reference_values?.find(v => v.code === code)?.unit_cost)}`}))} value={reference} onChange={setSelectedReference} close/></Menu>}</>}/>;
+  const loadMaterial = useCallback((code: string, signal?: AbortSignal) =>
+    fetchJson<ResearchMaterialDetail>(`/api/workbenches/research/material-prices/by-code/${encodeURIComponent(code)}`, {signal}), []);
+  return <ReadOnlyMaterialDrawer materialId={reference} batches={[]} loadMaterial={loadMaterial} refreshEveryMs={60000} onClose={onClose} backLabel="返回配方与成本" notice={<><p className={s.explanation}>当前原料价格与完整价格历史。{historicalDate ? `${historicalDate} 历史成本中的` : "本层成本中的"}核算单价为 {cost(line.unit_cost)} 元/kg（{basisText(line)}）。</p>{references.length > 1 && <Menu title={`查看参考料：${reference}`}><Options options={references.map(code => ({value: code, label: `${code} · ${cost(line.price_reference_values?.find(v => v.code === code)?.unit_cost)}`}))} value={reference} onChange={setSelectedReference} close/></Menu>}</>}/>;
 }
 
-export function FormulaDetails({ formula, latest, inventory, history, onRef, policy, onPolicyChange, historicalDate, trend, busy = false }: { formula: Formula; latest: Calculation | null; inventory: Calculation | null; history?: RecordRow[]; onRef: (id: string) => void; policy: "latest" | "inventory"; onPolicyChange: (policy: "latest" | "inventory") => void; historicalDate?: string; trend?: ReactNode; busy?: boolean }) {
+export function FormulaDetails({ formula, latest, inventory, history, onRef, policy, onPolicyChange, historicalDate, trend, busy = false }: { formula: Formula; latest: Calculation | null; inventory: Calculation | null; history?: LineHistory[]; onRef: (id: string) => void; policy: "latest" | "inventory"; onPolicyChange: (policy: "latest" | "inventory") => void; historicalDate?: string; trend?: ReactNode; busy?: boolean }) {
   const panelId=useId();
   const [material, setMaterial] = useState<Calculation["lines"][number] | null>(null);
   if (!latest || !inventory) return <p className={s.notice}>此配方尚未启用，请补充投料并试算。</p>;
   const result = policy === "latest" ? latest : inventory;
   const missing = [...new Set(result.missing_materials)];
   const totalInput = Number(result.total_input);
-  const previousLines = history?.map(record => (record.calculations?.[policy]?.[formula.id ?? ""] ?? (formula.id === (record.product_id ?? record.formula.id) ? record[policy] : undefined))?.lines);
+  const previousLines = history?.map(record => (record.calculations?.[policy]?.[formula.id ?? ""] ?? (formula.id === (record.product_id ?? record.formula?.id) ? record[policy] : undefined))?.lines);
   const priceMovement = (line: Calculation["lines"][number]) => {
     const movement = linePriceMovement(line, previousLines);
     if (!movement) return null;

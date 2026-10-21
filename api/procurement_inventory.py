@@ -13,7 +13,7 @@ from api.procurement_collaboration import admin_event
 from api.procurement_excel import TOTAL, price_value, read_workbook, text
 
 
-def inventory_snapshot(db: Connection) -> dict:
+def inventory_snapshot(db: Connection, material_id: str | None = None) -> dict:
     """Bind provenance to the current inventory batch, in the same catalog query."""
     return {mid: (qty, price, {**{key: raw[key] for key in ('source','catalog_source','as_of') if key in raw}, "imported_at": stamp} if raw else None)
             for mid, qty, price, raw, stamp in db.execute("""
@@ -24,7 +24,8 @@ def inventory_snapshot(db: Connection) -> dict:
                     AND jsonb_typeof(raw_json::jsonb->-1)='object'
                     AND raw_json::jsonb->-1->>'source'='ERP 库存' ORDER BY source_row DESC LIMIT 1
                 ) s ON TRUE
-            """)}
+                WHERE (%s::text IS NULL OR i.material_id=%s)
+            """, (material_id, material_id))}
 
 
 def _preview(db: Connection, content: bytes, *, partial: bool = False) -> dict:

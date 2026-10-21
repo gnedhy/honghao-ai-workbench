@@ -1,5 +1,6 @@
+import {fetchProcurementOverviewCompact} from "./procurementReads";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { bulkAdjustProcurementPrices, cancelProcurementUpdate, fetchProcurementOverview, reviewProcurementIssue } from "../api";
+import { bulkAdjustProcurementPrices, cancelProcurementUpdate, reviewProcurementIssue } from "../api";
 import type { ProcurementOverview } from "../types";
 import { useUnsavedChanges } from "../components/Interaction";
 import { collectPriceEdits } from "./procurementLedger";
@@ -61,7 +62,7 @@ export function useProcurementEditSession(data: ProcurementOverview, readonly: b
   const recover=async()=>{
     if(!edit||!begin())return;
     try {
-      const fresh=await fetchProcurementOverview();if(!mounted.current)return;
+      const fresh=await fetchProcurementOverviewCompact();if(!mounted.current)return;
       onSaved(fresh);
       setEdit(old=>old?{...old,update_id:fresh.current_update?.id??null,updated_at:fresh.current_update?.updated_at??null,originals:originals(fresh)}:null);
       if(fresh.current_update)setEditDate(fresh.current_update.price_date);
@@ -76,12 +77,13 @@ export function useProcurementEditSession(data: ProcurementOverview, readonly: b
     catch(error){if(mounted.current)setPanelError(error instanceof Error?error.message:"取消失败，请重试。");}
     finally {if(mounted.current)setCancelArmed(false);finish();}
   };
-  const review=async(issueId:string)=>{
+  const review=async(issueId:string,displayedUpdate:ProcurementOverview["current_update"] = current)=>{
     const reason=resolveReason(reviewReasons[issueId]);
-    if(!current||!canConfirm||!reason||!begin())return false;
+    if(!current||!displayedUpdate||displayedUpdate.id!==current.id||!canConfirm||!reason||!begin())return false;
     setReviewError("");
     try {
-      await reviewProcurementIssue(current.id,issueId,reason,current.updated_at);
+      // Confirm exactly the snapshot that supplied the visible issue, not an older overview header.
+      await reviewProcurementIssue(displayedUpdate.id,issueId,reason,displayedUpdate.updated_at);
       if(!mounted.current)return false;
       setReviewReasons(rows=>{const next={...rows};delete next[issueId];return next;});
       await onRefresh();if(!mounted.current)return false;setExpanded(null);return true;

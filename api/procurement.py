@@ -365,7 +365,7 @@ class ProcurementStore:
             "update_id": update_id,
         }
 
-    def overview(self) -> dict[str, Any]:
+    def overview(self, *, compact: bool = False) -> dict[str, Any]:
         with transaction(self.url) as connection:
             from api.procurement_inventory import inventory_snapshot
             inventory = inventory_snapshot(connection)
@@ -395,7 +395,7 @@ class ProcurementStore:
             batch_rows = connection.execute(
                 """SELECT id, version, published_at, item_count, price_date, activated_at,
                           source_name, submitted_by, published_by
-                   FROM procurement_price_batches ORDER BY version DESC"""
+                   FROM procurement_price_batches ORDER BY version DESC LIMIT %s""", (2 if compact else 2147483647,)
             ).fetchall()
             current_batch_id = str(batch_rows[0][0]) if batch_rows else None
             previous_batch_id = str(batch_rows[1][0]) if len(batch_rows) > 1 else None
@@ -430,9 +430,14 @@ class ProcurementStore:
             all_participants = collaboration.participants(self.url)
             round_participants = collaboration.participants(self.url, active_update["id"]) if active_update else {}
             pending = active_update or scheduled_update
-            authorship = collaboration.price_authorship(self.url)
-            official_authors = authorship["batches"].get(current_batch_id, {})
-            pending_authors = authorship["updates"].get(pending["id"], {}) if pending else {}
+            if compact:
+                from api.procurement_reads import current_authorship
+                official_authors,pending_authors,purchasers = current_authorship(self.url, batch_rows[0][1] if batch_rows else None, pending["id"] if pending else None)
+            else:
+                authorship = collaboration.price_authorship(self.url)
+                official_authors = authorship["batches"].get(current_batch_id, {})
+                pending_authors = authorship["updates"].get(pending["id"], {}) if pending else {}
+                purchasers = authorship["purchasers"]
             pending_prices = {item["material_id"]: item["draft_price"] for item in pending["items"]} if pending else {}
             for material in materials:
                 if material["id"] in provenance:
@@ -449,7 +454,7 @@ class ProcurementStore:
                 material["participants"] = all_participants.get(material["id"], [])
                 material["round_participants"] = round_participants.get(material["id"], [])
                 material["price_modifier"] = pending_authors.get(material["id"], official_authors.get(material["id"]))
-                material["source_purchasers"] = authorship["purchasers"].get(material["id"], [])
+                material["source_purchasers"] = purchasers.get(material["id"], [])
                 if pending:
                     material["draft_price"] = pending_prices.get(material["id"], material["published_price"])
                 else:
@@ -464,7 +469,7 @@ class ProcurementStore:
                     "material_count": len(materials),
                     "open_issue_count": len(open_issues),
                     "missing_price_count": sum(1 for issue in open_issues if issue["kind"] == "missing_price"),
-                    "published_batch_count": len(batch_rows),
+                    "published_batch_count": connection.execute("SELECT count(*) FROM procurement_price_batches").fetchone()[0] if compact else len(batch_rows),
                 },
                 "materials": materials,
                 "ledger_comparison": ledger_comparison,
@@ -827,10 +832,11 @@ class ProcurementStore:
                 })
             return sorted(result, key=lambda item: item["material_code"])
 
-    def material_detail(self, material_id: str, include_archived: bool = False) -> dict[str, Any] | None:
+    def material_detail(self, material_id: str, include_archived: bool = False, *, compact: bool = False) -> dict[str, Any] | None:
+        compact = compact and not include_archived
         from api.procurement_inventory import inventory_snapshot
         with transaction(self.url) as connection:
-            rows = self._active_history(include_archived=include_archived, material_id=material_id)
+            rows = self._active_history(include_archived=include_archived, material_id=material_id, limit=2 if compact else None)
             material = connection.execute(
                 "SELECT id, code, name, unit, archived_at, updated_at, latest_price, inventory_price FROM procurement_materials WHERE id = %s",
                 (material_id,),
@@ -847,19 +853,23 @@ class ProcurementStore:
                 s.price_date,s.raw_price,s.price_kind,s.sheet,s.cell
                 FROM procurement_price_batches b JOIN procurement_price_batch_items i ON i.batch_id=b.id
                 LEFT JOIN procurement_snapshot_sources s ON s.batch_id=b.id AND s.material_id=i.material_id
-                WHERE i.material_id=%s ORDER BY b.version""", (material_id,)).fetchall()
+                WHERE i.material_id=%s ORDER BY b.version DESC LIMIT %s""", (material_id, 2 if compact else 2147483647)).fetchall()[::-1]
             sources = connection.execute("""SELECT s.sheet,s.source_row,s.raw_json,f.filename
                 FROM procurement_material_sources s JOIN procurement_source_imports f ON f.sha256=s.sha256
                 WHERE s.material_id=%s ORDER BY s.sheet,s.source_row""", (material_id,)).fetchall()
             if material is None or (material[4] is not None and not include_archived):
                 return None
-            inventory = inventory_snapshot(connection).get(material_id, (None, material[7], None))
-            authorship = collaboration.price_authorship(self.url, material_id)["batches"]
+            inventory = inventory_snapshot(connection, material_id).get(material_id, (None, material[7], None))
+            authorship = {} if compact else collaboration.price_authorship(self.url, material_id)["batches"]
+            if compact:
+                from api.procurement_reads import official_history, material_comparison
+                compact_history = official_history(self.url, material_id, page_size=2)
             rows.sort(key=lambda item: (item["effective_date"], item["created_at"]))
             latest = rows[-1] if rows else None
             previous = rows[-2] if len(rows) > 1 else None
             return {
-                "comparison": self.batch_comparison(official[-1][0], preserve_catalog=True)["items"].get(material_id) if official else None,
+                "comparison": (material_comparison(self.url, official[-1][0], material_id) if compact else self.batch_comparison(official[-1][0], preserve_catalog=True)["items"].get(material_id)) if official else None,
+                **({"history_read": {"base": f"/api/workbenches/procurement/materials/{material_id}", "version": compact_history["version"], "total": compact_history["scope_total"], "start_date": compact_history["start_date"], "end_date": compact_history["end_date"]}} if compact else {}),
                 "material": {"id": str(material[0]), "code": str(material[1]), "name": str(material[2]), "unit": str(material[3]), "archived": material[4] is not None, "updated_at": material[5],
                              "inventory_quantity": inventory[0], "inventory_price": inventory[1], "inventory_source": inventory[2]},
                 "latest_price": latest["latest_price"] if latest else material[6],
@@ -868,7 +878,7 @@ class ProcurementStore:
                 "price_date": latest["effective_date"] if latest else None,
                 "status": "missing" if latest is None or latest["latest_price"] is None else "active",
                 "history": rows,
-                "official_history": [{**dict(zip(("id","version","version_date","latest_price","price_date","raw_price","price_kind","sheet","cell"), row)), "modifier": authorship.get(row[0], {}).get(material_id)} for row in official],
+                "official_history": list(reversed(compact_history["items"])) if compact else [{**dict(zip(("id","version","version_date","latest_price","price_date","raw_price","price_kind","sheet","cell"), row)), "modifier": authorship.get(row[0], {}).get(material_id)} for row in official],
                 "sources": [{"sheet": r[0], "row": r[1], "purchaser": json.loads(r[2])[0], "filename": r[3]} for r in sources],
                 "adjustments": [
                     {"id": str(row[0]), "target_history_id": row[1], "replacement_history_id": str(row[2]), "reason": str(row[3]), "created_by": str(row[4] or "未知用户"), "created_at": str(row[5])}
@@ -1157,10 +1167,10 @@ class ProcurementStore:
                     self._refresh_material_snapshot(connection, material_id)
         return bool(changed)
 
-    def _active_history(self, *, include_archived: bool = False, material_id: str | None = None, connection: Connection | None = None) -> list[dict[str, Any]]:
+    def _active_history(self, *, include_archived: bool = False, material_id: str | None = None, connection: Connection | None = None, limit: int | None = None) -> list[dict[str, Any]]:
         if connection is None:
             with transaction(self.url) as db:
-                return self._active_history(include_archived=include_archived, material_id=material_id, connection=db)
+                return self._active_history(include_archived=include_archived, material_id=material_id, connection=db, limit=limit)
         where = ["""NOT EXISTS (SELECT 1 FROM procurement_price_adjustments a JOIN procurement_price_history h ON h.id=a.replacement_history_id JOIN procurement_imports i ON i.id=h.import_id JOIN procurement_updates u ON u.id=i.update_id WHERE a.target_history_id=history.id AND u.status!='cancelled' AND i.archived_at IS NULL)""", "NOT EXISTS (SELECT 1 FROM procurement_updates u WHERE u.id=imports.update_id AND u.status='cancelled')"]
         params: list[Any] = []
         if not include_archived:
@@ -1168,19 +1178,22 @@ class ProcurementStore:
         if material_id:
             where.append("history.material_id = %s")
             params.append(material_id)
-        rows = connection.execute(
-            f"""SELECT history.id, history.material_id, materials.code, materials.name, materials.unit,
+        query = f"""SELECT history.id, history.material_id, materials.code, materials.name, materials.unit,
                        imports.source_name, imports.effective_date, imports.created_at,
                        COALESCE(users.display_name, imports.created_by), history.latest_price,
-                       history.inventory_price, history.in_transit_price
+                       history.inventory_price, history.in_transit_price, imports._order AS import_order, history._order AS history_order
                 FROM procurement_price_history AS history
                 JOIN procurement_materials AS materials ON materials.id = history.material_id
                 JOIN procurement_imports AS imports ON imports.id = history.import_id
                 LEFT JOIN identity_users AS users ON users.id = imports.created_by
                 WHERE {' AND '.join(where)}
-                ORDER BY imports.effective_date, materials.code, imports.created_at, imports._order, history._order""",
-            params,
-        ).fetchall()
+                ORDER BY imports.effective_date, materials.code, imports.created_at, imports._order, history._order"""
+        if limit is not None:
+            query = f"SELECT * FROM (SELECT DISTINCT ON(material_id,effective_date) * FROM ({query}) active ORDER BY material_id,effective_date,created_at DESC,import_order DESC,history_order DESC) periods ORDER BY effective_date DESC LIMIT %s"
+            params.append(limit)
+        rows = connection.execute(query, params).fetchall()
+        if limit is not None:
+            rows.reverse()
         # Date summaries use the latest non-cancelled save; individual operations remain in saved_events.
         latest_by_period = {(row[1], row[6]): row for row in rows}
         return [
@@ -1759,13 +1772,20 @@ def create_procurement_router(
         return request.app.state.procurement_news.listing(source, page)
 
     @router.get("/overview")
-    def overview(request: Request, editor_id: str | None = None, editor_scope: str = "round") -> dict[str, Any]:
-        with transaction(store.url) as connection:
+    def overview(request: Request, editor_id: str | None = None, editor_scope: str = "round", compact: bool = False, read_mode: str = "", filters: str = "{}", page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200)) -> dict[str, Any]:
+        from api.procurement_catalog_reads import read_slot
+        actor(request,2)
+        with read_slot(bool(read_mode)), transaction(store.url) as connection:
             user = actor(request, 2)
-            result = store.overview()
+            from api.procurement_catalog_reads import current as current_projection
+            result = current_projection(store) if read_mode else store.overview(compact=compact)
+            if read_mode:
+                user=IdentityStore(store.url).get_user(user["id"])
+                if not user or not user["is_active"] or (not user["is_system_admin"] and user["scope_levels"].get("procurement",0)<2):
+                    raise HTTPException(status_code=403,detail="Permission denied")
             result["capabilities"] = collaboration.capabilities(store.url, user)
             result["environment"] = settings.environment
-            result["departments"] = collaboration.departments(store.url, result)
+            result["departments"] = [] if read_mode else collaboration.departments(store.url, result)
             result["editors"] = [{"id": person["id"], "name": person["display_name"]} for person in IdentityStore(store.url).list_users()
                                  if person["is_active"] and not person["is_system_admin"] and person["scope_levels"].get("procurement", 0) >= 3]
             if editor_id:
@@ -1795,7 +1815,28 @@ def create_procurement_router(
                 result["next_action"] = f"已安排 {scheduled['activate_at']} 自动启用"
             else:
                 result["next_action"] = "录入下一轮采购价格" if level >= 3 else "当前没有待处理更新"
-            return visible_payload(result, user)
+            result = visible_payload(result, user)
+            if read_mode:
+                import json
+                from api.procurement_catalog_reads import bounded
+                if read_mode not in {"summary", "ledger", "options"}:raise HTTPException(status_code=422,detail="读取模式无效")
+                try: options=json.loads(filters)
+                except ValueError: raise HTTPException(status_code=422,detail="筛选无效")
+                if not isinstance(options,dict) or any(not isinstance(v,str) or len(v)>200 for v in options.values()):raise HTTPException(status_code=422,detail="筛选无效")
+                if read_mode=="options" and (options.get("start") or options.get("end")):
+                    try:
+                        if date.fromisoformat(options.get("start",""))>date.fromisoformat(options.get("end","")):raise ValueError()
+                    except ValueError:raise HTTPException(status_code=422,detail="日期范围无效")
+                if read_mode=="options" and options.get("start") and options.get("end"):
+                    from api.procurement_reads import eligible
+                    from api.procurement_catalog_reads import code_key,daily
+                    valid=set(eligible(store.url,options["start"],options["end"])) if "latest_price" in visible_payload({"latest_price":True},user) else set()
+                    candidates=sorted((m for m in result["materials"] if daily(m)),key=lambda m:(m["id"] not in valid,result["code_order"].get(m["id"],0)))
+                    options["preferred"]=candidates[0]["id"] if candidates else ""
+                result=bounded(result,read_mode,options,page,page_size)
+                result["read_page"]["preferred"]=options.get("preferred","")
+                return result
+            return result
 
     @router.get("/activation-grants")
     def list_activation_grants(request: Request, offset: int = Query(0, ge=0), limit: int = Query(10, ge=1, le=50)):
@@ -2018,17 +2059,54 @@ def create_procurement_router(
             return result
 
     @router.get("/materials/{material_id}")
-    def material_detail(material_id: str, request: Request, include_archived: bool = False) -> dict[str, Any]:
+    def material_detail(material_id: str, request: Request, include_archived: bool = False, compact: bool = False, read_mode: str = "", filters: str = "{}", page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200)) -> dict[str, Any]:
         with transaction(store.url) as connection:
             user = actor(request, 2)
             permit_archived(user, include_archived)
-            detail = store.material_detail(material_id, include_archived)
+            detail = store.material_detail(material_id, include_archived, compact=compact)
             if detail is None:
                 raise HTTPException(status_code=404, detail="Material not found")
             result = visible_payload(detail, user)
             result["changes"] = visible_payload({"changes": collaboration.saved_events(store.url, material_id=material_id)}, user)["changes"]
             result["history"] = [visible_payload(item, user, history_fields) for item in detail["history"]]
             return result
+
+    @router.get("/materials/{material_id}/trend")
+    def material_trend(material_id: str, request: Request, start: date, end: date):
+        from api.procurement_reads import series
+        with transaction(store.url):
+            user = actor(request, 2)
+            if start > end:
+                raise HTTPException(status_code=422, detail="日期范围无效")
+            try:
+                return visible_payload(series(store.url, start=start.isoformat(), end=end.isoformat(), material_id=material_id, official_only=True), user)
+            except LookupError as error:
+                raise HTTPException(status_code=404, detail=str(error)) from error
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @router.get("/materials/{material_id}/official-history")
+    def material_official_history(material_id: str, request: Request, start: str = "", end: str = "", search: str = Query("", max_length=200), page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=200), version: str | None = None):
+        from api.procurement_reads import official_history
+        with transaction(store.url):
+            user = actor(request, 2)
+            try:
+                return visible_payload(official_history(store.url, material_id, start=start, end=end, search=search, page=page, page_size=page_size, version=version), user)
+            except LookupError as error:
+                raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @router.get("/materials/{material_id}/official-history/{batch_id}")
+    def material_official_record(material_id: str, batch_id: str, request: Request):
+        from api.procurement_reads import official_history
+        with transaction(store.url):
+            user = actor(request, 2)
+            try:
+                result = official_history(store.url, material_id, batch_id=batch_id)
+            except LookupError as error:
+                raise HTTPException(status_code=404, detail=str(error)) from error
+            if not result["items"]:
+                raise HTTPException(status_code=404, detail="History record not found")
+            return visible_payload(result["items"][0], user)
 
     @router.patch("/materials/{material_id}")
     def update_material(material_id: str, payload: MaterialIdentityRequest, request: Request) -> dict[str, Any]:
@@ -2173,11 +2251,58 @@ def create_procurement_router(
         raise HTTPException(status_code=409, detail="请使用带版本核对的启用确认入口")
         user = actor(request, 4)
 
+    @router.get("/price-series/scoped")
+    def scoped_price_series(request: Request, start: date, end: date, material_id: str | None = None, boundaries: bool = False):
+        from api.procurement_reads import series
+        with transaction(store.url):
+            user = actor(request, 2)
+            if start > end or (not material_id and not boundaries) or (material_id and boundaries):
+                raise HTTPException(status_code=422, detail="请选择单一原料及有效日期范围")
+            try:
+                return visible_payload(series(store.url, start=start.isoformat(), end=end.isoformat(), material_id=material_id, boundaries=boundaries), user)
+            except LookupError as error:
+                raise HTTPException(status_code=404, detail=str(error)) from error
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @router.get("/dashboard-summary")
+    def dashboard_summary(request: Request,start:date,end:date,kind:str=Query("movers",pattern="^(movers|distribution)$")):
+        from api.procurement_catalog_reads import movers,distribution,read_slot
+        actor(request,2)
+        with read_slot(),transaction(store.url):
+            user=actor(request,2)
+            if start>end:raise HTTPException(status_code=422,detail="日期范围无效")
+            if "latest_price" not in visible_payload({"latest_price":True},user):
+                return {"up":[],"down":[],"up_total":0,"down_total":0} if kind=="movers" else None
+            result=(movers if kind=="movers" else distribution)(store,start.isoformat(),end.isoformat())
+            fresh=IdentityStore(store.url).get_user(user["id"])
+            if not fresh or not fresh["is_active"] or (not fresh["is_system_admin"] and fresh["scope_levels"].get("procurement",0)<2):raise HTTPException(status_code=403,detail="Permission denied")
+            if "latest_price" not in visible_payload({"latest_price":True},fresh):return {"up":[],"down":[],"up_total":0,"down_total":0} if kind=="movers" else None
+            return result
+
+    @router.get("/price-series/eligible")
+    def eligible_price_series(request: Request, start: date, end: date):
+        from api.procurement_reads import eligible
+        with transaction(store.url):
+            user = actor(request, 2)
+            if start > end:
+                raise HTTPException(status_code=422, detail="日期范围无效")
+            return {"ids": eligible(store.url, start.isoformat(), end.isoformat()) if "latest_price" in visible_payload({"latest_price": True}, user) else []}
+
     @router.get("/price-series")
     def price_series(request:Request):
         with transaction(store.url):
             user = actor(request,2)
             return visible_payload(store.price_series(),user)
+
+    @router.get("/batches/page")
+    def batch_history_page(request: Request, page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=200), status: str = Query("all", pattern="^(all|active|history)$"), version: str | None = None, start: date | None = None, end: date | None = None):
+        from api.procurement_reads import batch_page
+        with transaction(store.url):
+            user = actor(request, 2)
+            if (start is None) != (end is None) or (start and end and start > end):
+                raise HTTPException(status_code=422, detail="日期范围无效")
+            return visible_payload(batch_page(store, page=page, page_size=page_size, status=status, version=version, start=start.isoformat() if start else None, end=end.isoformat() if end else None), user)
 
     @router.get("/batches/{batch_id}")
     def get_batch(batch_id: str, request: Request) -> dict[str, Any]:

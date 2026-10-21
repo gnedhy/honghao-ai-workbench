@@ -9,5 +9,5 @@ export function isDailyMaterial(material: {code: string; name?: string}) {
 
 export function dailyProcurementOverview(data: ProcurementOverview): ProcurementOverview {
   const materials = data.materials.filter(isDailyMaterial);
-  return {...data, materials, metrics: {...data.metrics, material_count: materials.length}};
+  return {...data, materials, metrics: {...data.metrics, material_count: data.read_page ? data.read_page.scope_total : materials.length}};
 }

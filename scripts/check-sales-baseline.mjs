@@ -55,15 +55,17 @@ try {
       const path = url.pathname.replace('/api/workbenches/sales', ''), method = request.method();
       const reply = json => route.fulfill({ json });
       if (method === 'GET') {
-        if (path === '/products') return reply({ products: [product] });
+        if (path === '/read/catalog') return reply({ products: [product],total:1,page:1,departments:[product.department] });
+        if(path.startsWith('/read/pages/'))return reply({items:[],total:0,page:1,page_size:10,version:'fixed',reset:false});
         if (path === '/batches') return reply({ batches });
         if (path === '/history') return reply({ trials: [] });
         if (path === '/records') return reply({ records: [] });
-        if (path === '/calculator/saved') return reply({ saved: [] });
+        if (path === '/calculator/saved-page') return reply({ saved: [],total:0,page:1,version:'fixed' });
         const batch = batches.find(row => path === '/batches/' + row.id);
         if (batch) return reply({ batch });
       }
       const body = request.postDataJSON();
+      if(path==='/read/products'&&method==='POST')return reply({products:body.ids.includes(product.id)?[product]:[]});
       writes.push({ method, path, revision: body?.revision ?? null });
       if (path === '/calculator/evaluate' && method === 'POST') return reply({ source: body.source,
         results: body.panels.map(panel => ({ id: panel.id, result: { price: '6.92', target_cost: null, cost_gap: null, trail: [] }, error: null })), default_allocation_tiers: [] });

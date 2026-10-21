@@ -268,7 +268,8 @@ def test_stored_summary_tracks_payload_and_cannot_be_written_independently(ready
     projection="(payload::jsonb - ARRAY['graph','calculations','formula','source_hashes'])::text"
     with transaction(store.url) as db:
         for table in ('research_cost_records','research_backfill_records'):
-            assert db.execute(f'SELECT COUNT(*) FROM {table} WHERE summary_payload IS DISTINCT FROM {projection}').fetchone()[0]==0
+            expected=projection if table=='research_cost_records' else "(payload::jsonb - ARRAY['graph','calculations','formula','source_hashes','latest','inventory','lines'])::text"
+            assert db.execute(f'SELECT COUNT(*) FROM {table} WHERE summary_payload IS DISTINCT FROM {expected}').fetchone()[0]==0
         sequence,raw=db.execute('SELECT sequence,payload FROM research_cost_records ORDER BY sequence DESC LIMIT 1').fetchone()
     updated=json.loads(raw);updated['latest_cost']='0.123456789012345678';updated['inventory_cost']=None
     with transaction(store.url,write=True) as db:

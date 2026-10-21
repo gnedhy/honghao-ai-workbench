@@ -187,7 +187,8 @@ class CalculatorStore:
     def resolve_source(self, source: Source, actor):
         self.sales._authorize(actor)
         if source.kind == 'product':
-            product = next((row for row in self.sales.products(actor)['products'] if row['id'] == source.product_id), None)
+            with transaction(self.url) as db:
+                product = self.sales._catalog(db,[source.product_id])[0].get(source.product_id)
             if product is None:
                 raise ValueError('所选产品不存在')
             return Source(kind='product', product_id=product['id'], basis=source.basis,
@@ -217,6 +218,26 @@ class CalculatorStore:
                 results.append({'id': panel.id, 'result': None, 'error': str(error)})
         return {'source': source.model_dump(), 'results': results,
                 'default_allocation_tiers': [{'upper': upper, 'amount': amount} for upper, amount in ALLOCATION_TIERS]}
+
+    def saved_page(self, actor, page=1, page_size=50, kind='workspace', token=''):
+        self.sales._authorize(actor)
+        if page<1 or not 1<=page_size<=200 or kind not in ('workspace','template'):
+            raise ValueError('分页参数无效')
+        with transaction(self.url) as db:
+            stamp=str(db.execute("SELECT version FROM honghao_meta.read_versions WHERE table_name='sales_calculator_saved'").fetchone()[0])
+            if token and token!=stamp: page=1
+            total=db.execute('SELECT count(*) FROM sales_calculator_saved WHERE owner_id=%s AND kind=%s',(actor['id'],kind)).fetchone()[0]
+            page=min(page,max(1,(total+page_size-1)//page_size))
+            rows=db.execute('SELECT id,kind,name,revision,summary_payload,created_at,updated_at FROM sales_calculator_saved WHERE owner_id=%s AND kind=%s ORDER BY updated_at DESC,id DESC LIMIT %s OFFSET %s',(actor['id'],kind,page_size,(page-1)*page_size)).fetchall()
+            return {'saved':[dict(id=row[0],kind=row[1],name=row[2],revision=row[3],payload=json.loads(row[4]),created_at=row[5],updated_at=row[6]) for row in rows],'total':total,'page':page,'version':stamp}
+
+    def saved_detail(self, actor, key):
+        self.sales._authorize(actor)
+        with transaction(self.url) as db:
+            row=db.execute('SELECT id,kind,name,revision,payload,created_at,updated_at FROM sales_calculator_saved WHERE id=%s AND owner_id=%s',(key,actor['id'])).fetchone()
+            if not row:
+                raise KeyError('测算记录不存在')
+            return dict(id=row[0],kind=row[1],name=row[2],revision=row[3],payload=json.loads(row[4]),created_at=row[5],updated_at=row[6])
 
     def list_saved(self, actor):
         self.sales._authorize(actor)

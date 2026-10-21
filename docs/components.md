@@ -31,7 +31,7 @@
 | 排行翻页 | `src/components/useMoverPaging.tsx` | 悬停、键盘、详情打开、后台和减少动态效果时暂停；采购／研发排行 |
 | 数值／页面状态 | `PriceMovement.tsx`、`WorkbenchLayout.tsx` → `PageState`、`WorkbenchLoading` | 涨跌与无对比展示；错误与重试分开，不把失败当空数据 |
 | 授权组合 | `src/components/ActivationGrants.tsx` | 采购／研发同界面，独立业务 scope；保留确认、权限查询和审计逻辑 |
-| 历史查找与分段展示 | `HistoryBrowser.tsx` | 原料行情、研发成本、销售报价详情复用工作台日期范围菜单与搜索样式进行筛选和每次10条展示；数据权限、排序和记录展开由原业务保留 |
+| 历史查找与分段展示 | `HistoryBrowser.tsx` | 原料行情、研发成本、销售报价详情复用日期范围与搜索样式；服务端分页使用 `PagedHistoryBrowser`，业务层提供当前页、总数、查询与加载/失败状态，控件不发请求；原 `HistoryBrowser` 保留已在内存的小型记录展示。权限、排序、读取版本失效和展开由业务层负责 |
 | 悬停说明 | `HelpHint.tsx` | 特殊取价依据、采购与研发表头说明；悬停显示完整说明，键盘焦点提供可访问描述，普通取价不显示重复说明 |
 | 历史记录 | `WorkbenchSurface.module.css` → `historyTimeline`、`historyDate` | 日期、事件和时间布局；采购／研发历史。子记录及冻结内容仍由业务负责 |
 
@@ -75,6 +75,6 @@ W7 研发编辑会话按产品 ID 挂载，后台刷新不重新初始化填写�
 
 W8 的静态元数据、lazy 适配、App 身份、反馈与隔离示例维护见 [静态工作台接入](agents/workbench-integration.md)；新增模块使用该页任务模板，正式启用仍须现有授权和门禁。
 
-内编候选排序复用 `src/codeOrder.ts` 的 `compareCodes`：`TrendMaterialMenu`（采购／研发／销售趋势）、研发投料候选（保留类别分组）、`SalesProductPicker`（报价编辑／独立测算，排序后分页）。只整理调用方已授权的候选，不改变台账业务排序、投料顺序、成本口径或可选条件。
+内编候选排序复用 `src/codeOrder.ts` 的 `compareCodes`：`TrendMaterialMenu`（采购／研发／销售趋势）、研发投料候选（保留类别分组）、`SalesProductPicker`（报价编辑／独立测算，排序后分页）。`TrendMaterialMenu` 支持业务层传入远程搜索、加载/重试与分页页脚，未传时保留本地筛选；只整理调用方已授权的候选，不改变台账业务排序、投料顺序、成本口径或可选条件。
 
 走势默认选择复用 `useTrendSelection.ts` 和 `codeOrder.ts` 的有效记录筛选：当前范围同一条数据线至少两期有效记录者优先，同等条件按内编自然排序；不足时选权限内首项并显示原空状态。手动ID用当前标签页sessionStorage按账号／工作台保存，展示前始终核对最新候选；预览／完整页共用，失去可见性立即回退，数据库与长期偏好不写入。采购走势与排行共用一次 `price-series` 请求；实现及边界验证见 `scripts/check-trend-selection.mjs`。2026-10-20已正式发布为 `20261020-trend-default-selection`，验收与恢复见当日发布记录。

@@ -25,6 +25,8 @@ from api.research_formulas import calculate, number, decimal_text, input_number,
 from api.postgres import transaction
 from api.research_access import ResearchAccess
 
+DETAIL_CALCULATION_CACHE_BYTES = 64 * 1024 * 1024
+
 ADJUSTMENT_REASONS = ("配方优化", "实际投料修正", "收率修正", "成本核对修正", "临时成本测算", "其他")
 
 # Include deletions and every committed update without loading large JSON/TOAST values.
@@ -65,20 +67,37 @@ def now():
     return datetime.now(UTC).isoformat()
 
 
-def capture(db):
+def capture(db, key=None):
     package = json.loads(db.execute("SELECT payload FROM research_meta WHERE id=1").fetchone()[0])
     inventory_overrides = package.get("inventory_price_overrides", {})
     package = {k:package[k] for k in ("materials", "default_composite", "source_sha256", "source_filename", "erp_inventory_fallback_codes") if k in package}
-    package["recipes"] = [json.loads(r[0]) for r in db.execute("SELECT formula FROM research_formulas WHERE lifecycle='active' ORDER BY position")]
+    if key is None:
+        package["recipes"] = [json.loads(r[0]) for r in db.execute("SELECT formula FROM research_formulas WHERE lifecycle='active' ORDER BY position")]
+    else:
+        package['recipes']=[json.loads(r[0]) for r in db.execute("""WITH RECURSIVE deps(id) AS (
+          SELECT id FROM research_formulas WHERE id=%s
+          UNION
+          SELECT child.id FROM deps JOIN research_formulas parent ON parent.id=deps.id
+          CROSS JOIN LATERAL jsonb_array_elements(parent.formula::jsonb->'lines') line
+          JOIN research_formulas child ON child.id=CASE WHEN line->>'kind'!='material' THEN line->>'ref' WHEN line->>'ref'='CF401B' THEN %s END
+          WHERE child.lifecycle='active')
+          SELECT formula FROM research_formulas WHERE id IN(SELECT id FROM deps) ORDER BY position""",(key,package.get('default_composite')))]
     package["current_policy"] = {"material_replacements": {"CF020C": "CF020D"}}
     if "erp_inventory_fallback_codes" in package:
         package["current_policy"]["erp_inventory_fallback_codes"] = package["erp_inventory_fallback_codes"]
     batch = db.execute("SELECT id,version,price_date FROM procurement_price_batches ORDER BY version DESC LIMIT 1").fetchone()
+    codes=None
+    if key is not None:
+        codes={'CF232'}
+        for recipe in package['recipes']:
+            for line in recipe['lines']:
+                codes.update([line['ref'],line.get('code',line['ref']),line.get('price_ref',line['ref'])]+line.get('price_refs',[]))
+        if 'CF020C' in codes: codes.add('CF020D')
     prices = {r[0]: {"latest_price": r[1], "inventory_price": r[2]} for r in db.execute("""
         SELECT m.code,b.latest_price,i.price FROM procurement_materials m
         LEFT JOIN procurement_price_batch_items b ON b.material_id=m.id AND b.batch_id=%s
-        LEFT JOIN procurement_inventory i ON i.material_id=m.id WHERE m.archived_at IS NULL
-        """, (batch[0] if batch else None,))}
+        LEFT JOIN procurement_inventory i ON i.material_id=m.id WHERE m.archived_at IS NULL AND (%s::text[] IS NULL OR m.code=ANY(%s))
+        """, (batch[0] if batch else None,list(codes) if codes is not None else None,list(codes) if codes is not None else None))}
     inventory_sources = {code:(sha,raw) for code,sha,raw in db.execute("SELECT m.code,i.source_sha256,i.raw_price FROM procurement_inventory i JOIN procurement_materials m ON m.id=i.material_id")} if inventory_overrides else {}
     for code, override in inventory_overrides.items():
         # A new inventory import expires this batch's independently confirmed calculation price.
@@ -164,7 +183,8 @@ def comparison(current, previous):
 class ResearchStore:
     def __init__(self, url: str):
         self.url = url
-        self._detail_calculation = None
+        self._detail_calculation = OrderedDict()
+        self._detail_calculation_bytes = 0
         self._detail_calculation_lock = Lock()
 
     def initialize(self):
@@ -332,7 +352,7 @@ class ResearchStore:
             if len(versions) != len(tables):
                 raise RuntimeError("读取版本标记不完整，请检查数据库迁移")
             # Equal live scopes have the same representation; identity never substitutes for authorization.
-            return 'W/"' + digest([OVERVIEW_INSTANCE, access.admin, access.level, access.departments, sorted(versions)]) + '"'
+            return 'W/"' + digest([OVERVIEW_INSTANCE, access.admin, 5 if access.admin else access.level, {} if access.admin else access.departments, sorted(versions)]) + '"'
 
     def material_prices(self, actor=None):
         from api.procurement import ProcurementStore
@@ -390,13 +410,13 @@ class ResearchStore:
             "materials": materials,
         }
 
-    def material_price_detail(self, material_id):
+    def material_price_detail(self, material_id, compact=False):
         from api.procurement import ProcurementStore
 
-        detail = ProcurementStore(self.url).material_detail(material_id)
+        detail = ProcurementStore(self.url).material_detail(material_id,compact=compact)
         if detail is None:
             return None
-        return {"material": detail["material"], "comparison": detail["comparison"],
+        return {**({"history_read":{**detail["history_read"],"base":f"/api/workbenches/research/material-prices/{material_id}"}} if compact else {}),"material": detail["material"], "comparison": detail["comparison"],
                 "official_history": detail["official_history"], "sources": [], "adjustments": []}
 
     def export_costs(self, actor=None):
@@ -462,8 +482,9 @@ class ResearchStore:
             return dict(formula,lifecycle='draft')
 
     def _references(self, db, key):
-        return [{'id':r['id'],'name':r['name']} for raw, in db.execute("SELECT formula FROM research_formulas WHERE lifecycle='active' AND id!=%s ORDER BY _order",(key,))
-                for r in [json.loads(raw)] if any(line['kind']!='material' and line['ref']==key for line in r['lines'])]
+        return [{'id':ident,'name':name} for ident,name in db.execute("""SELECT id,formula::jsonb->>'name' FROM research_formulas
+            WHERE lifecycle='active' AND id!=%s AND (formula::jsonb->'lines') @> jsonb_build_array(jsonb_build_object('ref',%s::text))
+            AND EXISTS(SELECT 1 FROM jsonb_array_elements(formula::jsonb->'lines') line WHERE line->>'ref'=%s AND line->>'kind'!='material') ORDER BY _order""",(key,key,key))]
 
     def delete_formula(self, key, body, actor):
         with transaction(self.url, write=True) as db:
@@ -505,16 +526,23 @@ class ResearchStore:
             enqueue(db,'配方停用：'+formula['name'])
             return {'status':'inactive'}
 
-    def detail_etag(self, key, actor):
+    def detail_etag(self, key, actor, include_history=True):
         with transaction(self.url) as db:
             row = db.execute("SELECT formula FROM research_formulas WHERE id=%s", (key,)).fetchone()
             if not row:
                 raise KeyError("产品不存在")
-            ResearchAccess(db, actor).require(json.loads(row[0]))
+            access=ResearchAccess(db,actor)
+            access.require(json.loads(row[0]))
+            if not include_history:
+                revisions=db.execute("SELECT table_name,version FROM honghao_meta.read_versions WHERE table_name=ANY(%s)",(['identity_users','identity_user_scopes','organization_memberships','organization_departments','research_activation_grants','research_formulas'],)).fetchall()
+                draft=db.execute('SELECT revision,simulation_token FROM research_drafts WHERE id=%s',(key,)).fetchone()
+                history_version=db.execute('SELECT revision FROM research_history_versions WHERE product_id=%s',(key,)).fetchone()
+                event_state=db.execute("SELECT id,status FROM research_events WHERE status!='done' ORDER BY _order LIMIT 1").fetchone()
+                return 'W/"'+digest([OVERVIEW_INSTANCE,key,actor['id'],access.admin,access.level,access.departments,sorted(revisions),capture(db,key),draft,history_version,event_state])+':current"'
             # Detail includes actor-specific activation capabilities and current inventory inputs.
             return 'W/"' + digest([key, actor['id'], self.overview_etag(actor, MATERIAL_TABLES)]) + '"'
 
-    def detail(self, key, actor=None):
+    def detail(self, key, actor=None, include_history=True):
         with transaction(self.url) as db:
             row = db.execute("SELECT formula,draft_sequence,lifecycle FROM research_formulas WHERE id=%s", (key,)).fetchone()
             if not row:
@@ -523,29 +551,64 @@ class ResearchStore:
             access = ResearchAccess(db,actor)
             access.require(formula)
             visible = access.visible_ids(db) if not access.admin else set()
-            history = access.project([r for r in self._linked_history(db,key) if access.allows(r.get('formula',r))],visible)
-            current = next((r for r in history if r['record_type']=='formal'),{})
-            product = next(iter(self._rows(db,actor,key)["products"]), dict(formula, **{k:current.get(k) for k in ("latest_cost","inventory_cost","change","status")}))
+            history = access.project([r for r in self._linked_history(db,key) if access.allows(r.get('formula',r))],visible) if include_history else []
+            current_raw = db.execute('SELECT payload FROM research_cost_records WHERE product_id=%s ORDER BY sequence DESC LIMIT 1',(key,)).fetchone()
+            current = json.loads(current_raw[0]) if current_raw else {}
+            current = access.project(current,visible) if access.allows(current.get("formula",current)) else {}
+            current_history=history
+            if not include_history:
+                from api.research_reads import normalize
+                last=db.execute('SELECT payload FROM research_history_reads WHERE product_id=%s ORDER BY ordinal DESC LIMIT 1',(key,)).fetchone()
+                latest_summary=normalize(last[0]) if last else {}
+                current_history=[dict(current,record_type='formal',**{field:latest_summary.get(field,current.get(field)) for field in ('change','comparison_basis')})] if current else ([latest_summary] if latest_summary else [])
+                if db.execute('SELECT 1 FROM research_backfill_records WHERE product_id=%s LIMIT 1',(key,)).fetchone():
+                    current_history.append({'record_type':'backfill'})
+            product = next(iter(self._rows(db,actor,key,histories={key:current_history})["products"]), dict(formula, **{k:current.get(k) for k in ("latest_cost","inventory_cost","change","status")}))
             pending = db.execute("SELECT status FROM research_events WHERE status!='done' ORDER BY _order LIMIT 1").fetchone()
             if pending:
                 product["status"] = "failed" if pending[0] == "failed" else "updating"
             product.update(lifecycle=row[2],revision=formula['revision'])
             draft = db.execute("SELECT revision,formula,simulation_token,simulation FROM research_drafts WHERE id=%s", (key,)).fetchone()
             product['has_draft']=bool(draft) or row[2]=='draft'
-            inputs = capture(db)
+            inputs = capture(db,key) if not include_history else capture(db)
             if not any(r['id']==key for r in inputs['package']['recipes']):
                 inputs['package']['recipes'].append(formula)
-            options = self._options(db,access)
-            visible_codes = {r["code"] for r in options["materials"]}
+            options = self._options(db,access) if include_history else {"owners":[],"materials":[],"recipes":[],"composites":[]}
+            visible_codes = {r["code"] for r in options["materials"]} if include_history else set(inputs["prices"])
             live = None
             if row[2]=='active' and not pending:
+                # Calculate only this product and its transitive references.
+                lookup={recipe['id']:recipe for recipe in inputs['package']['recipes']}
+                required=set()
+                def visit(ref):
+                    if ref in required or ref not in lookup: return
+                    required.add(ref)
+                    for line in lookup[ref]['lines']:
+                        if line['kind']!='material': visit(line['ref'])
+                        elif line['ref']=='CF401B': visit(inputs['package']['default_composite'])
+                visit(key)
+                inputs['package']['recipes']=[recipe for recipe in inputs['package']['recipes'] if recipe['id'] in required]
                 fingerprint = digest(inputs)
                 with self._detail_calculation_lock:
-                    if self._detail_calculation is None or self._detail_calculation[0] != fingerprint:
-                        self._detail_calculation = (fingerprint, evaluate(inputs))
+                    cached=self._detail_calculation.get(fingerprint)
+                    if cached is None:
+                        calculations=evaluate(inputs)
+                        size=len(packed(calculations).encode('utf-8'))
+                        if size<=DETAIL_CALCULATION_CACHE_BYTES:
+                            self._detail_calculation[fingerprint]=(calculations,size)
+                            self._detail_calculation_bytes+=size
+                            while len(self._detail_calculation)>16 or self._detail_calculation_bytes>DETAIL_CALCULATION_CACHE_BYTES:
+                                _,(_,removed)=self._detail_calculation.popitem(last=False)
+                                self._detail_calculation_bytes-=removed
+                    else:
+                        calculations=cached[0]
+                        self._detail_calculation.move_to_end(fingerprint)
                     # Share pure arithmetic only; callers and permission projection get private copies.
-                    live = {policy:deepcopy(values[key]) for policy,values in self._detail_calculation[1].items()}
-            return access.project({"product": product, "latest": current.get("latest"), "inventory": current.get("inventory"),
+                    live = {policy:deepcopy(values[key]) for policy,values in calculations.items()}
+
+            from api.research_reads import detail_history_metadata
+            history_metadata=detail_history_metadata(db,key,actor,live or current) if not include_history else {}
+            return access.project({**history_metadata,"options_loaded":include_history,"product": product, "latest": current.get("latest"), "inventory": current.get("inventory"),
                 "recipes": [formula], "prices": {k:v for k,v in inputs["prices"].items() if k in visible_codes}, "history": history,
                 "draft_revision": row[1], "draft": {"revision": draft[0],"formula":json.loads(draft[1]),"simulation_token":draft[2],"simulation":json.loads(draft[3]) if draft[3] else None} if draft else None,
                 "options": options,"referenced_by":self._references(db,key),
@@ -789,6 +852,14 @@ def create_research_router(store, settings):
         # A queued reader may have been logged out or downgraded while waiting.
         request.state.current_user = IdentityStore(store.url).user_for_session(request.cookies.get(SESSION_COOKIE_NAME, ""))
         return actor(request)
+    from contextlib import contextmanager
+    @contextmanager
+    def bounded_read(request,level=2):
+        with read_slots:
+            read_actor(request)
+            user=actor(request,level)
+            with transaction(store.url) as db:
+                yield db,user
     def run(fn,*args):
         try:
             return fn(*args)
@@ -824,14 +895,50 @@ def create_research_router(store, settings):
                 return Response(status_code=304,headers=headers)
             payload=run(store.material_prices,user)
         return JSONResponse(payload,headers=headers)
-    @router.get("/material-prices/{material_id}")
-    def material_price_detail(material_id:str,request:Request,response:Response):
+    @router.get("/material-prices/by-code/{code}")
+    def material_price_by_code(code:str,request:Request,response:Response):
         actor(request)
-        detail = run(store.material_price_detail,material_id)
+        with bounded_read(request) as (db,user):
+            row=db.execute('SELECT id FROM procurement_materials WHERE code=%s AND archived_at IS NULL',(code,)).fetchone()
+            if row is None:
+                raise HTTPException(404,"原料不存在")
+            detail=run(store.material_price_detail,row[0],True)
+            if detail is None:
+                raise HTTPException(404,"原料不存在")
+            response.headers["Cache-Control"]="no-store"
+            return detail
+    @router.get("/material-prices/{material_id}")
+    def material_price_detail(material_id:str,request:Request,response:Response,compact:bool=False):
+        actor(request)
+        detail = run(store.material_price_detail,material_id,compact)
         if detail is None:
             raise HTTPException(404,"原料不存在")
         response.headers["Cache-Control"] = "no-store"
         return detail
+    def require_material(db,material_id):
+        if not db.execute('SELECT 1 FROM procurement_materials WHERE id=%s AND archived_at IS NULL',(material_id,)).fetchone():
+            raise KeyError('原料不存在')
+    @router.get('/material-prices/{material_id}/official-history')
+    def material_official_history(material_id:str,request:Request,start:str='',end:str='',search:str=Query('',max_length=200),page:int=Query(1,ge=1),page_size:int=Query(10,ge=1,le=200),version:str|None=None):
+        from api.procurement_reads import official_history
+        actor(request)
+        with bounded_read(request) as (db,user):
+            run(require_material,db,material_id)
+            return run(lambda:official_history(store.url,material_id,start=start,end=end,search=search,page=page,page_size=page_size,version=version))
+    @router.get('/material-prices/{material_id}/official-history/{batch_id}')
+    def material_official_record(material_id:str,batch_id:str,request:Request):
+        from api.procurement_reads import official_history
+        actor(request)
+        with bounded_read(request) as (db,user):
+            run(require_material,db,material_id)
+            return run(lambda:official_history(store.url,material_id,batch_id=batch_id))
+    @router.get('/material-prices/{material_id}/trend')
+    def material_trend(material_id:str,request:Request,start:str='',end:str=''):
+        from api.procurement_reads import series
+        actor(request)
+        with bounded_read(request) as (db,user):
+            run(require_material,db,material_id)
+            return run(lambda:series(store.url,material_id=material_id,start=start,end=end,official_only=True))
     @router.get("/products/export")
     def export_costs(request:Request):
         user=actor(request)
@@ -860,7 +967,7 @@ def create_research_router(store, settings):
         user=actor(request)
         query=dict(kind=kind,page=page,page_size=page_size,search=search,owner=owner,department=department,status=status,draft=draft,movement=movement,yield_warning=yield_warning,sort=sort,asc=asc)
         # Coalesce snapshot rebuilds; queued readers recheck live authorization before using cached data.
-        scope=[kind,user['is_system_admin'],user['scope_levels'].get('research',0),sorted((d['id'],d['is_primary']) for d in user.get('departments',[]) if d['name'].startswith('研发') or d['name']=='浙江实验室')]
+        scope=[kind,True] if user['is_system_admin'] else [kind,False,user['scope_levels'].get('research',0),sorted((d['id'],d['is_primary']) for d in user.get('departments',[]) if d['name'].startswith('研发') or d['name']=='浙江实验室')]
         with overview_locks[int(digest(scope),16) % len(overview_locks)], read_slots:
             with transaction(store.url):
                 user=read_actor(request)
@@ -869,23 +976,19 @@ def create_research_router(store, settings):
                 headers={'ETag':tag,'Cache-Control':'no-store','Vary':'Cookie'}
                 if tag in [v.strip() for v in request.headers.get('if-none-match','').split(',')]:
                     return Response(status_code=304,headers=headers)
-                cache_key=version+':page:'+kind
                 with overview_cache_lock:
-                    body=overview_cache.get(cache_key)
+                    body=overview_cache.get(tag)
+                    if body is not None: overview_cache.move_to_end(tag)
                 if body is None:
-                    # shortcut: rebuild the scoped list per revision; use indexed projections if cold reads exceed budget.
-                    payload=store.formulas(user) if kind=='formulas' else store.listing(user)
-                    for row in payload[kind]:
-                        if isinstance(row.get('lines'),list): row['lines']=len(row['lines'])
-                    body=JSONResponse(payload).body
+                    from api.research_reads import ledger_page
+                    with transaction(store.url) as db:
+                        result=run(ledger_page,db,user,query)
+                    body=JSONResponse(result).body
                     with overview_cache_lock:
-                        overview_cache[cache_key]=body
-                        while len(overview_cache)>16 or sum(len(v) for v in overview_cache.values())>64*1024*1024:
+                        overview_cache[tag]=body
+                        while len(overview_cache)>16 or sum(len(value) for value in overview_cache.values())>64*1024*1024:
                             overview_cache.popitem(last=False)
-                payload=json.loads(body)
-                result=page_rows(payload[kind],**query)
-                result.update(pending=payload.get('pending',False),departments=payload.get('departments',[]),creation_owners=payload.get('owners',[]))
-        return JSONResponse(result,headers=headers)
+        return Response(body,media_type="application/json",headers=headers)
     @router.get("/overview")
     def overview(request:Request,summary:bool=False):
         user=actor(request)
@@ -928,27 +1031,27 @@ def create_research_router(store, settings):
         user=actor(request,3)
         return run(store.delete_formula,key,body.model_dump(),user["id"])
     @router.get("/products/{key}")
-    def detail(key:str,request:Request):
+    def detail(key:str,request:Request,history:bool=True):
         nonlocal detail_cache_bytes
         user=actor(request)
         validators = [tag.strip() for tag in request.headers.get("if-none-match", "").split(",")]
         if validators:
             with transaction(store.url):
                 user = read_actor(request)
-                etag = run(store.detail_etag,key,user)
+                etag = run(store.detail_etag,key,user,history)
                 if etag in validators:
                     return Response(status_code=304,headers={"ETag":etag,"Cache-Control":"no-store","Vary":"Cookie"})
         # Coalesce one actor/product rebuild without holding a database connection while waiting.
         with overview_locks[int(digest([user['id'],key]),16) % len(overview_locks)], read_slots:
             with transaction(store.url):
                 user = read_actor(request)
-                etag = run(store.detail_etag,key,user)
+                etag = run(store.detail_etag,key,user,history)
                 headers = {"ETag":etag,"Cache-Control":"no-store","Vary":"Cookie"}
                 with overview_cache_lock:
                     body = detail_cache.get(etag)
                     if body is not None:detail_cache.move_to_end(etag)
                 if body is None:
-                    payload = {**run(store.detail,key,user),"capabilities":activation_grants.capabilities(store.url,user,"research")}
+                    payload = {**run(store.detail,key,user,history),"capabilities":activation_grants.capabilities(store.url,user,"research")}
             if body is None:
                 body = JSONResponse(payload).body
                 with overview_cache_lock:
@@ -960,6 +1063,45 @@ def create_research_router(store, settings):
                             _, removed = detail_cache.popitem(last=False)
                             detail_cache_bytes -= len(removed)
         return Response(body,media_type="application/json",headers=headers)
+    @router.get('/products/{key}/edit-options')
+    def product_edit_options(key:str,request:Request):
+        from api.research_reads import access_product
+        user=actor(request,3)
+        with bounded_read(request,3) as (db,user):
+            access=run(access_product,db,key,user)
+            options=store._options(db,access)
+            codes={row['code'] for row in options['materials']}
+            return {'options':options,'options_loaded':True,'prices':{code:value for code,value in capture(db)['prices'].items() if code in codes}}
+    @router.get("/products/{key}/history-page")
+    def product_history_page(key:str,request:Request,page:int=Query(1,ge=1),page_size:int=Query(50,ge=1,le=200),search:str=Query('',max_length=200),start:str='',end:str='',version:str|None=None):
+        from api.research_reads import history_page
+        user=actor(request)
+        with bounded_read(request) as (db,user):
+            return run(lambda:history_page(db,key,user,page=page,page_size=page_size,search=search,start=start,end=end,version=version))
+    @router.get("/products/{key}/trend")
+    def product_trend(key:str,request:Request,start:str='',end:str=''):
+        from api.research_reads import history_page
+        user=actor(request)
+        with bounded_read(request) as (db,user):
+            return run(lambda:history_page(db,key,user,start=start,end=end,trend=True))
+    @router.get("/products/{key}/history-record/{event_id}")
+    def product_history_record(key:str,event_id:str,request:Request):
+        from api.research_reads import history_record
+        user=actor(request)
+        with bounded_read(request) as (db,user):
+            return run(history_record,db,key,event_id,user)
+    @router.get('/history-page')
+    def history_page(request:Request,page:int=Query(1,ge=1),page_size:int=Query(10,ge=1,le=200),search:str=Query('',max_length=200),start:str='',end:str='',version:str|None=None,record_type:str=Query('all',pattern='^(all|formal|backfill)$')):
+        from api.research_reads import versions_page
+        user=actor(request)
+        with bounded_read(request) as (db,user):
+            return run(lambda:versions_page(db,user,page=page,page_size=page_size,search=search,start=start,end=end,version=version,record_type=record_type))
+    @router.get('/history/{key}/products-page')
+    def history_products_page(key:str,request:Request,page:int=Query(1,ge=1),page_size:int=Query(50,ge=1,le=200),search:str=Query('',max_length=200),version:str|None=None):
+        from api.research_reads import versions_page
+        user=actor(request)
+        with bounded_read(request) as (db,user):
+            return run(lambda:versions_page(db,user,page=page,page_size=page_size,search=search,event_id=key,version=version))
     @router.get("/history")
     def history(request:Request):
         return store.history(actor=actor(request))
@@ -987,4 +1129,6 @@ def create_research_router(store, settings):
         if not activation_grants.capabilities(store.url,user,"research")["can_activate"]:
             raise HTTPException(403,"没有研发成本启用权限")
         return run(store.activate,key,body.model_dump(),user["id"])
+    from api.research_dashboard import register
+    register(router,store,actor,run,read_actor,read_slots)
     return router

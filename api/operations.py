@@ -269,6 +269,19 @@ def verify_snapshot(snapshot: Path, *, expected_environment: str | None = None,
     return manifest
 
 
+def _projection_triggers(db):
+    # Restore saved projections without deriving duplicates; leave all constraints and version triggers active.
+    functions=['research_history_insert_reads','research_history_delete_reads','research_history_update_reads','research_event_history_reads',
+               'procurement_price_read_changed','sales_update_activity']
+    return db.execute("SELECT c.relname,t.tgname,t.tgenabled FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_proc p ON p.oid=t.tgfoid WHERE n.nspname='public' AND NOT t.tgisinternal AND p.proname=ANY(%s) AND t.tgenabled!='D' ORDER BY c.relname,t.tgname",(functions,)).fetchall()
+
+
+def _projection_trigger_sql(triggers, restore=False):
+    return [sql.SQL('ALTER TABLE public.{} {} TRIGGER {};').format(sql.Identifier(table),
+            sql.SQL({'O':'ENABLE','A':'ENABLE ALWAYS','R':'ENABLE REPLICA'}[mode] if restore else 'DISABLE'),sql.Identifier(trigger))
+            for table,trigger,mode in triggers]
+
+
 def _empty_restore_target(db) -> bool:
     for table in _table_names(db):
         if table not in {'schema_metadata', 'identity_roles', 'procurement_working_state'} and db.execute(sql.SQL('SELECT 1 FROM public.{} LIMIT 1').format(sql.Identifier(table))).fetchone():
@@ -324,10 +337,14 @@ def restore_snapshot(settings: Settings, snapshot: Path) -> None:
             restore_sql = staging / 'restore.sql'
             _run_pg('pg_restore', ['--data-only', '--schema=public', '--no-owner', '--no-privileges', '--file=' + str(restore_sql), str(staging / DATABASE_NAME)])
             tables = sql.SQL(',').join(sql.Identifier('public', table) for table in sorted(manifest['tables']))
-            (staging / 'before.sql').write_text(sql.SQL('TRUNCATE {} RESTART IDENTITY;').format(tables).as_string(db), encoding='utf-8')
+            projection_triggers=_projection_triggers(db)
+            before=[command.as_string(db) for command in _projection_trigger_sql(projection_triggers)]
+            before.append(sql.SQL('TRUNCATE {} RESTART IDENTITY;').format(tables).as_string(db))
+            (staging / 'before.sql').write_text('\n'.join(before), encoding='utf-8')
             mappings = [sql.SQL('UPDATE public.procurement_source_imports SET stored_path={} WHERE sha256={} AND stored_path={};').format(
                 sql.Literal(str(settings.data_dir / source['path'])), sql.Literal(source['sha256']), sql.Literal(source['stored_path'])).as_string(db)
                 for source in manifest.get('source_paths', [])]
+            mappings.extend(command.as_string(db) for command in _projection_trigger_sql(projection_triggers,restore=True))
             (staging / 'after.sql').write_text('\n'.join(mappings), encoding='utf-8')
             marker.write_text('恢复未完成；禁止启动。请核验数据库与附件后处理。', encoding='utf-8')
             for record in manifest['files']:

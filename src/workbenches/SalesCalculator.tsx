@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { ChevronDown, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { DecimalInput } from "../components/DecimalInput";
 import { DiscardChangesDialog } from "../components/Interaction";
+import {LedgerPagination} from "../components/LedgerPagination";
 import { PageState } from "../components/WorkbenchLayout";
 import { type Product } from "./salesModel";
 import { basisLabel, dateLabel, format, initialProduct, incompleteStep, type Saved, type Source, type Panel } from "./salesCalculatorModel";
@@ -27,10 +28,10 @@ export function SalesCalculator({ products, accessLevel }: { products: Product[]
   const hasReverse = forwardPanelNames.length < panels.length;
   const forwardScope = forwardPanelNames.length > 2 ? `${forwardPanelNames.length} 个面板` : forwardPanelNames.join("、");
   const historyDetails = (row: Saved) => {
-    const payload = row.payload as { source?: Source; panels?: Panel[] };
+    const payload = row.payload as { source?: Source; panels?: Panel[];panel_count?:number };
     const savedSource = payload.source;
     const label = savedSource?.kind === "manual" ? "手工成本" : savedSource?.product_code || "产品成本";
-    return `${label}${savedSource?.kind === "manual" ? "" : ` · ${basisLabel(savedSource?.basis)}`} · ${payload.panels?.length ?? 0} 个面板`;
+    return `${label}${savedSource?.kind === "manual" ? "" : ` · ${basisLabel(savedSource?.basis)}`} · ${payload.panels?.length ?? payload.panel_count ?? 0} 个面板`;
   };
   const sourceLabel = source.kind === "manual" ? "手工成本"
     : `${currentProduct?.code || source.product_code || "产品"} · ${basisLabel(source.basis)}`;
@@ -49,7 +50,7 @@ export function SalesCalculator({ products, accessLevel }: { products: Product[]
     </div>
     {source.kind === "manual"
       ? <label className={c.manualCost}>产品成本 <DecimalInput aria-label="手工产品成本" value={source.cost ?? ""} placeholder="输入金额" onChange={event => setManualCost(event.target.value)} /><small>元/kg</small></label>
-      : <SalesProductPicker products={products} selected={currentProduct} basis={source.basis} cost={sourceCost} onSelect={selectProduct} />}
+      : <SalesProductPicker remote products={products} selected={currentProduct} basis={source.basis} cost={sourceCost} onSelect={selectProduct} />}
     {source.kind === "snapshot" && <span className={c.snapshot}>
       {costChanged ? "正式成本已变化" : "保存时成本快照"}
       <button className="secondary-button" type="button" disabled={!currentProduct} onClick={() =>
@@ -73,7 +74,7 @@ export function SalesCalculator({ products, accessLevel }: { products: Product[]
           <small>反推金额不使用此处成本数值；所选产品的特殊公摊规则仍适用。成本差额可在计算过程中查看。</small>
         </div>
       </details> : <><span className={c.sourceCaption}>常规测算成本</span>{sourceControls}</>}
-      <div className={c.workspaceActions}>
+      <div className={c.workspaceActions}>{workspace.templateTotal>50&&<div aria-label="公式模板分页"><LedgerPagination total={workspace.templateTotal} page={workspace.templatePage} pageSize={50} onPageChange={workspace.setTemplatePage}/></div>}
         <details className={c.savedMenu} ref={historyMenu} onKeyDown={event => {
           if (event.key === "Escape") { event.preventDefault(); historyMenu.current!.open = false; historyMenu.current?.querySelector("summary")?.focus(); }
         }}>
@@ -87,7 +88,7 @@ export function SalesCalculator({ products, accessLevel }: { products: Product[]
               </button>
               {accessLevel >= 3 && <button type="button" aria-label={`删除 ${dateLabel(row.created_at)} 的测算`} title="删除历史测算" onClick={() => setDeleteTarget(row)}><Trash2 size={14} /></button>}
             </div>)}
-            {historyLoading ? <PageState>正在读取历史测算</PageState> : historyError ? <PageState error className={c.error} onRetry={() => retryHistory()}>{historyError}</PageState> : !workspaces.length && <small>暂无历史测算</small>}
+            <LedgerPagination total={workspace.historyTotal} page={workspace.historyPage} pageSize={50} onPageChange={workspace.setHistoryPage}/>{historyLoading ? <PageState>正在读取历史测算</PageState> : historyError ? <PageState error className={c.error} onRetry={() => retryHistory()}>{historyError}</PageState> : !workspaces.length && <small>暂无历史测算</small>}
           </div>
         </details>
         {accessLevel >= 3 && <button className="primary-button" type="button" disabled={busy || hasPanelDrafts || panels.some(panel => incompleteStep(panel) >= 0)} onClick={() => void saveWorkspace()}>{busy ? "保存中…" : "保存对比"}</button>}

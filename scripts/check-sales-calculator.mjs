@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
 import { chromium } from 'playwright';
+import { expect } from 'playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
 // Only the authenticated, fixture-owned API; no default port or production proxy.
@@ -40,7 +41,7 @@ try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     const page = await context.newPage(); page.setDefaultTimeout(9000);
     const errors = [], writes = [], pending = gate(), committed = gate(); let injected = false, closing = false;
-    const network = [];
+    const network = [], delayedTemplate = {enabled:false,gate:gate()};
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') network.push(message.text()); });
     page.on('response', response => { if (response.status() >= 400) network.push(`${response.status()} ${new URL(response.url()).pathname}`); });
@@ -55,7 +56,7 @@ try {
         if (!url.pathname.startsWith('/api/')) return route.continue();
         assert.ok(url.pathname === '/api/me' || url.pathname.startsWith('/api/workbenches/sales/'));
         const saving = url.pathname === base + '/saved' && req.method() === 'POST';
-        if (fault === 'committed-save' && url.pathname === base + '/saved' && req.method() === 'GET') await committed.promise;
+        if (fault === 'committed-save' && url.pathname === base + '/saved-page' && req.method() === 'GET') await committed.promise;
         if (saving) {
           writes.push(req.postDataJSON());
           if (fault === 'save-slow' && !injected) { injected = true; await pending.promise; }
@@ -63,13 +64,14 @@ try {
         }
         const response = await route.fetch({ url: new URL(url.pathname + url.search, api).href });
         if (fault === 'committed-save' && saving && !injected) { injected = true; assert.equal(response.status(), 200); committed.release(); await pending.promise; }
-        if (fault === 'history-slow' && url.pathname === base + '/saved' && req.method() === 'GET' && !injected) { injected = true; await pending.promise; }
+        if (fault === 'history-slow' && url.pathname === base + '/saved-page' && req.method() === 'GET' && !injected) { injected = true; await pending.promise; }
+        if(delayedTemplate.enabled&&req.method()==='GET'&&url.pathname.startsWith(base+'/saved/')){delayedTemplate.enabled=false;await delayedTemplate.gate.promise;}
         return route.fulfill({ response });
       } catch (error) { if (!closing) errors.push(error.message); }
     });
     try {
       await page.goto(origin + 'w5-calculator'); await page.getByRole('region', { name: '测算工具' }).waitFor();
-      await check({ page, pending, get, send, writes });
+      await check({ page, pending, get, send, writes, delayedTemplate });
       const created = (await get(base + '/saved')).saved.filter(row => !before.has(row.id));
       assert.deepEqual(errors, []);
       await page.screenshot({ path: `.scratch/w5-20261003/browser/${name}.png`, fullPage: true });
@@ -79,7 +81,7 @@ try {
       writeFileSync(`.scratch/w5-20261003/browser/${name}-failed.txt`, await page.locator('body').innerText());
       writeFileSync(`.scratch/w5-20261003/browser/${name}-failed-diagnostics.json`, JSON.stringify({ errors, network }, null, 2));
       throw error;
-    } finally { closing = true; pending.release(); committed.release(); await context.close(); }
+    } finally { closing = true; pending.release(); committed.release(); delayedTemplate.gate.release(); await context.close(); }
   }
   await run('save-slow-keeps-newer-input-and-busy-exit', 'save-slow', async ({ page, pending, get, writes }) => {
     await page.getByRole('button', { name: '手工成本', exact: true }).click();
@@ -131,7 +133,7 @@ try {
     const history = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: '历史测算' }) });
     assert.equal(await history.getByRole('button').filter({ hasText: '手工成本 · 2 个面板' }).count(), (await get(base + '/saved')).saved.filter(row => row.kind === 'workspace' && row.payload.source.kind === 'manual').length);
   });
-  await run('failed-save-keeps-workspace-and-template-panel-editing', 'save-failed', async ({ page, get }) => {
+  await run('failed-save-keeps-workspace-and-template-panel-editing', 'save-failed', async ({ page, get, delayedTemplate }) => {
     await page.getByRole('button', { name: '手工成本', exact: true }).click();
     const cost = page.getByRole('textbox', { name: '手工产品成本' }); await cost.fill('4');
     await page.getByRole('button', { name: '保存对比', exact: true }).click();
@@ -152,7 +154,7 @@ try {
     const stepName = first.getByRole('textbox', { name: '面板 1第 1 步名称' });
     await stepName.fill('公摊保留');
     await first.getByRole('button', { name: '拖动面板 1第 1 步排序', exact: true }).press('ArrowDown');
-    assert.equal(await first.getByRole('textbox', { name: '面板 1第 2 步名称' }).inputValue(), '公摊保留');
+    await expect(first.getByRole('textbox', { name: '面板 1第 2 步名称' })).toHaveValue('公摊保留');
     const from = await first.getByRole('button', { name: '拖动面板 1第 2 步排序', exact: true }).boundingBox();
     const to = await first.getByRole('button', { name: '拖动面板 1第 1 步排序', exact: true }).boundingBox(); assert.ok(from && to);
     await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2); await page.mouse.down();
@@ -167,7 +169,16 @@ try {
     await first.getByRole('button', { name: '恢复现行公式', exact: true }).click();
     await first.locator('summary[aria-label="面板 1载入公式模板"]').click();
     await page.getByRole('button', { name: 'W5 可复用', exact: true }).click();
-    assert.equal(await first.getByRole('textbox', { name: '面板 1第 2 步名称' }).inputValue(), '公摊保留');
+    await expect(first.getByRole('textbox', { name: '面板 1第 2 步名称' })).toHaveValue('公摊保留');
+    delayedTemplate.enabled=true;
+    await first.locator('summary[aria-label="面板 1载入公式模板"]').click();
+    await page.getByRole('button', { name: 'W5 可复用', exact: true }).click();
+    await first.getByText('正在载入公式…',{exact:true}).waitFor();
+    await expect.poll(()=>delayedTemplate.enabled).toBe(false);
+    await first.getByRole('textbox', { name: '面板 1第 2 步名称' }).fill('读取期间的新编辑');
+    delayedTemplate.gate.release();
+    await first.getByText('正在载入公式…',{exact:true}).waitFor({state:'detached'});
+    await expect(first.getByRole('textbox', { name: '面板 1第 2 步名称' })).toHaveValue('读取期间的新编辑');
     await first.locator('summary[aria-label="面板 1载入公式模板"]').click();
     await page.getByRole('button', { name: '删除“W5 可复用”', exact: true }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: '删除', exact: true }).click();

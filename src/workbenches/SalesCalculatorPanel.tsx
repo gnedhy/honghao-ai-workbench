@@ -54,6 +54,7 @@ export function SalesCalculatorPanel({ panel, index, panels, evaluation, evaluat
   const [editingPanel, setEditingPanel] = useState<{ id: string; name: string } | null>(null);
   const [templatePanel, setTemplatePanel] = useState<string | null>(null);
   const [templateName, setTemplateName] = useState("");
+  const [templateLoading,setTemplateLoading]=useState(false);
   const [expandedTrails, setExpandedTrails] = useState<string[]>([]);
   const [dropTarget, setDropTarget] = useState<{ panelId: string; index: number } | null>(null);
   const drag = useRef<{ panelId: string; from: number; to: number } | null>(null);
@@ -269,8 +270,8 @@ export function SalesCalculatorPanel({ panel, index, panels, evaluation, evaluat
               ...row, steps: [...row.steps, { id: id(), label: "新步骤", operation: "+", value: "0", automatic_allocation: false, fee: false }],
             }))}><Plus size={14} />增加系数</button>
           <div className={c.templateActions}>
-            <WorkbenchOptionMenu label={`${panelLabel}载入公式模板`} value="" display="载入已存公式" className={c.templateMenu}
-              options={templates.map(row => ({ value: row.id, label: row.name }))} onSelect={value => loadTemplate(panel.id, value)} onDelete={accessLevel >= 3 ? value => setDeleteTarget(templates.find(row => row.id === value) ?? null) : undefined} />
+            <WorkbenchOptionMenu label={`${panelLabel}载入公式模板`} value="" display={templateLoading?"正在载入公式…":"载入已存公式"} className={c.templateMenu}
+              options={templates.map(row => ({ value: row.id, label: row.name,disabled:templateLoading }))} onSelect={async value => {setTemplateLoading(true);try{await loadTemplate(panel.id,value);}finally{setTemplateLoading(false);}}} onDelete={accessLevel >= 3 ? value => setDeleteTarget(templates.find(row => row.id === value) ?? null) : undefined} />
             {accessLevel >= 3 && <div className={c.templateSaveWrap}
               onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget) && !busy && templateName === `${panelLabel}公式`) setTemplatePanel(null); }}
               onKeyDown={event => { if (!busy && event.key === "Escape" && templatePanel === panel.id) {

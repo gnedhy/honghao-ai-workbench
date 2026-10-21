@@ -100,5 +100,12 @@ class ResearchAccess:
         return value
 
     def visible_ids(self, db):
-        import json
-        return {f['id'] for raw, in db.execute('SELECT formula FROM research_formulas') for f in [json.loads(raw)] if self.allows(f)}
+        if self.admin:
+            return {row[0] for row in db.execute('SELECT id FROM research_formulas')}
+        if self.level < 2:
+            return set()
+        return {row[0] for row in db.execute("""SELECT id FROM research_formulas WHERE
+            formula::jsonb->>'department_id'=ANY(%s) OR
+            (COALESCE(formula::jsonb->>'department_id','')='' AND
+             COALESCE(NULLIF(formula::jsonb->>'department',''),CASE WHEN COALESCE(formula::jsonb->>'source_kind','')='' THEN '研发五部' END)=ANY(%s))""",
+            (list(self.departments),[value['name'] for value in self.departments.values()]))}

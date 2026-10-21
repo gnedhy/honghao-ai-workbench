@@ -23,8 +23,8 @@ const fixture=${JSON.stringify(policy.fixture)};
 const code=i=>'P'+String(i).padStart(5,'0');
 const materials=Array.from({length:fixture.procurementRows},(_,i)=>({id:'material-'+i,code:code(i),name:'合成原料 '+code(i),unit:'kg',latest_price:'4',published_price:'4',inventory_price:'12',inventory_quantity:'100',price_date:'2026-10-01',updated_at:'2026-10-01T00:00:00Z'}));
 const products=Array.from({length:fixture.salesProducts},(_,i)=>({id:'research:recipe:'+i,code:code(i),name:code(i),source:'research',department:'合成研发',status:'ready',latest_cost:'4',inventory_cost:'12',special_allocation:false,source_version:'fixed-1'}));
-const data={materials,issues:[],batches:[],current_update:null,scheduled_update:null,editors:[],departments:[],metrics:{material_count:materials.length,open_issue_count:0,missing_price_count:0,published_batch_count:0},working_state:{status:'ready',latest_import:null},next_action:'',capabilities:{can_edit:false,can_activate:false,can_manage_grants:false,can_cancel_round:false,can_manage_catalog:false}};
-const noop=()=>{};function Picker(){const [selected,setSelected]=useState(products[0]);useEffect(()=>{document.querySelector('summary[aria-label="选择产品及成本口径"]')?.click()},[]);return h(SalesProductPicker,{products,selected,basis:'latest',cost:'4',onSelect:product=>{setSelected(product);window.perfSelected=product.code}})};
+const data={materials:[],read_page:{mode:'summary',total:materials.length,scope_total:materials.length,page:1,page_size:50,version:'fixed'},issues:[],batches:[],current_update:null,scheduled_update:null,editors:[],departments:[],metrics:{material_count:materials.length,open_issue_count:0,missing_price_count:0,published_batch_count:0},working_state:{status:'ready',latest_import:null},next_action:'',capabilities:{can_edit:false,can_activate:false,can_manage_grants:false,can_cancel_round:false,can_manage_catalog:false}};
+const noop=()=>{};function Picker(){const [selected,setSelected]=useState(products[0]);useEffect(()=>{document.querySelector('summary[aria-label="选择产品及成本口径"]')?.click()},[]);return h(SalesProductPicker,{products:[],remote:true,selected,basis:'latest',cost:'4',onSelect:product=>{setSelected(product);window.perfSelected=product.code}})};
 const kind=new URLSearchParams(location.search).get('kind');
 createRoot(document.getElementById('root')).render(kind==='procurement'?h(ProcurementMaterials,{data,accessLevel:2,onOpenDepartmentMaterial:noop,startInEdit:false,onEditStarted:noop,onRefresh:async()=>{},onSaved:noop,onCreate:noop,onImport:noop,onPublish:noop,onPageChange:noop,focusPending:false,locateCode:''}):kind==='research'?h(ResearchWorkbench,{accessLevel:2,userId:'performance-fixture',view:'full',page:'products',onPageChange:noop,onEnter:noop}):h(Picker));`);
 
@@ -37,20 +37,38 @@ try {
   assert.equal(new URL(origin).hostname, '127.0.0.1');
   browser = await chromium.launch({ headless: true });
   async function scenario(name, kind, flow) {
-    const ready = [], filtered = [], paged = [], requestCounts = [];
+    const ready = [], filtered = [], paged = [], requestCounts = [], requestSamples = [];
     for (let index = 0; index < policy.fixture.browserSamples; index++) {
       const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' });
       try {
         const page = await context.newPage(); page.setDefaultTimeout(15000);
         const session = await context.newCDPSession(page); await session.send('Emulation.setCPUThrottlingRate', { rate: policy.fixture.cpuSlowdown });
-        const errors = [], unexpected = []; let requests = 0;
+        const errors = [], unexpected = [], requestLog = []; let requests = 0;
         page.on('pageerror', error => errors.push(error.message));
         page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
         await page.route('**/*', async route => {
           const request = route.request(), url = new URL(request.url());
           if (url.origin !== new URL(origin).origin) { unexpected.push('external'); return route.abort(); }
           if (!url.pathname.startsWith('/api/')) return route.continue();
-          requests++;
+          requests++; requestLog.push({path:url.pathname,query:url.search,method:request.method()});
+          if(url.pathname==='/api/workbenches/sales/read/catalog'&&request.method()==='GET') {
+            const all=Array.from({length:policy.fixture.salesProducts},(_,i)=>({id:'research:recipe:'+i,code:'P'+String(i).padStart(5,'0'),name:'P'+String(i).padStart(5,'0'),source:'research',department:'合成研发',status:'ready',latest_cost:'4',inventory_cost:'12',special_allocation:false,source_version:'fixed-1'}));
+            const matches=all.filter(row=>row.code.includes(url.searchParams.get('search')||''));
+            const number=Number(url.searchParams.get('page')||1),size=Number(url.searchParams.get('page_size')||50);
+            assert.equal(size,50);assert.equal(url.searchParams.get('source'),'research');
+            const products=matches.slice((number-1)*size,number*size);requestLog.at(-1).rows=products.length;
+            return route.fulfill({json:{products,total:matches.length,page:number,departments:['合成研发']}});
+          }
+          if(url.pathname==='/api/workbenches/procurement/overview'&&request.method()==='GET') {
+            assert.equal(url.searchParams.get('read_mode'),'ledger','Daily table must use bounded ledger reads');
+            const filters=JSON.parse(url.searchParams.get('filters')||'{}');
+            const all=Array.from({length:policy.fixture.procurementRows},(_,i)=>({id:'material-'+i,code:'P'+String(i).padStart(5,'0'),name:'合成原料 P'+String(i).padStart(5,'0'),unit:'kg',latest_price:'4',published_price:'4',inventory_price:'12',inventory_quantity:'100',price_date:'2026-10-01',updated_at:'2026-10-01T00:00:00Z'}));
+            const matches=all.filter(row=>row.code.includes(filters.search||''));
+            const number=Number(url.searchParams.get('page')||1),size=Number(url.searchParams.get('page_size')||50);
+            requestLog.at(-1).rows=matches.slice((number-1)*size,number*size).length;
+            assert.equal(size,50); assert.ok(number>=1); if(number>1)assert.equal(filters.version,'fixed');
+            return route.fulfill({json:{materials:matches.slice((number-1)*size,number*size),read_page:{mode:'ledger',total:matches.length,scope_total:all.length,page:number,page_size:size,version:'fixed'},issues:[],batches:[],current_update:null,scheduled_update:null,editors:[],departments:[],metrics:{material_count:all.length,open_issue_count:0,missing_price_count:0,published_batch_count:0},working_state:{status:'ready',latest_import:null},next_action:'',capabilities:{can_edit:false,can_activate:false,can_manage_grants:false,can_cancel_round:false,can_manage_catalog:false}}});
+          }
           if(url.pathname==='/api/workbenches/research/pages/products'&&request.method()==='GET') {
             const all=Array.from({length:policy.fixture.researchRows},(_,i)=>({id:'recipe:'+i,name:'P'+String(i).padStart(5,'0'),owner:'合成负责人',yield:'1',lines:0,revision:1,latest_cost:'4',inventory_cost:'12',status:'ready',change:{percent:null},has_draft:false}));
             const matches=all.filter(row=>row.name.includes(url.searchParams.get('search')||''));
@@ -60,7 +78,6 @@ try {
           }
           const reply = {
             '/api/workbenches/procurement/preferences': { ledger_columns: ['unit','latest_price','inventory_price','change','status'], history_view: 'batches', ledger_view: 'paged', ledger_page_size: 50 },
-            '/api/workbenches/research/overview': { products: Array.from({ length: policy.fixture.researchRows }, (_, i) => ({ id: 'recipe:'+i, name: 'P'+String(i).padStart(5,'0'), owner: '合成负责人', kind: 'recipe', yield: '1', lines: [], revision: 1, latest_cost: '4', inventory_cost: '12', status: 'ready', change: { percent: null, reason: '首次' }, has_draft: false })), pending: false, versions: [], formulas: [], owners: ['合成负责人'] },
           }[url.pathname];
           if (request.method() !== 'GET' || !reply) { unexpected.push(url.pathname); return route.abort(); }
           return route.fulfill({ json: reply });
@@ -72,14 +89,20 @@ try {
         await flow(page, ready, filtered, paged);
         assert.equal(await page.locator('vite-error-overlay').count(), 0);
         assert.deepEqual(errors, [], name + ': console/runtime errors'); assert.deepEqual(unexpected, [], name + ': unexpected requests');
-        requestCounts.push(requests);
+        requestCounts.push(requests); requestSamples.push(requestLog);
         if (index === 0) await page.screenshot({ path: path.join(directory, `${kind}.png`), fullPage: false });
+        if (kind === 'procurement' && index === 0) {
+          await page.route('**/api/workbenches/procurement/overview?**', route => route.fulfill({ status: 403, json: { detail: '权限已撤销' } }));
+          await page.getByRole('textbox', { name: '搜索原料', exact: true }).fill('');
+          await page.getByRole('alert').filter({ hasText: '原料台账读取失败' }).waitFor();
+          assert.equal(await page.locator('tbody tr').count(), 0, 'Denied refresh clears retained rows');
+        }
       } finally { await context.close(); }
     }
     const mount = summarize(ready, policy.fixture.browserSamples), input = summarize(filtered, policy.fixture.browserSamples);
     metrics[`browser.${kind}.readyMedianMs`] = mount.median; metrics[`browser.${kind}.readyMaxMs`] = mount.max;
     metrics[`browser.${kind}.filterMedianMs`] = input.median; metrics[`browser.${kind}.filterMaxMs`] = input.max;
-    metrics[`browser.${kind}.requests`] = Math.max(...requestCounts); samples[kind] = { ready, filtered, requestCounts };
+    metrics[`browser.${kind}.requests`] = Math.max(...requestCounts); samples[kind] = { ready, filtered, requestCounts, requestSamples };
     if (policy.paginationModules.includes(kind)) {
       const paging = summarize(paged, policy.fixture.browserSamples);
       metrics[`browser.${kind}.pageMedianMs`] = paging.median; metrics[`browser.${kind}.pageMaxMs`] = paging.max;
@@ -94,11 +117,13 @@ try {
     const next = page.getByRole('button', { name: '下一页', exact: true });
     await next.evaluate(element => element.setAttribute('data-perf-trigger', 'page'));
     await page.evaluate(observeDOMMeasurement, { trigger: '[data-perf-trigger=page]', event: 'click', selector: 'tbody tr', count: 50, text: 'P00050', property: 'perfPageMs' });
+    if (searchLabel === '搜索原料') await page.evaluate(() => { window.perfTable = document.querySelector('table'); });
     await next.click();
     await page.waitForFunction(() => document.querySelector('tbody tr')?.textContent.includes('P00050'));
     assert.equal(await page.locator('tbody tr').count(), 50);
     await page.waitForFunction(() => Number.isFinite(window.perfPageMs));
     paged.push(await page.evaluate(() => window.perfPageMs));
+    if (searchLabel === '搜索原料') assert.ok(await page.evaluate(() => window.perfTable === document.querySelector('table')), 'Paging preserves the mounted table');
     const code = 'P' + String(rows - 1).padStart(5, '0'), input = page.getByRole('textbox', { name: searchLabel, exact: true });
     await measureFilter(page, input, code, 'tbody tr', 1);
     assert.equal(await page.locator('tbody tr').count(), 1); assert.ok((await page.locator('tbody').innerText()).includes(code));

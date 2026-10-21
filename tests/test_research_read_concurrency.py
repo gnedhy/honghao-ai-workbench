@@ -79,7 +79,7 @@ def test_detail_calculation_reuse_preserves_precision_and_isolation(ready, monke
     original = research.evaluate
 
     def counted(inputs):
-        calls.append(True)
+        calls.append({row['id'] for row in inputs['package']['recipes']})
         return original(inputs)
 
     monkeypatch.setattr(research, 'evaluate', counted)
@@ -91,7 +91,11 @@ def test_detail_calculation_reuse_preserves_precision_and_isolation(ready, monke
     repeated = store.detail(K)
     assert repeated['latest']['cost'] == repeated['product']['latest_cost']
     assert repeated['inventory']['lines'] and other['product']['id'] == RH
-    assert len(calls) == 1, 'unchanged exact inputs must not recalculate the whole graph per product'
+    assert len(calls) == 2, 'Each distinct dependency graph builds once; returning to the first product reuses it'
+    with transaction(store.url) as db:
+        expected=[{row['id'] for row in research.capture(db,key)['package']['recipes']} for key in (K,RH)]
+    assert calls==expected, 'Calculations contain only each requested dependency graph'
+    assert K in calls[0] and RH in calls[1]
     update_stock(ready, tmp_path, 'A', 55)
     store.process_events()
     calls.clear()
@@ -182,13 +186,13 @@ def test_queued_detail_uses_current_operation_permissions(departments, monkeypat
     count, guard = [], Lock()
     original_read, original_auth = type(store).detail, IdentityStore.user_for_session
 
-    def blocked(self, key, actor=None):
+    def blocked(self, key, actor=None, include_history=True):
         if actor and actor['id'] == admin:
             with guard:
                 count.append(True)
                 if len(count) == 2: entered.set()
             assert release.wait(5)
-        return original_read(self, key, actor)
+        return original_read(self, key, actor, include_history)
 
     def auth(self, token):
         current = original_auth(self, token)
@@ -232,9 +236,9 @@ def test_parallel_details_build_once_and_return_identical_costs(ready, monkeypat
     _, client, _, store = ready
     calls = []
     original = type(store).detail
-    def counted(self, key, actor=None):
+    def counted(self, key, actor=None, include_history=True):
         calls.append(key)
-        return original(self,key,actor)
+        return original(self,key,actor,include_history)
     monkeypatch.setattr(type(store),'detail',counted)
     async def requests():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=client.app),base_url='http://testserver',cookies=client.cookies) as transport:
@@ -242,3 +246,31 @@ def test_parallel_details_build_once_and_return_identical_costs(ready, monkeypat
             assert all(r.status_code==200 and r.content==responses[0].content for r in responses)
             assert len(calls)==1
     asyncio.run(requests())
+
+
+def test_dependency_calculation_cache_bytes_and_oversized_results(ready,monkeypatch):
+    import api.research as research
+    _,_,_,store=ready
+    expected=store.detail(K)['latest']['cost']
+    store.detail(RH)
+    sizes=[entry[1] for entry in store._detail_calculation.values()]
+    assert len(sizes)==2
+    monkeypatch.setattr(research,'DETAIL_CALCULATION_CACHE_BYTES',max(sizes))
+    bounded=type(store)(store.url)
+    calls=[];original=research.evaluate
+    def counted(inputs):
+        calls.append(True)
+        return original(inputs)
+    monkeypatch.setattr(research,'evaluate',counted)
+    bounded.detail(K);bounded.detail(RH)
+    repeated=bounded.detail(K)
+    assert len(calls)==3 and repeated['latest']['cost']==expected
+    assert bounded._detail_calculation_bytes<=max(sizes)
+    assert len(bounded._detail_calculation)==1
+    # An item beyond the byte budget is returned correctly without retaining it.
+    monkeypatch.setattr(research,'DETAIL_CALCULATION_CACHE_BYTES',1)
+    oversized=type(store)(store.url);calls.clear()
+    first=oversized.detail(K);first['latest']['cost']='tampered';first['inventory']['lines'].clear()
+    second=oversized.detail(K)
+    assert len(calls)==2 and second['latest']['cost']==expected and second['inventory']['lines']
+    assert not oversized._detail_calculation and oversized._detail_calculation_bytes==0

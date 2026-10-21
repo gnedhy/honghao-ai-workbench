@@ -51,12 +51,15 @@ try{
    if(p.endsWith('/simulate')){assert.equal(request.method(),'POST');const body=request.postDataJSON();trials.push(body);payload={current_latest:calculation,current_inventory:calculation,latest:calculation,inventory:calculation,affected:[{id:formula.id,name:formula.name}],simulation_token:'fixture-only',blocking:['原配方仍缺价'],warnings:[]};}
    else {
     assert.equal(request.method(),'GET');
-    if(p.endsWith('/overview'))payload=overview;
-    else if(p.endsWith('/price-series'))payload={batches};
+    if(p.endsWith('/overview')){const mode=url.searchParams.get('read_mode');if(!mode)payload=overview;else{const f=JSON.parse(url.searchParams.get('filters')??'{}');const daily=query.includes('pagecheck=1')?Array.from({length:100},(_,i)=>({...materials[3],id:'paged-'+i,code:'M'+String(i+1).padStart(3,'0'),name:'分页原料'+i})):materials.slice(3),rows=daily.filter(m=>(m.code+' '+m.name).toLowerCase().includes((f.search??'').toLowerCase()));const pageNumber=Number(url.searchParams.get('page')??1),size=Number(url.searchParams.get('page_size')??50);payload={...overview,materials:mode==='summary'?[]:rows.slice((pageNumber-1)*size,pageNumber*size),metrics:{...overview.metrics,material_count:daily.length},read_page:{mode,total:rows.length,scope_total:daily.length,page:pageNumber,page_size:size,preferred:'3'}};}}
+    else if(p.endsWith('/dashboard-summary'))payload=url.searchParams.get('kind')==='movers'?{up:[],down:[],up_total:0,down_total:0}:{counts:{rising:2,falling:0,stable:0,first:0,unavailable:0,incomparable:0},surge:2,comparable:2};
+    else if(p.endsWith('/price-series/eligible'))payload={ids:materials.map(item=>item.id)};
+    else if(p.endsWith('/price-series/scoped')){const id=url.searchParams.get('material_id');assert.ok(id||url.searchParams.get('boundaries')==='true');assert.ok(url.searchParams.get('start')&&url.searchParams.get('end'));payload={batches:batches.map(batch=>({...batch,items:batch.items.filter(item=>!id||item.material_id===id)})).filter(batch=>batch.items.length)};}
     else if(p.endsWith('/preferences'))payload={ledger_columns:['unit','latest_price','inventory_price','status'],ledger_view:'paged',ledger_page_size:50,history_view:'batches'};
     else if(p.endsWith('/material-prices'))payload={materials,batch:{version:26},batches:[],ledger_comparison:null};
     else if(p.includes('/research/products/'))payload=detail;
     else if(p.includes('/procurement/materials/'))payload={material:materials.find(m=>m.id===p.split('/').at(-1)),official_history:batches.map(b=>({version_date:b.price_date,latest_price:'10'})),history:[],imports:[]};
+    else if(p.endsWith('/batches/page'))payload={items:batches,total:batches.length,scope_total:batches.length,page:1,version:'fixed'};
     else if(p.includes('/batches/'))payload=batches.find(b=>b.id===p.split('/').at(-1));
     else if(p.endsWith('/news'))payload={items:[],sources:[],page:1,total:0};
     else throw Error('Unexpected isolated request '+p);
@@ -73,6 +76,12 @@ try{
   await expect(page.getByText('2 / 2 条',{exact:true})).toBeVisible();await page.getByPlaceholder('搜索原料编号').fill('不用');await expect(page.locator('tbody tr')).toHaveCount(0);
   await page.goto(origin+'material-visibility-check?page=distribution');await page.getByRole('button',{name:'查看明细',exact:true}).click();await expect(page.getByRole('cell',{name:'CF001',exact:true})).toBeVisible();await expect(page.getByText(unused,{exact:true})).toHaveCount(0);
   await page.screenshot({path:output+'/procurement-distribution.png'});
+ });
+ await run('procurement-server-ledger-pages-search-and-revoke','page=materials&pagecheck=1',async(page,state)=>{
+  await expect(page.getByRole('cell',{name:'M001',exact:true})).toBeVisible();await expect(page.locator('tbody tr')).toHaveCount(50);
+  await page.getByRole('button',{name:'下一页',exact:true}).click();await expect(page.getByRole('cell',{name:'M051',exact:true})).toBeVisible();await expect(page.getByRole('cell',{name:'M001',exact:true})).toHaveCount(0);
+  await page.getByPlaceholder('搜索原料编号').fill('M100');await expect(page.getByRole('cell',{name:'M100',exact:true})).toBeVisible();await expect(page.locator('tbody tr')).toHaveCount(1);
+  state.deny();await page.getByPlaceholder('搜索原料编号').fill('M099');await expect(page.getByRole('cell',{name:'M100',exact:true})).toHaveCount(0);await expect(page.getByRole('alert')).toContainText('原料台账读取失败，请重新读取。');
  });
  await run('procurement-trend-and-ranking','view=preview',async page=>{
   const menu=page.getByLabel('选择趋势原料',{exact:true});await expect(menu).toContainText('CF001');await menu.click();await expect(page.locator('button[data-material-option]')).toHaveText(['CF001','CF002']);await page.locator('button[data-material-option]').filter({hasText:'CF001'}).click();
