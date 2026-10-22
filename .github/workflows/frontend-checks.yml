@@ -1,8 +1,6 @@
 name: Frontend checks
 on:
   pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: '17 20 * * 6' # Sunday 04:17 Asia/Shanghai; complete synthetic recovery/regression and audits.
@@ -51,16 +49,16 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-      - if: needs.scope.outputs.scope != 'copy'
+      - if: needs.scope.outputs.scope == 'full'
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           version: '0.11.11'
       - run: npm ci --no-audit --no-fund
-      - if: needs.scope.outputs.scope != 'copy'
+      - if: needs.scope.outputs.scope == 'full'
         run: uv sync --locked --group dev --python 3.12
-      - if: needs.scope.outputs.scope != 'copy'
+      - if: needs.scope.outputs.scope == 'full'
         run: npm exec -- playwright install --with-deps chromium
-      - if: needs.scope.outputs.scope != 'copy'
+      - if: needs.scope.outputs.scope == 'full'
         run: npm run verify -- --scope frontend --base-ref "$QUALITY_BASE_REF"
       - name: Check copy-only changes
         if: needs.scope.outputs.scope == 'copy'
@@ -68,6 +66,24 @@ jobs:
           git diff --check "$QUALITY_BASE_REF" HEAD
           npm run check:frontend
           npm run build -- --outDir .scratch/copy-check/dist
+      - name: Prepare targeted validation
+        if: needs.scope.outputs.scope == 'ui' || needs.scope.outputs.scope == 'checks'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: '0.11.11'
+      - name: Check validation infrastructure
+        if: needs.scope.outputs.scope == 'checks'
+        run: |
+          node --test scripts/ci/change-scope.test.mjs tests_ui/performanceBudget.test.ts
+          uv run --locked python -m unittest discover -s scripts/ci -p 'test_*.py'
+      - name: Check presentation and actual UI consumers
+        if: needs.scope.outputs.scope == 'ui'
+        run: |
+          npm run check:frontend
+          npm run build -- --outDir .scratch/ui-check/dist
+          npm run test:frontend
+          npm exec -- playwright install --with-deps chromium
+          npm run test:browser
   full-suite:
     needs: scope
     if: needs.scope.outputs.scope == 'full'
@@ -167,7 +183,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$SCOPE_RESULT" == success && "$FRONTEND_RESULT" == success ]]
-          if [[ "$CHECK_SCOPE" == copy ]]; then
+          if [[ "$CHECK_SCOPE" == copy || "$CHECK_SCOPE" == ui || "$CHECK_SCOPE" == checks ]]; then
             [[ "$FULL_RESULT" == skipped ]]
           else
             [[ "$CHECK_SCOPE" == full && "$FULL_RESULT" == success ]]

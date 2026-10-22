@@ -75,3 +75,11 @@ test('performance receipts reject small workloads, omitted profiles and fabricat
   validateMeasurementReport(browserReport,browserPolicy,'browser');
   assert.throws(()=>validateMeasurementReport({...browserReport,samples:{ledger:{...browserReport.samples.ledger,paged:[1,2]}}},browserPolicy,'browser'),/Missing/);
 });
+
+test('browser timing noise warns within ten percent but real regressions and request growth fail',()=>{
+  const sample={limits:{'browser.one.pageMedianMs':150,'browser.one.requests':2}};
+  enforceMetrics({'browser.one.pageMedianMs':154.3,'browser.one.requests':2},sample,'browser.');
+  enforceMetrics({'browser.one.pageMedianMs':165,'browser.one.requests':2},sample,'browser.');
+  assert.throws(()=>enforceMetrics({'browser.one.pageMedianMs':165.1,'browser.one.requests':2},sample,'browser.'),/exceeds/);
+  assert.throws(()=>enforceMetrics({'browser.one.pageMedianMs':150,'browser.one.requests':3},sample,'browser.'),/exceeds/);
+});
