@@ -31,6 +31,7 @@ try{
  await server.listen();browser=await chromium.launch({headless:true});const origin=server.resolvedUrls.local[0];const receipts=[];
  async function run(name,kind,check){
   const context=await browser.newContext({viewport:{width:1440,height:1100}}),page=await context.newPage();page.setDefaultTimeout(10000);
+  await page.clock.setFixedTime(new Date('2026-10-20T12:00:00Z')); // Fixture periods must not drift with the runner date.
   const state={allowed:[...ids],denied:false,seriesDenied:false,reads:[],gate:null};const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&!m.text().includes('403'))errors.push(m.text());});
   await page.route('**/api/**',async route=>{
    const request=route.request(),url=new URL(request.url()),pathname=url.pathname;state.reads.push(request.method()+' '+pathname+url.search);assert.equal(request.method(),pathname==='/api/workbenches/sales/read/products'?'POST':'GET');
