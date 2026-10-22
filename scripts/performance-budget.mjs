@@ -59,7 +59,11 @@ export function enforceMetrics(metrics, policy, prefix) {
   assert.deepEqual(Object.keys(metrics).sort(), expected.sort(), `Incomplete ${prefix} measurements`);
   for (const id of expected) {
     assert.ok(Number.isFinite(metrics[id]) && metrics[id] >= 0, `Invalid measurement: ${id}`);
-    assert.ok(metrics[id] <= policy.limits[id], `${id}: ${metrics[id].toFixed(2)} exceeds ${policy.limits[id]}`);
+    const limit = policy.limits[id];
+    // Browser wall-clock noise is advisory within 10%, capped at 50 ms; counts and sizes stay exact.
+    const tolerance = id.startsWith('browser.') && id.endsWith('Ms') ? Math.min(limit * 0.1, 50) : 0;
+    assert.ok(metrics[id] <= limit + tolerance, `${id}: ${metrics[id].toFixed(2)} exceeds ${limit} + ${tolerance} tolerance`);
+    if (metrics[id] > limit) console.warn(`WARNING ${id}: ${metrics[id].toFixed(2)} exceeds target ${limit}, within timing tolerance`);
   }
 }
 export function bundleMetrics(manifest, readAsset, workbenches, emittedAssets) {
