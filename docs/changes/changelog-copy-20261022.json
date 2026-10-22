@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "kind": "presentation",
+  "summary": "移除关于系统更新日志中的库存数据与含税口径条目。",
+  "modules": ["procurement", "research", "sales"],
+  "files": ["src/components/SettingsDialog.tsx"],
+  "consumers": ["src/components/SettingsDialog.tsx"],
+  "permissions": "仅删除静态日志条目，设置访问权限保持。",
+  "data": "库存数据、成本口径、数据库和历史记录均保持。",
+  "lifecycle": "保留原有弹窗、导航和日志布局。",
+  "exits": "关闭、返回和退出行为保持。",
+  "compatibility": "无接口、依赖或结构变化。",
+  "recovery": "恢复该条静态文案即可回退，不涉及数据库恢复。",
+  "verification": {
+    "api": ["tests/test_modules.py::test_admin_can_read_environment_and_pending_module_settings"],
+    "node": [],
+    "browser": []
+  }
+}
