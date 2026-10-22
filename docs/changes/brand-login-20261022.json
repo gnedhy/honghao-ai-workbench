@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "kind": "presentation",
+  "summary": "统一确认版金色 LOGO，并精简登录页重复说明。",
+  "modules": [
+    "procurement",
+    "research",
+    "sales"
+  ],
+  "files": [
+    "src/components/Sidebar.tsx",
+    "src/screens/LoginScreen.tsx",
+    "src/styles.css"
+  ],
+  "consumers": [
+    "src/components/Sidebar.tsx",
+    "src/screens/LoginScreen.tsx"
+  ],
+  "permissions": "登录提交、账号验证及权限规则保持。",
+  "data": "无业务数据及数据库迁移。",
+  "lifecycle": "保留登录禁用、忙碌、失败、服务未就绪及重新登录通知。",
+  "exits": "导航与退出保持。",
+  "compatibility": "共享品牌图片和带版本地址的 favicon；不改变接口。",
+  "recovery": "可回退前端发布目录；无需恢复数据库。",
+  "verification": {
+    "api": [
+      "tests/test_modules.py::test_admin_can_read_environment_and_pending_module_settings"
+    ],
+    "node": [],
+    "browser": []
+  }
+}
