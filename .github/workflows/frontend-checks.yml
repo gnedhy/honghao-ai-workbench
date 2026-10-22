@@ -162,4 +162,3 @@ jobs:
           else
             [[ "$CHECK_SCOPE" == full && "$FULL_RESULT" == success ]]
           fi
-
