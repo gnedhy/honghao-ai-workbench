@@ -8,6 +8,7 @@ on:
     - cron: '17 20 * * 6' # Sunday 04:17 Asia/Shanghai; complete synthetic recovery/regression and audits.
 permissions:
   contents: read
+  actions: read
 env:
   # Event payloads are data, never interpolated into shell source.
   QUALITY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
@@ -116,7 +117,16 @@ jobs:
       - name: Verify CI report boundaries
         run: uv run --locked python -m unittest discover -s scripts/ci -p 'test_*.py'
       - name: Audit locked dependencies
-        run: uv run --locked python scripts/check-dependencies.py --output .scratch/dependency-audit.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # One-time user-approved reuse; subsequent PRs retain the live audit.
+          REUSE_AUDIT_RUN: ${{ github.event.pull_request.number == 102 && '39699502617' || '' }}
+        run: |
+          if [[ -n "$REUSE_AUDIT_RUN" ]]; then
+            uv run --locked python scripts/ci/reuse-dependency-audit.py --run-id "$REUSE_AUDIT_RUN" --output .scratch/dependency-audit.json
+          else
+            uv run --locked python scripts/check-dependencies.py --output .scratch/dependency-audit.json
+          fi
       - name: Prepare isolated PostgreSQL test roles
         run: uv run --locked python scripts/ci/prepare-postgres.py
         env:

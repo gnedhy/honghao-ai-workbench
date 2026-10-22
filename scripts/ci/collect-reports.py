@@ -18,6 +18,10 @@ def collect(root: Path) -> dict:
         if audit.get('schema') != 1 or type(audit.get('complete')) is not bool or any(type(audit.get(key)) is not int or audit[key] < 0 for key in ('count', 'auditedPackages')):
             raise ValueError('Invalid dependency audit summary')
         safe = {key:audit[key] for key in ('schema', 'complete', 'count', 'auditedPackages')}
+        for key, allowed in {'failureStage': {'npm', 'locked_export', 'python'}, 'failureReason': {'timeout', 'unavailable_or_invalid_response'}}.items():
+            if key in audit:
+                if audit[key] not in allowed: raise ValueError('Invalid audit failure label')
+                safe[key] = audit[key]
         (destination / 'dependency-audit.json').write_text(json.dumps(safe, indent=2) + '\n', encoding='utf-8')
         receipt['dependency_audit'] = safe
     if original.is_file():

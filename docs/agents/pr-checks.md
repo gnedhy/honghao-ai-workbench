@@ -11,3 +11,7 @@ PR 和 main 推送按实际差异自动分类，不依赖 PR 标题或作者勾�
 分支保护仍要求 `frontend` 和 `full`。`full` 汇总分类与实际检查结果；分类失败、取消或必要检查未通过时不能放行。短流程中的 `full` 表示所需检查通过，不代表执行过全部业务测试。
 
 涉及检查机制本身的本次变更仍按完整流程验收；不手动重跑同一提交已经通过的检查。实现入口：`.github/workflows/frontend-checks.yml`、`scripts/ci/change-scope.mjs`；定向回归：`node --test scripts/ci/change-scope.test.mjs`。
+
+## PR #102 的一次性审计复用
+
+经用户明确批准，仅 PR #102 使用成功运行 39699502617 的 GitHub 审计产物；校验同仓库、指定工作流、成功状态、24 小时有效期，以及 package.json、package-lock.json、pyproject.toml、uv.lock 内容完全一致（仅统一换行符）。报告必须完整且零漏洞。任一条件不满足仍失败，不视为通过。后续 PR、main 推送和定时任务继续联网审计。执行日志保留来源运行编号，修复了原审计失败阶段不可见的问题。
