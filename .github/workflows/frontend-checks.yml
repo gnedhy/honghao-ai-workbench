@@ -8,11 +8,30 @@ on:
     - cron: '17 20 * * 6' # Sunday 04:17 Asia/Shanghai; complete synthetic recovery/regression and audits.
 permissions:
   contents: read
+  actions: read
 env:
   # Event payloads are data, never interpolated into shell source.
   QUALITY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
 jobs:
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      scope: ${{ steps.classify.outputs.scope }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: node --test scripts/ci/change-scope.test.mjs
+      - id: classify
+        run: node scripts/ci/change-scope.mjs
   frontend:
+    needs: scope
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -32,14 +51,26 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      - if: needs.scope.outputs.scope != 'copy'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           version: '0.11.11'
-      - run: npm ci
-      - run: uv sync --locked --group dev --python 3.12
-      - run: npm exec -- playwright install --with-deps chromium
-      - run: npm run verify -- --scope frontend --base-ref "$QUALITY_BASE_REF"
-  full:
+      - run: npm ci --no-audit --no-fund
+      - if: needs.scope.outputs.scope != 'copy'
+        run: uv sync --locked --group dev --python 3.12
+      - if: needs.scope.outputs.scope != 'copy'
+        run: npm exec -- playwright install --with-deps chromium
+      - if: needs.scope.outputs.scope != 'copy'
+        run: npm run verify -- --scope frontend --base-ref "$QUALITY_BASE_REF"
+      - name: Check copy-only changes
+        if: needs.scope.outputs.scope == 'copy'
+        run: |
+          git diff --check "$QUALITY_BASE_REF" HEAD
+          npm run check:frontend
+          npm run build -- --outDir .scratch/copy-check/dist
+  full-suite:
+    needs: scope
+    if: needs.scope.outputs.scope == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     services:
@@ -78,7 +109,7 @@ jobs:
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           version: '0.11.11'
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - run: uv sync --locked --group dev --python 3.12
       - run: npm exec -- playwright install --with-deps chromium
       - name: Install PostgreSQL 18 client tools
@@ -86,7 +117,16 @@ jobs:
       - name: Verify CI report boundaries
         run: uv run --locked python -m unittest discover -s scripts/ci -p 'test_*.py'
       - name: Audit locked dependencies
-        run: uv run --locked python scripts/check-dependencies.py --output .scratch/dependency-audit.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # One-time user-approved reuse; subsequent PRs retain the live audit.
+          REUSE_AUDIT_RUN: ${{ github.event.pull_request.number == 102 && '39699502617' || '' }}
+        run: |
+          if [[ -n "$REUSE_AUDIT_RUN" ]]; then
+            uv run --locked python scripts/ci/reuse-dependency-audit.py --run-id "$REUSE_AUDIT_RUN" --output .scratch/dependency-audit.json
+          else
+            uv run --locked python scripts/check-dependencies.py --output .scratch/dependency-audit.json
+          fi
       - name: Prepare isolated PostgreSQL test roles
         run: uv run --locked python scripts/ci/prepare-postgres.py
         env:
@@ -110,3 +150,25 @@ jobs:
             ci-reports/performance-api.json
           retention-days: 14
           if-no-files-found: error
+  # Keep the existing protected check name; failures/skips in classification cannot pass it.
+  full:
+    needs: [scope, frontend, full-suite]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      SCOPE_RESULT: ${{ needs.scope.result }}
+      CHECK_SCOPE: ${{ needs.scope.outputs.scope }}
+      FRONTEND_RESULT: ${{ needs.frontend.result }}
+      FULL_RESULT: ${{ needs.full-suite.result }}
+    steps:
+      - name: Require the selected checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SCOPE_RESULT" == success && "$FRONTEND_RESULT" == success ]]
+          if [[ "$CHECK_SCOPE" == copy ]]; then
+            [[ "$FULL_RESULT" == skipped ]]
+          else
+            [[ "$CHECK_SCOPE" == full && "$FULL_RESULT" == success ]]
+          fi

@@ -24,16 +24,17 @@ def audit(project, output, uv='uv', npm='npm'):
     receipt = {'schema': 1, 'checkedAt': datetime.now(timezone.utc).isoformat(),
                'locks': lock_fingerprint(project), 'complete': False, 'vulnerabilities': [], 'auditedPackages': 0}
     environment = {key:value for key,value in os.environ.items() if key.upper() not in {'NODE_ENV', 'NPM_CONFIG_OMIT', 'NPM_CONFIG_PRODUCTION', 'UV_NO_DEV', 'UV_ONLY_DEV', 'UV_GROUP', 'UV_ONLY_GROUP', 'UV_NO_GROUP', 'UV_ALL_GROUPS'}}
+    stage = 'npm'
     try:
         with tempfile.TemporaryDirectory(prefix='dependency-audit-') as directory:
             temporary = Path(directory)
             # npm.cmd cannot be executed directly by CreateProcess. Use the installed CLI with Node.
-            npm_args = [npm, 'audit', '--json', '--package-lock-only', '--include=prod', '--include=dev', '--include=optional', '--include=peer']
+            npm_args = [npm, 'audit', '--json', '--package-lock-only', '--include=prod', '--include=dev', '--include=optional', '--include=peer', '--fetch-retries=0', '--fetch-timeout=30000']
             if os.name == 'nt' and npm.lower().endswith('.cmd'):
                 node = shutil.which('node')
                 cli = Path(npm).parent / 'node_modules/npm/bin/npm-cli.js'
                 npm_args = [node, str(cli), *npm_args[1:]]
-            result = subprocess.run(npm_args, cwd=project, env=environment, capture_output=True, timeout=120)
+            result = subprocess.run(npm_args, cwd=project, env=environment, capture_output=True, timeout=45)
             data = json.loads(result.stdout)
             if result.returncode not in (0, 1) or data.get('error') or not isinstance(data.get('vulnerabilities'), dict) or not isinstance(data.get('metadata'), dict):
                 raise ValueError('npm audit unavailable')
@@ -53,8 +54,10 @@ def audit(project, output, uv='uv', npm='npm'):
             if result.returncode and not receipt['vulnerabilities']:
                 raise ValueError('Failed npm audit without advisory evidence')
             receipt['auditedPackages'] += npm_packages
+            stage = 'locked_export'
             export = subprocess.run([uv, 'export', '--locked', '--all-groups', '--no-emit-project', '--no-hashes', '--output-file', str(temporary / 'requirements.txt')], cwd=project, env=environment, capture_output=True, timeout=60)
             if export.returncode: raise ValueError('Locked dependency export failed')
+            stage = 'python'
             result = subprocess.run([uv, 'tool', 'run', '--from', 'pip-audit==2.10.1', 'pip-audit', '--requirement', str(temporary / 'requirements.txt'),
                                      '--no-deps', '--disable-pip', '--strict', '--format', 'json', '--desc', 'off', '--aliases', 'off',
                                      '--output', str(temporary / 'python.json')], cwd=project, env=environment, capture_output=True, timeout=180)
@@ -70,8 +73,10 @@ def audit(project, output, uv='uv', npm='npm'):
             if result.returncode and not python_findings:
                 raise ValueError('Failed Python audit without advisory evidence')
             receipt['complete'] = True
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-        pass  # An incomplete receipt always fails. Raw stderr is deliberately excluded.
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        # Fixed labels explain failures without exposing command output or credentials.
+        receipt['failureStage'] = stage
+        receipt['failureReason'] = 'timeout' if isinstance(error, subprocess.TimeoutExpired) else 'unavailable_or_invalid_response'
     receipt['count'] = len(receipt['vulnerabilities'])
     temporary = output.with_suffix('.tmp')
     temporary.write_text(json.dumps(receipt, indent=2) + '\n', encoding='utf-8'); temporary.replace(output)
@@ -95,7 +100,7 @@ def main():
             parser.error('Invalid active production release')
     if args.application_root and args.output.resolve().is_relative_to(args.application_root.resolve()): parser.error('Production audit reports must stay outside application files')
     receipt = audit(project, args.output.resolve(), args.uv, args.npm)
-    print(json.dumps({'complete': receipt['complete'], 'count': receipt['count'], 'auditedPackages': receipt['auditedPackages']}))
+    print(json.dumps({'complete': receipt['complete'], 'count': receipt['count'], 'auditedPackages': receipt['auditedPackages'], **{key: receipt[key] for key in ('failureStage', 'failureReason') if key in receipt}}))
     return 0 if receipt['complete'] and receipt['count'] == 0 else 1
 
 

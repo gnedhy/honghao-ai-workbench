@@ -220,11 +220,7 @@ export function Sidebar({
 export function BrandMark() {
   return (
     <span className="brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 28 28" role="presentation">
-        <rect x="1" y="1" width="26" height="26" rx="8" />
-        <path d="M8.5 8.2v11.6M19.5 8.2v11.6M8.5 14h11" />
-        <circle cx="14" cy="14" r="2.15" />
-      </svg>
+      <img src="/brand-gold-20261022.svg" alt="" width="32" height="32" />
     </span>
   );
 }

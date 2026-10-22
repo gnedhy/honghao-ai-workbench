@@ -180,6 +180,17 @@ class OperationalProbes(unittest.TestCase):
         self.assertEqual(monitor.read_json(output/'latest.json')['checks']['monitor_probe']['level'],'critical')
         self.assertNotIn('PRIVATE_INVALID_JSON',(output/'latest.json').read_text())
 
+    def test_audit_timeout_reports_stage_without_leaking_output(self):
+        output=Path(self.temporary.name)/'audit.json'
+        with patch.object(auditor.subprocess, 'run', side_effect=subprocess.TimeoutExpired('PRIVATE_COMMAND', 45, output='PRIVATE_OUTPUT')) as command:
+            receipt=auditor.audit(self.release,output)
+        self.assertFalse(receipt['complete'])
+        self.assertEqual(receipt['failureStage'],'npm')
+        self.assertEqual(receipt['failureReason'],'timeout')
+        self.assertNotIn('PRIVATE',output.read_text())
+        self.assertIn('--fetch-retries=0', command.call_args.args[0])
+        self.assertIn('--fetch-timeout=30000', command.call_args.args[0])
+
     def test_nonzero_empty_audits_fail_and_scope_ignores_omit_environment(self):
         output=Path(self.temporary.name)/'audit.json'
         npm_data={'vulnerabilities':{},'metadata':{'vulnerabilities':{'total':0},'dependencies':{'total':10}}}
