@@ -28,7 +28,8 @@ _CONNECTION_OPTIONS = {
     "autocommit": True,
     "connect_timeout": 5,
     "application_name": "honghao-workbench",
-    "options": "-c timezone=UTC -c search_path=public,pg_catalog "
+    # Short transactional queries must not pay LLVM compilation on every history refresh.
+    "options": "-c jit=off -c timezone=UTC -c search_path=public,pg_catalog "
                "-c statement_timeout=30000 -c lock_timeout=10000 "
                "-c idle_in_transaction_session_timeout=60000",
 }

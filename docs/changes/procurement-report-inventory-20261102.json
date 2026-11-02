@@ -22,7 +22,8 @@
     "api/procurement_collaboration.py",
     "api/procurement_reads.py",
     "api/migrations/postgresql/0020_procurement_report_purchaser.sql",
-    "src/components/SettingsDialog.tsx"
+    "src/components/SettingsDialog.tsx",
+    "api/postgres.py"
   ],
   "consumers": [
     "src/workbenches/ProcurementWorkbench.tsx",
@@ -34,7 +35,7 @@
   "data": "迁移19给导入保存库存载荷、给价格批次保存库存快照；启用事务一次更新库存后复用研发事件，不覆盖旧历史或报价。迁移20保存报表采购员并作为该次价格修改人；实际导入账号仍保留在操作记录。",
   "lifecycle": "库存属于导入所在更新；取消不生效，排期复制保留；启用错误整笔回滚。",
   "exits": "沿用未保存与忙碌退出保护；仅文件导入、自动识别、价格、库存及采购员字段默认只读且可切换编辑；录价说明限三个固定选项。",
-  "compatibility": "保留人工录价和行情单独导入；库存数量按kg读取，空白或零库存价为缺价，不重复加税。已有服务器仅在原库增量迁移19、20，不恢复开发库或重放测试导入，旧业务与账号保留。",
+  "compatibility": "保留人工录价和行情单独导入；库存数量按kg读取，空白或零库存价为缺价，不重复加税。已有服务器仅在原库增量迁移19、20，不恢复开发库或重放测试导入，旧业务与账号保留。 应用数据库连接关闭短查询 JIT 编译，避免成本历史写入在 Linux 上突增耗时；不改计算、持久配置或迁移。",
   "recovery": "已完成正式增量迁移和原数据核验；其他服务器升级前保留自己的最新数据库及附件备份，迁移后恢复须成对使用匹配程序、结构和快照并处理新增写入。",
   "verification": {
     "api": [
@@ -42,7 +43,9 @@
       "tests/test_procurement_report.py::test_scheduled_copy_preserves_stock_and_activation_is_atomic",
       "tests/test_procurement_ui.py::test_browser_procurement_and_research",
       "tests/test_procurement_report.py::test_download_template_round_trips_through_excel_preview",
-      "tests/test_procurement_report.py::test_report_purchaser_blank_falls_back_and_invalid_blocks"
+      "tests/test_procurement_report.py::test_report_purchaser_blank_falls_back_and_invalid_blocks",
+      "tests/test_postgres_configuration.py::test_service_connections_reuse_backends_without_leaking_session_settings",
+      "tests/test_performance_budget.py::test_critical_store_performance"
     ],
     "node": [],
     "browser": [

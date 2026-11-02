@@ -55,7 +55,8 @@ def test_selected_postgres_failure_keeps_http_service_unready(tmp_path, monkeypa
 def test_service_connections_reuse_backends_without_leaking_session_settings(pg_targets):
     url = pg_targets[0]
     with postgres.connect(url) as db:
-        baseline = db.execute("SELECT current_user, current_setting('timezone'), current_setting('search_path'), current_setting('statement_timeout'), current_setting('lock_timeout'), current_setting('idle_in_transaction_session_timeout'), current_setting('application_name')").fetchone()
+        baseline = db.execute("SELECT current_user, current_setting('timezone'), current_setting('search_path'), current_setting('statement_timeout'), current_setting('lock_timeout'), current_setting('idle_in_transaction_session_timeout'), current_setting('application_name'), current_setting('jit')").fetchone()
+        assert baseline[-1] == 'off'
     with postgres.database_lease(url, pooled=True):
         pool = postgres._POOLS[url]
         pool.resize(1, 1)
@@ -63,17 +64,18 @@ def test_service_connections_reuse_backends_without_leaking_session_settings(pg_
         for _ in range(20):
             with postgres.transaction(url) as db:
                 backends.add(db.info.backend_pid)
-                assert db.execute("SELECT current_user, current_setting('timezone'), current_setting('search_path'), current_setting('statement_timeout'), current_setting('lock_timeout'), current_setting('idle_in_transaction_session_timeout'), current_setting('application_name')").fetchone() == baseline
+                assert db.execute("SELECT current_user, current_setting('timezone'), current_setting('search_path'), current_setting('statement_timeout'), current_setting('lock_timeout'), current_setting('idle_in_transaction_session_timeout'), current_setting('application_name'), current_setting('jit')").fetchone() == baseline
         assert len(backends) == 1
         with postgres.transaction(url, write=True) as db:
             db.execute("SET application_name='must-not-leak'")
             db.execute("SET timezone='America/New_York'")
             db.execute('SET search_path=pg_catalog')
             db.execute('SET statement_timeout=12345')
+            db.execute('SET jit=on')
             db.execute('SELECT pg_advisory_lock(8123571)')
         with postgres.transaction(url) as db:
             assert db.info.backend_pid in backends
-            assert db.execute("SELECT current_user, current_setting('timezone'), current_setting('search_path'), current_setting('statement_timeout'), current_setting('lock_timeout'), current_setting('idle_in_transaction_session_timeout'), current_setting('application_name')").fetchone() == baseline
+            assert db.execute("SELECT current_user, current_setting('timezone'), current_setting('search_path'), current_setting('statement_timeout'), current_setting('lock_timeout'), current_setting('idle_in_transaction_session_timeout'), current_setting('application_name'), current_setting('jit')").fetchone() == baseline
         with postgres.connect(url) as db:
             assert db.execute('SELECT pg_try_advisory_lock(8123571)').fetchone() == (True,)
     assert pool.closed and url not in postgres._POOLS and url not in postgres._LEASES
