@@ -40,9 +40,11 @@ try{
  });
  await page.goto(server.resolvedUrls.local[0]+'research-import-qa');
  await run('research-import-department-filter-large-catalog',async()=>{
-  await page.locator('summary').filter({hasText:/^全部部门$/}).waitFor();assert.equal(await page.locator('tbody tr').count(),50);
+  await page.locator('summary').filter({hasText:/^全部部门$/}).waitFor();
+  await page.waitForFunction(()=>document.querySelectorAll('tbody tr').length===50&&document.querySelector('tbody tr').textContent.includes('SYN-0000'));
+  assert.equal(await page.locator('tbody tr').count(),50);
   await page.locator('summary').filter({hasText:/^全部部门$/}).click();await page.getByRole('button',{name:'研发一部',exact:true}).click();
-  await page.waitForFunction(()=>[...document.querySelectorAll('tbody tr')].every(r=>r.textContent.includes('研发一部')));
+  await page.waitForFunction(()=>document.querySelectorAll('tbody tr').length===50&&[...document.querySelectorAll('tbody tr')].every(r=>r.textContent.includes('研发一部')));
   assert.equal(await page.locator('tbody tr').count(),50);assert.ok((await page.locator('body').innerText()).includes('340 / 2380'));
   await page.screenshot({path:output+'/departments.png'});
  });
