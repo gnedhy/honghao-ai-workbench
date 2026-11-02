@@ -73,6 +73,7 @@ try {
         // Deliver a fresh snapshot after the injected list failure to exercise dependent detail refresh.
         if (fault === 'readonly' && url.pathname === '/api/workbenches/research/material-prices' && [4,5].includes(readonlyReads)) delete headers['if-none-match'];
         const response = await route.fetch({ url: new URL(url.pathname + url.search, api).href, headers });
+        if (fault === 'preferences-slow' && url.pathname === base + '/preferences') { held.release(); await pending.promise; }
         if (adjusting) adjusted = true;
         const delayedOverview = fault === 'overview-slow' && url.pathname === base + '/overview' && ++overviewReads === 2;
         const delayedDetail = fault === 'drawer-refresh-slow' && adjusted && req.method() === 'GET' && url.pathname.startsWith(base + '/materials/');
@@ -312,11 +313,20 @@ try {
     assert.equal(await ranking.getByRole('button', { name: 'A', exact: true }).first().evaluate(button => document.activeElement === button), true);
     assert.equal(writes.filter(row => !row.path.endsWith('/preferences')).length, 0);
   });
-  await run('report-import-stock-preview-and-activation', '', async ({ page, get }) => {
+  await run('report-import-stock-preview-and-activation', 'preferences-slow', async ({ page, get, held, pending }) => {
     const before = await get(base + '/overview');
-    await page.locator('[class*="ledgerTableFrame"] tbody tr').first().waitFor();
+    const preferences = await get(base + '/preferences');
+    assert.equal(preferences.ledger_page_size,10);
+    await held.promise;
+    await page.waitForFunction(()=>document.querySelectorAll('[class*="ledgerTableFrame"] tbody tr').length>10);
     const ledgerReads=[];
     page.on('request',request=>{if(new URL(request.url()).searchParams.get('read_mode')==='ledger')ledgerReads.push(request.url());});
+    pending.release();
+    // Preference hydration issues its own read; measure import only after that data is rendered.
+    await page.waitForFunction(()=>document.querySelectorAll('[class*="ledgerTableFrame"] tbody tr').length===10&&document.querySelector('[class*="ledgerTableWrap"]')?.getAttribute('aria-busy')==='false');
+    assert.equal(ledgerReads.length,1,'Restoring the saved page size must issue one ledger read');
+    assert.equal(new URL(ledgerReads[0]).searchParams.get('page_size'),'10');
+    ledgerReads.length=0;
     const ledgerFrames=await page.getByRole('button', { name: '导入报表', exact: true }).evaluate(button=>new Promise(resolve=>{
       const frames=[],started=performance.now();
       const sample=()=>{frames.push(document.querySelectorAll('[class*="ledgerTableFrame"] tbody tr').length);if(performance.now()-started<400)requestAnimationFrame(sample);else resolve(frames);};
