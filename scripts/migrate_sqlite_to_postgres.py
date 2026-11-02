@@ -23,6 +23,7 @@ from api.settings import Settings
 # The frozen SQLite baseline predates sales. New PostgreSQL tables stay empty.
 POST_SQLITE_TABLES = {'sales_batches', 'sales_trials', 'sales_records', 'sales_events', 'sales_calculator_saved', 'research_backfill_frozen', 'research_history_reads', 'research_history_versions', 'procurement_price_read_points', 'sales_activity', 'research_event_revisions', 'procurement_batch_revisions'}
 POST_SQLITE_VERSION = 'workbench_sales_schema_version'
+POST_SQLITE_COLUMNS = {'procurement_saved_changes': {'source_purchaser'}, 'research_backfill_records': {'frozen_id'}, 'procurement_imports': {'inventory_payload'}, 'procurement_price_batches': {'inventory_snapshot'}}
 
 
 def _quote(name: str) -> str:
@@ -121,13 +122,14 @@ def _source_paths(source: sqlite3.Connection, staging: Path, target: Path, recor
 def _legacy_evidence(db, mappings=None):
     evidence = {key: value for key, value in ops._table_evidence(db, mappings, include_generated=False).items() if key not in POST_SQLITE_TABLES}
     # Legacy imports retain their full payload; the new nullable reference is not a source column.
-    cursor = db.execute('SELECT purchase_version,product_id,signature,payload,_order FROM research_backfill_records ORDER BY _order')
-    digest = hashlib.sha256()
-    count = 0
-    for row in cursor:
-        digest.update(json.dumps(row, ensure_ascii=False, separators=(',', ':')).encode('utf-8') + b'\n')
-        count += 1
-    evidence['research_backfill_records'] = {'count': count, 'sha256': digest.hexdigest(), 'columns': [c.name for c in cursor.description]}
+    for table, excluded in POST_SQLITE_COLUMNS.items():
+        columns = [name for name in evidence[table]['columns'] if name not in excluded and name != '_order'] + ['_order']
+        cursor = db.execute(sql.SQL('SELECT {} FROM {} ORDER BY _order').format(sql.SQL(',').join(map(sql.Identifier, columns)), sql.Identifier(table)))
+        digest, count = hashlib.sha256(), 0
+        for row in cursor:
+            digest.update(json.dumps(row, ensure_ascii=False, separators=(',', ':')).encode('utf-8') + b'\n')
+            count += 1
+        evidence[table] = {'count': count, 'sha256': digest.hexdigest(), 'columns': columns}
     rows = db.execute('SELECT * FROM schema_metadata WHERE key!=%s ORDER BY _order', (POST_SQLITE_VERSION,)).fetchall()
     digest = hashlib.sha256()
     for row in rows:

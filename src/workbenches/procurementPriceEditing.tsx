@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { previewPriceAdjustments, type PricePreview } from "../api";
 import { PriceMovement as Movement } from "../components/PriceMovement";
+import { WorkbenchOptionMenu } from "../components/WorkbenchMenus";
 import { PRICE_REASONS, type ReasonSelection } from "./procurementReasons";
 import { price } from "./ProcurementMaterialView";
 import styles from "../components/WorkbenchSurface.module.css";
@@ -28,13 +29,10 @@ export function PriceReview({ preview }: { preview: PricePreview }) {
 }
 
 export function ReasonSelect({ label, options, placeholder, value = { selected: "", custom: "" }, disabled, onChange }: { label: string; options: string[]; placeholder: string; value?: ReasonSelection; disabled: boolean; onChange: (value: ReasonSelection) => void }) {
-  const otherLabel = options === PRICE_REASONS ? "其他说明" : "其他原因";
+  const allowOther = options !== PRICE_REASONS;
+  const otherLabel = "其他原因";
   return <div className={styles.reasonSelect}>
-    <select aria-label={label} disabled={disabled} value={value.selected} onChange={(event) => onChange({ ...value, selected: event.target.value })}>
-      <option value="" disabled>{placeholder}</option>
-      {options.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
-      <option value="other">{otherLabel}</option>
-    </select>
-    {value.selected === "other" && <input aria-label={`${label}${otherLabel}`} disabled={disabled} minLength={4} maxLength={200} value={value.custom} onChange={(event) => onChange({ ...value, custom: event.target.value })} placeholder={`请填写${otherLabel}（4–200 字）`} />}
+    <WorkbenchOptionMenu label={label} disabled={disabled} value={value.selected} display={!value.selected ? placeholder : undefined} options={[...options.map(reason => ({value:reason,label:reason})), ...(allowOther ? [{value:"other",label:otherLabel}] : [])]} onSelect={selected => onChange({...value,selected})} />
+    {allowOther && value.selected === "other" && <input aria-label={`${label}${otherLabel}`} disabled={disabled} minLength={4} maxLength={200} value={value.custom} onChange={(event) => onChange({ ...value, custom: event.target.value })} placeholder={`请填写${otherLabel}（4–200 字）`} />}
   </div>;
 }

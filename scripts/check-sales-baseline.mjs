@@ -102,7 +102,7 @@ try {
       return route.fulfill({ status: 501, json: { detail: 'Unexpected W1 request' } });
     });
     try {
-      await page.goto(origin + 'w1-baseline?page=' + pageName);
+      await page.goto(origin + 'w1-baseline?page=' + pageName, { waitUntil: 'domcontentloaded', timeout: 30000 });
       if (pageName === 'estimator') {
         await page.getByRole('button', { name: '手工成本', exact: true }).click();
         const evaluated = page.waitForResponse(response => response.url().endsWith('/calculator/evaluate')

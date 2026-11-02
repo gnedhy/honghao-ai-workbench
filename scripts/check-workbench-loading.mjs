@@ -80,7 +80,7 @@ try {
     });
     try {
       if(kind==='material-prices')await page.clock.install();
-      await page.goto(origin + 'loading-check?kind=' + kind); await check(page);
+      await page.goto(origin + 'loading-check?kind=' + kind, {waitUntil:'domcontentloaded',timeout:30000}); await check(page);
       assert.deepEqual(errors, []); assert.deepEqual(unexpected, []); console.log('PASS', name);
     } finally { await page.close(); }
   }

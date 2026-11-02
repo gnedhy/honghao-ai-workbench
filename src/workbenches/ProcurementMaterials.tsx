@@ -1,3 +1,4 @@
+import { dailyProcurementOverview } from "../materialVisibility";
 import {WorkbenchLoading} from "../components/WorkbenchLayout";
 import {HelpHint} from "../components/HelpHint";
 import {SortHeading} from "../components/SortHeading";
@@ -46,7 +47,8 @@ const DEFAULT_PREFERENCES: ProcurementPreferences = {
   ledger_page_size: 50,
 };
 
-export function ProcurementMaterials({ onRequestEdit,department, onOpenDepartmentMaterial, data, accessLevel, onRefresh, onSaved, onCreate, onImport, onPublish, onPageChange, focusPending, locateCode, startInEdit, onEditStarted }: { onRequestEdit?:()=>Promise<void>;department?: DepartmentLedger; onOpenDepartmentMaterial: (id: string) => void; startInEdit: boolean; onEditStarted: () => void; data: ProcurementOverview; accessLevel: number; onRefresh: () => Promise<void>; onSaved: (data: ProcurementOverview) => void; onCreate: () => void; onImport: () => void; onPublish: () => void; onPageChange: (page: ProcurementPage) => void; focusPending: boolean; locateCode: string }) {
+export function ProcurementMaterials({ onRequestEdit,department, onOpenDepartmentMaterial, data: rawData, accessLevel, onRefresh, onSaved, onCreate, onImport, onPublish, onPageChange, focusPending, locateCode, startInEdit, onEditStarted }: { onRequestEdit?:()=>Promise<void>;department?: DepartmentLedger; onOpenDepartmentMaterial: (id: string) => void; startInEdit: boolean; onEditStarted: () => void; data: ProcurementOverview; accessLevel: number; onRefresh: () => Promise<void>; onSaved: (data: ProcurementOverview) => void; onCreate: () => void; onImport: () => void; onPublish: () => void; onPageChange: (page: ProcurementPage) => void; focusPending: boolean; locateCode: string }) {
+  const data=useMemo(()=>dailyProcurementOverview(rawData),[rawData]);
   const { preferences, update: savePreferences } = useProcurementPreferences();
   const current = department ? null : data.current_update;
   const [source,setSource]=useState("all");
@@ -175,7 +177,7 @@ export function ProcurementMaterials({ onRequestEdit,department, onOpenDepartmen
           {edit.update_id ? <div className={styles.savedPriceDate}><span>价格日期</span><strong>{formatPriceDate(editDate)}</strong><small>沿用本轮日期</small></div> : <label>价格日期<input type="date" required value={editDate} disabled={busy} onChange={event => session.actions.changeDate(event.target.value)} /></label>}
         </div>
         {pricePreview.data ? <PriceReview preview={pricePreview.data} /> : <p>{edits.length?pricePreview.error ?? "正在核对价格变化…":"本次价格已与最新本轮数据一致，无需重复保存。"}{pricePreview.error && <button type="button" onClick={pricePreview.refresh}>重新核对</button>}</p>}
-        <div className={styles.ledgerEditBar}><label>录价说明<ReasonSelect label="录价说明" options={PRICE_REASONS} placeholder="请选择说明" value={editReason} disabled={busy} onChange={session.actions.chooseReason} /></label></div>
+        <div className={styles.ledgerEditBar}><div className={styles.reasonField}><span>录价说明</span><ReasonSelect label="录价说明" options={PRICE_REASONS} placeholder="请选择说明" value={editReason} disabled={busy} onChange={session.actions.chooseReason} /></div></div>
         <p>{data.capabilities?.can_activate ? "确认并保存将同时确认以上高波动价格；启用前，行情价格保持不变。" : "保存后，行情价格保持不变；异常波动由有启用权的人员确认。"}</p>
         {editError && <div className={styles.error} role="alert"><p>{editError}</p><button type="button" disabled={busy} onClick={() => void recover()}>读取最新数据核对（保留输入）</button></div>}
         <div className={styles.panelActions}><button className="secondary-button" type="button" disabled={busy} onClick={closeSave}>返回编辑</button><button className="primary-button" type="submit" disabled={busy || !dirty || !validEdits || !editDate || !resolveReason(editReason) || !pricePreview.data}>{busy ? "正在保存" : "确认并保存"}</button></div>

@@ -14,6 +14,7 @@ const server = await createServer({ configFile: false, logLevel: 'silent', cache
   name: 'w6-procurement',
   configureServer(instance) { instance.middlewares.use(async (req, res, next) => {
     const path = req.url.split('?')[0];
+    if (path === base + '/excel-preview') return next();
     if (path.startsWith('/api/')) { res.statusCode = 503; res.end('Isolated interception required'); return; }
     if (path !== '/w6-procurement') return next();
     res.setHeader('Content-Type', 'text/html');
@@ -28,7 +29,7 @@ import {confirmWorkbenchLeave} from '/src/components/interactionNavigation';
 import '/src/styles.css';
 function Host({user}){const [page,setPage]=useState(new URL(location.href).searchParams.has('readonly')?'research':'materials');const change=async next=>{if(await confirmWorkbenchLeave())setPage(next)};return h('main',null,h('button',{onClick:()=>change('research')},'切换研发原料'),h('button',{onClick:()=>change('materials')},'切换采购台账'),h('button',{onClick:()=>change('updates')},'切换本轮更新'),h('button',{onClick:()=>change('distribution')},'切换部门分流'),h('button',{onClick:()=>change('dashboard')},'切换采购概览'),h('button',{onClick:()=>setPage('research')},'测试强制卸载'),page==='research'?h(ResearchMaterialPrices,{userId:user.id}):h(ProcurementWorkbench,{accessLevel:user.is_system_admin?4:user.scope_levels.procurement??0,page,onPageChange:change,view:'full',onEnter:()=>{}}))}
 fetch('/api/me').then(r=>r.json()).then(user=>createRoot(document.getElementById('root')).render(h(Host,{user})));`; },
-}], server: { host: '127.0.0.1', port: 0, hmr: false } });
+}], server: { host: '127.0.0.1', port: 0, hmr: false, proxy: { [base + '/excel-preview']: { target: api.origin } } } });
 const gate = () => { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; };
 const evidence = [];
 let browser;
@@ -48,12 +49,13 @@ try {
       try {
         const req = route.request(), url = new URL(req.url()); assert.equal(url.origin, new URL(origin).origin);
         if (!url.pathname.startsWith('/api/')) return route.continue();
+        if (url.pathname === base + '/excel-preview') return route.continue();
         assert.ok(url.pathname === '/api/me' || url.pathname.startsWith('/api/workbenches/'));
         if (fault === 'readonly' && url.pathname.startsWith('/api/workbenches/')) {
           assert.ok(url.pathname.startsWith('/api/workbenches/research/material-prices')); assert.equal(req.method(), 'GET');
         }
         if (req.method() === 'GET') reads.push(url.pathname);
-        else writes.push({ path: url.pathname, body: req.postDataJSON() });
+        else writes.push({ path: url.pathname, body: req.headers()['content-type']?.includes('application/json') ? req.postDataJSON() : null });
         const saving = url.pathname === base + '/prices/bulk-adjustments' && req.method() === 'POST';
         const adjusting = url.pathname.endsWith('/adjustments') && req.method() === 'POST';
         if (saving && fault === 'save-failed' && !injected) { injected = true; return route.fulfill({ status: 500, json: { detail: 'W6 合成保存失败' } }); }
@@ -100,7 +102,7 @@ try {
   async function confirm(page) {
     await page.getByRole('button', { name: /^保存修改/ }).click();
     const dialog = page.getByRole('dialog', { name: '保存价格修改' });
-    await dialog.getByLabel('录价说明', { exact: true }).selectOption('供应商报价');
+    await dialog.getByLabel('录价说明', { exact: true }).click(); await dialog.getByRole('button', { name: '供应商报价', exact: true }).click();
     await dialog.getByRole('button', { name: '确认并保存', exact: true }).click();
     return dialog;
   }
@@ -217,7 +219,7 @@ try {
     assert.equal(await date.inputValue(), '2026-09-10');
     await date.fill((await get(base + '/overview')).current_update.price_date);
     const price = drawer.getByRole('spinbutton', { name: '价格', exact: true }); await price.fill('12');
-    await drawer.getByLabel('录价说明', { exact: true }).selectOption('供应商报价');
+    await drawer.getByLabel('录价说明', { exact: true }).click(); await drawer.getByRole('button', { name: '供应商报价', exact: true }).click();
     await drawer.getByRole('button', { name: '确认并保存', exact: true }).click({ trial: true });
     await drawer.getByRole('button', { name: '确认并保存', exact: true }).evaluate(button => { button.click(); button.click(); });
     await drawer.getByRole('button', { name: '正在写入', exact: true }).waitFor();
@@ -236,7 +238,7 @@ try {
     const drawer = page.getByRole('dialog', { name: '原料价格详情', exact: true });
     await drawer.getByRole('button', { name: '录入新价格', exact: true }).click();
     await drawer.getByRole('spinbutton', { name: '价格', exact: true }).fill('11');
-    await drawer.getByLabel('录价说明', { exact: true }).selectOption('供应商报价');
+    await drawer.getByLabel('录价说明', { exact: true }).click(); await drawer.getByRole('button', { name: '供应商报价', exact: true }).click();
     await drawer.getByRole('button', { name: '确认并保存', exact: true }).click();
     await held.promise;
     const before = reads.filter(path => path === base + '/overview').length;
@@ -252,7 +254,7 @@ try {
     await page.getByRole('textbox', { name: '搜索原料', exact: true }).fill('A');
     await page.getByRole('button', { name: '确认波动', exact: true }).first().click();
     const region = page.getByRole('region', { name: 'A价格波动确认', exact: true });
-    await region.getByLabel('A确认依据', { exact: true }).selectOption('other');
+    await region.getByLabel('A确认依据', { exact: true }).click(); await region.getByRole('button', { name: '其他原因', exact: true }).click();
     const reason = region.getByRole('textbox', { name: 'A确认依据其他原因', exact: true }); await reason.fill('合成供应商核对依据');
     await page.getByRole('button', { name: '切换研发原料', exact: true }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: '继续编辑', exact: true }).click();
@@ -263,7 +265,7 @@ try {
     await page.getByRole('textbox', { name: '搜索原料', exact: true }).fill('W6-002');
     await page.getByRole('button', { name: '确认波动', exact: true }).click();
     const prior = page.getByRole('region', { name: 'W6-002价格波动确认', exact: true });
-    await prior.getByLabel('W6-002确认依据', { exact: true }).selectOption('other');
+    await prior.getByLabel('W6-002确认依据', { exact: true }).click(); await prior.getByRole('button', { name: '其他原因', exact: true }).click();
     await prior.getByRole('textbox', { name: 'W6-002确认依据其他原因', exact: true }).fill('合成详情改价核对依据');
     await prior.getByRole('button', { name: '确认波动', exact: true }).click();
     await prior.waitFor({ state: 'detached' });
@@ -309,6 +311,63 @@ try {
     await drawer.getByRole('button', { name: '关闭详情', exact: true }).click(); await drawer.waitFor({ state: 'detached' });
     assert.equal(await ranking.getByRole('button', { name: 'A', exact: true }).first().evaluate(button => document.activeElement === button), true);
     assert.equal(writes.filter(row => !row.path.endsWith('/preferences')).length, 0);
+  });
+  await run('report-import-stock-preview-and-activation', '', async ({ page, get }) => {
+    const before = await get(base + '/overview');
+    await page.locator('[class*="ledgerTableFrame"] tbody tr').first().waitFor();
+    const ledgerReads=[];
+    page.on('request',request=>{if(new URL(request.url()).searchParams.get('read_mode')==='ledger')ledgerReads.push(request.url());});
+    const ledgerFrames=await page.getByRole('button', { name: '导入报表', exact: true }).evaluate(button=>new Promise(resolve=>{
+      const frames=[],started=performance.now();
+      const sample=()=>{frames.push(document.querySelectorAll('[class*="ledgerTableFrame"] tbody tr').length);if(performance.now()-started<400)requestAnimationFrame(sample);else resolve(frames);};
+      sample();button.click();
+    }));
+    assert.equal(ledgerReads.length,0,'Opening import must not refetch the ledger');
+    assert.ok(ledgerFrames.every(count=>count===ledgerFrames[0]),'Opening import must keep every ledger frame populated');
+    const dialog = page.getByRole('dialog', { name: '导入价格', exact: true });
+    await dialog.getByRole('button',{name:'关闭导入',exact:true}).click();
+    await page.getByRole('button',{name:'导入报表',exact:true}).click();
+    assert.equal(ledgerReads.length,0,'Closing and reopening import must retain the ledger');
+    await dialog.locator('input[type=file]').setInputFiles(process.env.W6_REPORT);
+    await dialog.getByLabel('表内价格日期').waitFor();
+    await dialog.getByRole('cell',{name:'测试采购员',exact:true}).waitFor();
+    assert.equal(await dialog.getByRole('button', { name: '检查数据', exact: true }).count(), 0);
+    await dialog.getByRole('row').filter({hasText:'A'}).getByRole('cell', {name:'17',exact:true}).waitFor();
+    assert.equal(await dialog.getByRole('textbox', { name: 'A库存数量', exact: true }).count(), 0);
+    await dialog.getByText('可导入 1 · 异常 0', { exact: true }).waitFor();
+    const geometry = () => dialog.getByRole('region', {name:'报表核对明细'}).locator('tr').evaluateAll(rows => rows.map(row => Array.from(row.children).map(cell => {const r=cell.getBoundingClientRect();return [r.x,r.y,r.width,r.height];})));
+    const readonlyGeometry = await geometry();
+    await dialog.getByRole('button', { name: '编辑数据', exact: true }).click();
+    assert.deepEqual(await geometry(), readonlyGeometry, 'Editing must not change column widths or row heights');
+    await dialog.getByRole('textbox', { name: 'A库存数量', exact: true }).fill('bad');
+    await dialog.getByRole('cell', { name: /数字格式无效/ }).waitFor();
+    assert.equal(await dialog.getByRole('button', { name: '确认并导入', exact: true }).isDisabled(), true);
+    await dialog.getByRole('textbox', { name: 'A采购员', exact: true }).fill('合成采购员');
+    await dialog.getByRole('textbox', { name: 'A库存数量', exact: true }).fill('19');
+    await dialog.getByRole('textbox', { name: 'A库存价格', exact: true }).fill('22');
+    await dialog.getByRole('textbox', { name: 'A行情价格', exact: true }).fill('61');
+    await dialog.getByRole('button', { name: '完成编辑', exact: true }).click();
+    await dialog.getByText('可导入 1 · 异常 0', { exact: true }).waitFor();
+
+    await dialog.getByLabel('录价说明', { exact: true }).click();
+    const spacing = await dialog.locator('details[open] button[data-option]').evaluateAll(buttons => buttons.slice(1).map((button,index) => button.getBoundingClientRect().top-buttons[index].getBoundingClientRect().bottom));
+    assert.equal(new Set(spacing).size, 1, 'Every option including the first must have equal spacing');
+    await dialog.getByRole('button', { name: '供应商报价', exact: true }).click();
+    await dialog.getByRole('button', { name: '确认并导入', exact: true }).click();
+    await dialog.waitFor({ state: 'detached' });
+    const staged = await get(base + '/overview');
+    assert.equal(staged.materials.find(row => row.code === 'A').inventory_price, before.materials.find(row => row.code === 'A').inventory_price);
+    await page.getByRole('button', { name: '启用价格', exact: true }).click();
+    const activation = page.getByRole('dialog', { name: '启用价格', exact: true });
+    await activation.getByText('同步库存 1 项，并更新产品成本', { exact: true }).click();
+    await activation.getByText('19', { exact: true }).waitFor();
+    await activation.getByRole('button', { name: '确认启用', exact: true }).click();
+    await activation.waitFor({ state: 'detached' });
+    const after = await get(base + '/overview');
+    const material = after.materials.find(row => row.code === 'A');
+    assert.equal(material.price_modifier.name,'合成采购员');
+    assert.equal(material.inventory_quantity, '19'); assert.equal(material.inventory_price, '22'); assert.equal(material.latest_price, '61');
+    assert.equal(after.batches.length, before.batches.length + 1);
   });
   await run('research-readonly-scope-failures-refresh-and-cleanup', 'readonly', async ({ page, get, reads, writes }) => {
     await page.getByRole('button', { name: '重试', exact: true }).click();

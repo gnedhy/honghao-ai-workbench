@@ -107,7 +107,7 @@ export function saveActivationGrant(id: string, enabled: boolean, manager?: bool
 export function saveDepartmentMaterials(id: string, material_ids: string[]): Promise<ProcurementOverview> {
   return fetchJson(`/api/workbenches/procurement/departments/${id}/materials`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({material_ids}) });
 }
-export type ExcelPreview = { default_sheet: string; sheets: Array<{ name: string; dates: string[]; rows: number }>; selection?: { content: string; valid: number; blocked: number; unreported: number; rows: Array<{ row: number; code: string; raw_price: string; state: string }> } };
+export type ExcelPreview = { default_sheet: string; sheets: Array<{ name: string; dates: string[]; rows: number }>; selection?: { content: string; valid: number; blocked: number; unreported: number; rows: Array<{ purchaser: string; row: number; code: string; name: string; unit: string; raw_price: string; state: string; raw_inventory_quantity?: string; raw_inventory_price?: string; inventory_quantity?: string | null; inventory_price?: string | null }> } };
 export function previewProcurementExcel(file: File, sheet?: string, price_date?: string): Promise<ExcelPreview> {
   const body = new FormData(); body.append("file", file); if (sheet) body.append("sheet", sheet); if (price_date) body.append("price_date", price_date);
   return fetchJson("/api/workbenches/procurement/excel-preview", { method: "POST", body });
@@ -176,11 +176,12 @@ export function saveProcurementPreferences(input: ProcurementPreferences): Promi
   });
 }
 
-export function previewProcurementImport(sourceName: string, effectiveDate: string, content: string): Promise<ProcurementImportPreview> {
+export function previewProcurementImport(sourceName: string, effectiveDate: string, content: string, signal?: AbortSignal): Promise<ProcurementImportPreview> {
   return fetchJson<ProcurementImportPreview>("/api/workbenches/procurement/import-preview", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source_name: sourceName, effective_date: effectiveDate, content }),
+    signal,
   });
 }
 

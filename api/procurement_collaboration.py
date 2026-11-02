@@ -122,12 +122,12 @@ def set_grant(url: str, actor: dict, target_id: str, enabled: bool, manager: boo
         admin_event(db, actor["id"], "grant.enabled" if enabled else "grant.revoked", target_id, {"name": target["display_name"], "manager": manager}, scope)
 
 
-def record_changes(db, event_id, update_id, actor_id, price_date, items):
+def record_changes(db, event_id, update_id, actor_id, price_date, items, purchasers=None):
     actor = db.execute("SELECT display_name FROM identity_users WHERE id=%s", (actor_id,)).fetchone()
     now = datetime.now(UTC).isoformat()
     for material_id, before, after in items:
-        db.execute("INSERT INTO procurement_saved_changes (event_id, update_id, material_id, actor_id, actor_name, before_price, after_price, price_date, created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                   (event_id, update_id, material_id, actor_id, actor[0] if actor else actor_id, before, after, price_date, now))
+        db.execute("INSERT INTO procurement_saved_changes (event_id, update_id, material_id, actor_id, actor_name, before_price, after_price, price_date, created_at, source_purchaser) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                   (event_id, update_id, material_id, actor_id, actor[0] if actor else actor_id, before, after, price_date, now, (purchasers or {}).get(material_id, "")))
 
 
 def participants(url: str, update_id: str | None = None) -> dict:
@@ -148,7 +148,7 @@ def price_authorship(url: str, material_id: str | None = None) -> dict:
         batches = db.execute("SELECT id,update_id FROM procurement_price_batches ORDER BY version").fetchall()
         sources = db.execute("SELECT batch_id,material_id,sheet,sha256 FROM procurement_snapshot_sources WHERE (%s::text IS NULL OR material_id=%s)", (material_id, material_id)).fetchall()
         originals = db.execute("SELECT material_id,sheet,sha256,raw_json FROM procurement_material_sources WHERE (%s::text IS NULL OR material_id=%s)", (material_id, material_id)).fetchall()
-        changes = db.execute("""SELECT c.update_id,c.material_id,c.actor_id,c.actor_name,u.status
+        changes = db.execute("""SELECT c.update_id,c.material_id,c.actor_id,c.actor_name,u.status,c.source_purchaser
             FROM procurement_saved_changes c JOIN procurement_updates u ON u.id=c.update_id
             WHERE (%s::text IS NULL OR c.material_id=%s) ORDER BY c.created_at,c._order""", (material_id, material_id)).fetchall()
         touched = db.execute("""SELECT DISTINCT i.update_id,h.material_id FROM procurement_price_history h
@@ -162,9 +162,11 @@ def price_authorship(url: str, material_id: str | None = None) -> dict:
             source_names.setdefault((material, sheet, digest), set()).add(name)
             purchasers.setdefault(material, set()).add(name)
     by_update, by_source, touched_by_update = {}, {}, {}
-    for update, material, actor, name, status in changes:
+    for update, material, actor, name, status, purchaser in changes:
         if status != "cancelled":
-            by_update.setdefault(update, {})[material] = {"kind": "system", "name": name, "id": actor}
+            by_update.setdefault(update, {})[material] = {"kind": "source" if purchaser else "system", "name": purchaser or name, "id": None if purchaser else actor}
+            if purchaser:
+                purchasers.setdefault(material, set()).add(purchaser)
     for update, material in touched:
         touched_by_update.setdefault(update, set()).add(material)
     for batch, material, sheet, digest in sources:

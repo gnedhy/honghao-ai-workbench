@@ -185,6 +185,7 @@ export type ProcurementUpdate = {
   summary: { coverage_count: number; changed_count: number; unchanged_count: number; error_count: number; risk_count: number };
   items: Array<{ material_id: string; code: string; name: string; unit: string; published_price: string | null; draft_price: string | null; change: number | null; comparison_basis: "published" | "previous_inquiry" | "none" }>;
   input_items: ProcurementUpdate["items"];
+  inventory_items?: Array<{ material_id: string; code: string; inventory_quantity: string; inventory_price: string | null }>;
   issues: ProcurementIssue[];
   events: Array<{ id: string; event: string; actor_name: string; reason: string | null; created_at: string }>;
 };
@@ -300,11 +301,13 @@ export type ProcurementImportPreview = {
   importable_count: number;
   skipped_count: number;
   rows: Array<{
+      raw_values: Record<string, string>; purchaser: string;
     code: string;
     name: string;
     unit: string;
     latest_price: string | null;
     inventory_price: string | null;
+    inventory_quantity?: string | null;
     in_transit_price: string | null;
     suggested_price: string | null;
     reference_price: string | null;

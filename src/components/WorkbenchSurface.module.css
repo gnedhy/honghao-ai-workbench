@@ -297,7 +297,6 @@
 .personMenu > div > button, .personMenu .optionRow > button:first-child, .filterGroup > button { display: flex; width: 100%; align-items: center; justify-content: space-between; min-height: 34px; padding: 7px 10px; border-radius: 4px; color: #515c65; background: transparent; font: inherit; font-size: calc(13px + var(--ui-font-offset)); font-weight: 400; text-align: left; cursor: pointer; }
 .personMenu > div > button:hover, .personMenu .optionRow > button:hover, .filterGroup > button:hover { background: #f4f5f6; }
 .personMenu > div > button:focus-visible:where(html:not([data-input-modality="pointer"]) *), .personMenu .optionRow > button:focus-visible:where(html:not([data-input-modality="pointer"]) *), .filterGroup > button:focus-visible:where(html:not([data-input-modality="pointer"]) *) { outline: 1px solid var(--focus-ring); outline-offset: -1px; }
-.personMenu > div > button:first-child { margin-bottom: 5px; }
 .optionRow { display: flex; align-items: center; gap: 2px; }
 .optionRow > button:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .optionRow > .optionDelete { display: grid; flex: none; width: 30px; min-height: 30px; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #68747b; cursor: pointer; }
@@ -477,6 +476,11 @@ dialog.materialCreate > header { display: flex; align-items: center; justify-con
 .updateChange small { color: #858d94; font-size: calc(11px + var(--ui-font-offset)); white-space: nowrap; }
 .reviewControl { display: flex; min-width: 260px; align-items: flex-start; gap: 6px; }
 .reasonSelect { display: grid; min-width: 0; gap: 6px; }
+.reasonSelect .columnMenu > summary { width: 100%; justify-content: space-between; height: 36px; font-size: inherit; }
+.reasonSelect .columnMenu > div { left: 0; right: auto; width: max(100%, 190px); max-height: 240px; overflow-y: auto; }
+.columnMenu > summary[aria-disabled="true"] { opacity: .5; cursor: default; }
+.reasonSelect .personMenu > div > button { color: #515c65; background: transparent; }
+.reasonSelect .personMenu > div > button:hover { background: #f4f5f6; }
 .reviewControl .reasonSelect { flex: 1; }
 .reviewControl input, .reviewControl select { width: 100%; height: 30px; font-size: calc(11.5px + var(--ui-font-offset)); }
 .reasonSelect :focus-visible:where(html:not([data-input-modality="pointer"]) *) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
@@ -681,13 +685,74 @@ dialog.drawer:not([open]) { display: none; }
 .empty { display: grid; min-height: 240px; place-content: center; justify-items: center; color: #8a9298; text-align: center; }
 .empty strong { margin-top: 10px; color: #596168; font-size: calc(13.5px + var(--ui-font-offset)); }
 .empty p { margin: 5px 0 0; font-size: calc(12px + var(--ui-font-offset)); }
-dialog.importPanel { position: fixed; inset: 0; margin: auto; padding: 0; width: min(520px, calc(100% - 32px)); max-height: calc(100dvh - 40px); }
+dialog.importPanel { position: fixed; inset: 0; margin: auto; padding: 0; width: min(860px, calc(100% - 32px)); height: fit-content; max-height: calc(100dvh - 40px); }
+dialog.importPanel[data-has-file="false"] { width: min(560px, calc(100% - 32px)); }
+.importEmpty { display: grid; justify-items: center; gap: 20px; padding: 28px 16px; border: 1px dashed var(--border); border-radius: 10px; color: var(--muted); text-align: center; font-size: calc(12px + var(--ui-font-offset)); }
+.importEmpty p { margin: 0; line-height: 1.6; }
+.importEmpty small { font-size: inherit; }
+.importEmptyActions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.importEmptyActions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; min-height: 36px; font-size: inherit; }
+.importBody { display: flex; flex-direction: column; gap: 16px; min-height: 0; overflow: hidden; padding: 0 28px 20px; }
+.importBody > * { flex-shrink: 0; }
+.importBody .importIntro { margin: 0; color: var(--muted); font-size: calc(12px + var(--ui-font-offset)); line-height: 1.6; }
+.importFileRow { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: calc(12px + var(--ui-font-offset)); }
+.importFileName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.importFileRow .filePicker { flex-shrink: 0; height: 36px; margin: 0; box-sizing: border-box; }
+.importFields { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.importField { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: calc(12px + var(--ui-font-offset)); }
+.importField .columnMenu > summary { height: 36px; justify-content: space-between; font-size: inherit; }
+.importPanel .columnMenu > summary { color: var(--text); }
+.importPanel .personMenu > div > button { font-size: calc(12px + var(--ui-font-offset)); }
+.importField .columnMenu > summary span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.importField .columnMenu > div { left: 0; right: auto; width: 100%; max-height: 180px; overflow-y: auto; z-index: 4; }
+.importPanel .importBody label { margin-top: 0; }
+.importSummary { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; font-size: calc(13px + var(--ui-font-offset)); }
+.importSummary span, .importNote { color: var(--muted); font-size: calc(12px + var(--ui-font-offset)); }
+.importBody .importTable { flex: 1 1 auto; min-height: 120px; max-height: 38dvh; overflow: auto; border-block: 1px solid var(--border); }
+.importTable table { min-width: 720px; width: 100%; table-layout: fixed; font-variant-numeric: tabular-nums; }
+.importTable :is(th, td):first-child { width: 15%; }
+.importTable :is(th, td):nth-child(2) { width: 11%; }
+.importTable :is(th, td):nth-child(3) { width: 15%; }
+.importTable :is(th, td):nth-child(4), .importTable :is(th, td):nth-child(5) { width: 16%; }
+.importTable :is(th, td):nth-child(6) { width: 14%; }
+.importTable :is(th, td):last-child { width: 13%; }
+.importTable td { height: 46px; padding: 6px 12px; box-sizing: border-box; }
+.importValue, .importTable td input { display: block; width: 100%; min-width: 0; height: 32px; padding: 4px 7px; border: 1px solid transparent; box-sizing: border-box; text-align: right; font: inherit; line-height: 22px; }
+.importPanel .importTable td input { border-color: var(--border); font-size: inherit; }
+.importPanel .importTable .importPurchaser { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.importTable th { position: sticky; top: 0; z-index: 1; background: #f8f9fa; color: #687078; }
+.importTable th:nth-child(2) { padding-left: 20px; }
+.importTable th:nth-child(n+3):nth-child(-n+5) { padding-right: 20px; }
+.importTable tr[data-invalid="true"] td:last-child { color: var(--danger, #b04437); }
+.importTable :is(th, td):nth-child(n+3):nth-child(-n+6) { text-align: right; }
+.importTable :is(th, td):last-child { text-align: left; }
+.importNote { margin: 0; line-height: 1.6; }
+.importNote span { display: block; }
+.importPanel .importActions { margin: 0; padding: 18px 28px; border-top: 1px solid var(--border); align-items: center; }
+.importPanel .importActions > button { height: 36px; min-height: 36px; font-size: calc(12px + var(--ui-font-offset)); padding: 7px 14px; }
+.importPanel .importActions > button:global(.primary-button) { background: var(--text); border-color: var(--text); color: #fff; }
+.importPanel .importActions > button:global(.primary-button):hover:not(:disabled) { background: var(--text); opacity: .9; }
+.importPanel .importActions > button:global(.secondary-button) { border-color: var(--border); }
+.importReason { margin-right: auto; width: 240px; min-width: 160px; max-width: 45%; font-size: calc(12px + var(--ui-font-offset)); }
+.importPanel .importReason input { width: 100%; height: 36px; font: inherit; }
+.importPanel select { width: 100%; min-height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text); font: inherit; }
+@media (max-width: 640px) {
+  .importBody { padding-inline: 18px; gap: 12px; }
+  .importTable :is(th, td) { padding-inline: 6px; }
+  .importTable th:nth-child(2) { padding-left: 14px; }
+  .importTable th:nth-child(n+3):nth-child(-n+5) { padding-right: 14px; }
+  .importTable :is(th, td):first-child { position: sticky; left: 0; background: #fff; z-index: 1; }
+  .importTable th:first-child { background: #f8f9fa; z-index: 2; }
+  .importPanel .importActions { flex-wrap: wrap; padding: 14px 18px; }
+  .importReason { flex-basis: 100%; max-width: none; }
+}
+@media (max-height: 650px) { .importBody { overflow-y: auto; } }
 .importIntro { margin: 0 0 20px; color: #78818a; font-size: calc(13px + var(--ui-font-offset)); }
 .importHeading { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .importHeading span { color: #8d959c; font-size: calc(11px + var(--ui-font-offset)); }
 .importHeading h2 { margin: 4px 0 0; font-size: calc(17px + var(--ui-font-offset)); }
 .importPanel label { display: grid; gap: 6px; margin-top: 12px; color: #596168; font-size: calc(12px + var(--ui-font-offset)); }
-.importPanel .filePicker { display: inline-flex; width: fit-content; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.importPanel .filePicker { display: inline-flex; width: fit-content; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: #fff; font: inherit; cursor: pointer; }
 .filePicker input { display: none; }
 .importPanel input, .importPanel textarea { width: 100%; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: #fff; font: inherit; outline: 0; transition: border-color var(--motion-fast) ease; }
 .importPanel input { height: 36px; padding: 0 10px; }

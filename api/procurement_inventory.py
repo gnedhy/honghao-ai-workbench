@@ -28,6 +28,36 @@ def inventory_snapshot(db: Connection, material_id: str | None = None) -> dict:
             """, (material_id, material_id))}
 
 
+def report_inventory(db: Connection, update_id: str) -> dict:
+    rows = {}
+    for import_id, payload in db.execute("""SELECT id,inventory_payload FROM procurement_imports
+            WHERE update_id=%s AND archived_at IS NULL ORDER BY created_at,_order""", (update_id,)):
+        for row in json.loads(payload):
+            rows[row["material_id"]] = {**row, "import_id": import_id}
+    return rows
+
+
+def activate_report_inventory(db: Connection, update_id: str, batch_id: str, actor_id: str, now: str) -> None:
+    rows = report_inventory(db, update_id)
+    for material_id, row in rows.items():
+        if not db.execute("SELECT 1 FROM procurement_materials WHERE id=%s AND archived_at IS NULL", (material_id,)).fetchone():
+            raise ValueError("库存原料目录已变化，请重新核对导入")
+        price = None if row["price"] == "0" else row["price"]
+        db.execute("""INSERT INTO procurement_inventory
+            (material_id,quantity,price,raw_price,source_sha256,sheet,source_row,imported_by,imported_at)
+            VALUES (%s,%s,%s,%s,%s,'价格报表',%s,%s,%s)
+            ON CONFLICT(material_id) DO UPDATE SET quantity=excluded.quantity,price=excluded.price,
+            raw_price=excluded.raw_price,source_sha256=excluded.source_sha256,sheet=excluded.sheet,
+            source_row=excluded.source_row,imported_by=excluded.imported_by,imported_at=excluded.imported_at""",
+            (material_id, row["quantity"], price, row["price"] or "", 'report:' + row["import_id"], row["source_row"], actor_id, now))
+    # Freeze the inventory used by this period, including unchanged materials.
+    snapshot = db.execute("""SELECT i.material_id,i.quantity,i.price FROM procurement_inventory i
+        JOIN procurement_price_batch_items b ON b.material_id=i.material_id WHERE b.batch_id=%s ORDER BY i.material_id""", (batch_id,)).fetchall()
+    db.execute("UPDATE procurement_price_batches SET inventory_snapshot=%s WHERE id=%s", (json.dumps(snapshot), batch_id))
+    db.execute("""UPDATE procurement_price_batch_items b SET inventory_price=i.price
+        FROM procurement_inventory i WHERE b.material_id=i.material_id AND b.batch_id=%s""", (batch_id,))
+
+
 def _preview(db: Connection, content: bytes, *, partial: bool = False) -> dict:
     sheets = read_workbook(content)
     if TOTAL not in sheets:

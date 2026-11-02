@@ -193,7 +193,7 @@ class ProcurementStore:
                 if current is not None and current["unit"] != row["unit"]:
                     issues.append("unit_conflict")
                 suggested = row["latest_price"]
-                if suggested is None:
+                if suggested is None and row["inventory_quantity"] is None:
                     issues.append("missing_price")
                 previous = current["latest_price"] if current is not None else row["previous_latest_price"]
                 if current is not None and effective_date is not None:
@@ -206,13 +206,13 @@ class ProcurementStore:
                     "reference_price": _decimal_text(_decimal(previous)),
                     "change": _change(row["latest_price"], previous),
                     "issues": issues,
-                    "importable": not any(issue in {"duplicate_code", "unit_conflict", "unknown_code", "missing_price", "invalid_price", "invalid_identity"} for issue in issues),
+                    "importable": not any(issue in {"duplicate_code", "unit_conflict", "unknown_code", "missing_price", "invalid_price", "invalid_identity", "invalid_purchaser"} for issue in issues),
                 })
             return {
                 "received_count": len(preview_rows),
                 "baseline_id": baseline_id,
                 "importable_count": sum(1 for row in preview_rows if row["importable"]),
-                "skipped_count": sum(1 for row in preview_rows if any(i in {"duplicate_code", "unit_conflict", "unknown_code", "invalid_price", "invalid_identity"} for i in row["issues"])),
+                "skipped_count": sum(1 for row in preview_rows if any(i in {"duplicate_code", "unit_conflict", "unknown_code", "invalid_price", "invalid_identity", "invalid_purchaser"} for i in row["issues"])),
                 "blank_count": sum(1 for row in preview_rows if "missing_price" in row["issues"]),
                 "rows": preview_rows,
             }
@@ -289,6 +289,8 @@ class ProcurementStore:
                 connection, effective_date.isoformat(), source_name, actor_user_id, now
             )
             changes = []
+            purchasers = {}
+            inventory = []
             for row in preview["rows"]:
                 if not row["importable"]:
                     continue
@@ -296,9 +298,17 @@ class ProcurementStore:
                 if not existing or existing[3] != row["unit"]:
                     raise RuntimeError("原料目录或单位已变化，请重新预览；价格输入未保存")
                 material_id = str(existing[0])
+                purchasers[material_id] = row["purchaser"]
                 before = connection.execute("SELECT latest_price FROM procurement_update_items WHERE update_id=%s AND material_id=%s", (update_id, material_id)).fetchone()
                 if before is None:
                     before = connection.execute("SELECT latest_price FROM procurement_price_batch_items WHERE batch_id=%s AND material_id=%s", (self._latest_batch_id(connection), material_id)).fetchone()
+                if row["inventory_quantity"] is not None:
+                    inventory.append({"material_id": material_id, "quantity": row["inventory_quantity"],
+                                      "price": row["inventory_price"], "source_row": row["source_row"], "purchaser": row["purchaser"]})
+                    if row["latest_price"] is None:
+                        changes.append((material_id, before[0] if before else None, before[0] if before else None))
+                        imported_count += 1
+                        continue
                 changes.append((material_id, before[0] if before else None, row["latest_price"]))
                 previous_latest = str(existing[2]) if existing[2] is not None else row["previous_latest_price"]
                 same_period = connection.execute(
@@ -344,6 +354,7 @@ class ProcurementStore:
                     update_id,
                 ),
             )
+            connection.execute("UPDATE procurement_imports SET inventory_payload=%s WHERE id=%s", (json.dumps(inventory), import_id))
             connection.execute(
                 "UPDATE procurement_working_state SET latest_import_id = %s, submitted_by = NULL, submitted_at = NULL WHERE id = 1",
                 (import_id,),
@@ -354,7 +365,7 @@ class ProcurementStore:
                 references = {str(self._material_for_code(connection, code)[0]): value for code, value in price_confirmation.references.items() if self._material_for_code(connection, code)}
                 self._confirm_saved_risks(connection, update_id, changed_ids, PriceConfirmation(baseline_id=price_confirmation.baseline_id, references=references), reason, actor_user_id)
             event_id = self._event(connection, update_id, "imported", actor_user_id, reason.strip())
-            collaboration.record_changes(connection, event_id, update_id, actor_user_id, effective_date.isoformat(), changes)
+            collaboration.record_changes(connection, event_id, update_id, actor_user_id, effective_date.isoformat(), changes, purchasers)
         return {
             "id": import_id,
             "source_name": source_name.strip(),
@@ -599,6 +610,9 @@ class ProcurementStore:
                 for row in issue_rows
             ]
             changed = [item for item in items if _decimal(item["draft_price"]) != _decimal(item["published_price"])]
+            from api.procurement_inventory import report_inventory
+            inventory = report_inventory(connection, update_id)
+            inventory_codes = dict(connection.execute("SELECT id,code FROM procurement_materials WHERE id=ANY(%s)", (list(inventory),))) if inventory else {}
             return {
                 "id": str(update[0]), "price_date": str(update[1]), "source_name": str(update[2]),
                 "status": str(update[3]), "created_at": str(update[4]), "updated_at": str(update[5]),
@@ -612,6 +626,7 @@ class ProcurementStore:
                     "risk_count": sum(1 for issue in issues if issue["kind"] == "price_spike" and issue["status"] == "open"),
                 },
                 "items": changed,
+                "inventory_items": [{"material_id": mid, "code": inventory_codes.get(mid, mid), "inventory_quantity": row["quantity"], "inventory_price": row["price"]} for mid, row in inventory.items()],
                 "input_items": [item for item in items if item["material_id"] in input_ids],
                 "changes": collaboration.saved_events(self.url, update_id=update_id),
                 "issues": issues,
@@ -1412,6 +1427,8 @@ class ProcurementStore:
             self._event(connection, scheduled_id, "revalidation_required", None, "正式基线已更新")
         for (draft_id,) in connection.execute("SELECT id FROM procurement_updates WHERE status IN ('draft','returned','submitted','revalidation_required') AND id != %s", (update_id,)).fetchall():
             self._refresh_update_issues(connection, str(draft_id), now)
+        from api.procurement_inventory import activate_report_inventory
+        activate_report_inventory(connection, update_id, batch_id, actor_user_id, now)
         from api.research import enqueue
         enqueue(connection, "采购正式价格更新")
         return {"id": batch_id, "version": version, "published_at": now, "activated_at": now, "item_count": len(rows)}
@@ -1543,13 +1560,18 @@ class ProcurementStore:
                        FROM procurement_update_items WHERE update_id=%s""", (copied_id, update_id),
                 )
                 collaboration.freeze_sources(connection, copied_id, update_id, self._latest_batch_id(connection))
+                for source_id, in connection.execute("SELECT id FROM procurement_imports WHERE update_id=%s AND archived_at IS NULL AND inventory_payload<>'[]' ORDER BY created_at,_order", (update_id,)).fetchall():
+                    connection.execute("""INSERT INTO procurement_imports
+                        (id,source_name,received_count,imported_count,skipped_count,created_by,created_at,effective_date,update_id,inventory_payload)
+                        SELECT %s,source_name,received_count,imported_count,skipped_count,%s,%s,effective_date,%s,inventory_payload
+                        FROM procurement_imports WHERE id=%s""", (str(uuid4()),actor_user_id,now,copied_id,source_id))
                 self._refresh_update_issues(connection, copied_id, now)
                 event_id = self._event(connection, copied_id, "copied_from_schedule", actor_user_id, f"从排期 {update_id} 复制：{reason}")
-                changes = connection.execute("""SELECT c.material_id,b.latest_price,c.after_price,c.price_date FROM procurement_saved_changes c
+                changes = connection.execute("""SELECT c.material_id,b.latest_price,c.after_price,c.price_date,c.source_purchaser FROM procurement_saved_changes c
                     LEFT JOIN procurement_price_batch_items b ON b.material_id=c.material_id AND b.batch_id=%s
                     WHERE c.update_id=%s AND c._order=(SELECT MAX(s._order) FROM procurement_saved_changes s WHERE s.update_id=c.update_id AND s.material_id=c.material_id)""", (self._latest_batch_id(connection),update_id)).fetchall()
-                for material_id,before,after,price_date in changes:
-                    collaboration.record_changes(connection,event_id,copied_id,actor_user_id,price_date,[(material_id,before,after)])
+                for material_id,before,after,price_date,purchaser in changes:
+                    collaboration.record_changes(connection,event_id,copied_id,actor_user_id,price_date,[(material_id,before,after)],{material_id:purchaser})
         result = self.get_update(update_id) or {"id": update_id, "status": "cancelled"}
         result["copied_update"] = self.get_update(copied_id) if copied_id else None
         return result
@@ -1622,6 +1644,7 @@ class ProcurementStore:
             ).fetchall()
             from api.procurement_reads import revision_note
             note = revision_note(connection,batch_id)
+            inventory = {mid: quantity for mid, quantity, _ in json.loads(connection.execute("SELECT inventory_snapshot FROM procurement_price_batches WHERE id=%s", (batch_id,)).fetchone()[0])}
             scheduled_activation = connection.execute(
                 """SELECT 1 FROM procurement_update_events WHERE event='scheduled_activation'
                    AND update_id=(SELECT update_id FROM procurement_price_batches WHERE id=%s)""", (batch_id,),
@@ -1651,6 +1674,7 @@ class ProcurementStore:
                         "unit": str(row[3]),
                         "latest_price": row[4],
                         "inventory_price": row[5],
+                        **({"inventory_quantity": inventory[row[0]]} if row[0] in inventory else {}),
                         "in_transit_price": row[6],
                         "recommended_price": row[7],
                     }
@@ -1870,6 +1894,16 @@ def create_procurement_router(
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         return overview(request)
+
+    @router.get("/import-template")
+    def download_import_template(request: Request):
+        user = actor(request, 3)
+        require_price_write(user)
+        from fastapi.responses import Response
+        from api.procurement_excel import import_template
+        return Response(import_template(datetime.now(SHANGHAI).date()),
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": "attachment; filename=material-prices-template.xlsx"})
 
     @router.post("/excel-preview")
     async def excel_preview(request: Request, file: UploadFile = File(), sheet: str | None = Form(None), price_date: str | None = Form(None)):
@@ -2337,6 +2371,8 @@ def _parse_delimited(content: str) -> list[dict[str, Any]]:
         "unit": ("单位", "计量单位"),
         "latest_price": ("行情价", "行情价格", "最新价", "最新价格"),
         "inventory_price": ("库存价", "库存价格"),
+        "inventory_quantity": ("库存数量", "库存量"),
+        "purchaser": ("采购员", "采购人"),
         "in_transit_price": ("在途价", "在途价格"),
         "previous_latest_price": ("上次最新价", "上次价格"),
     }
@@ -2355,22 +2391,29 @@ def _parse_delimited(content: str) -> list[dict[str, Any]]:
         name = str(raw.get(columns["name"] or "", "")).strip()
         unit = str(raw.get(columns["unit"] or "", "")).strip()
         validation_issues = [] if code and name and unit else ["invalid_identity"]
+        purchaser = str(raw.get(columns["purchaser"] or "") or "").strip()
+        if len(purchaser)>100 or any(ord(c)<32 for c in purchaser):
+            validation_issues.append("invalid_purchaser")
         prices = {}
-        for key in ("latest_price", "inventory_price", "in_transit_price", "previous_latest_price"):
+        for key in ("latest_price", "inventory_price", "in_transit_price", "previous_latest_price", "inventory_quantity"):
             try:
                 prices[key] = _price_from_row(raw, columns[key], index)
             except ValueError:
                 prices[key] = None
                 if "invalid_price" not in validation_issues:
                     validation_issues.append("invalid_price")
+        if "invalid_price" not in validation_issues and columns["inventory_quantity"] is not None and (prices["inventory_quantity"] is None or columns["inventory_price"] is None or unit != "kg"):
+            validation_issues.append("invalid_price")
         rows.append({
             "code": code,
             "name": name,
             "unit": unit,
             **prices,
+            "purchaser": purchaser,
             "validation_issues": validation_issues,
             "source_row": index,
             "raw_price": str(raw.get(columns["latest_price"] or "") or ""),
+            "raw_values": {key: str(raw.get(column) or "") for key, column in columns.items() if column is not None},
         })
     if not rows:
         raise ValueError("导入内容没有有效数据行")
@@ -2432,11 +2475,14 @@ def _serialize_import_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "source_row": row.get("source_row"),
         "raw_price": row.get("raw_price"),
+        "raw_values": row.get("raw_values", {}),
+        "purchaser": row.get("purchaser", ""),
         "code": row["code"],
         "name": row["name"],
         "unit": row["unit"],
         "latest_price": _decimal_text(row["latest_price"]),
         "inventory_price": _decimal_text(row["inventory_price"]),
+        "inventory_quantity": _decimal_text(row["inventory_quantity"]),
         "in_transit_price": _decimal_text(row["in_transit_price"]),
         "previous_latest_price": _decimal_text(row["previous_latest_price"]),
     }

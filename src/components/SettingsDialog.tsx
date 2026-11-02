@@ -366,6 +366,13 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
     </div>
     <h3 className="settings-section-label">更新日志</h3>
     <ol className="settings-timeline" tabIndex={0} aria-label="更新日志"><li>
+      <div className="changelog-date"><time dateTime="2026-11-02">2026年11月2日</time></div>
+      <div className="settings-timeline-content">
+        <div><strong>原料报表导入</strong><p>保留人工录价，同时支持导入 Excel、CSV、TXT 文件，自动识别采购员、库存数量、库存价格和行情价格，并提供 Excel 模板下载。</p></div>
+        <div><strong>导入核对与编辑</strong><p>选取文件后自动检查数据，默认只读；点击“编辑数据”可直接修正明细。统一表格列宽、字体、对齐及录价说明，减少重复操作和台账闪动。</p></div>
+        <div><strong>价格与成本同步</strong><p>保存后按现有流程核对启用，行情和库存随本轮生效，建立新的价格历史并联动更新产品成本。报表采购员显示为修改人，实际操作账号仍保留记录。</p></div>
+      </div>
+    </li><li>
       <div className="changelog-date"><time dateTime="2026-10-21">2026年10月21日</time></div>
       <div className="settings-timeline-content">
         <div><strong>配方零投料校验</strong><p>保留原配方的零投料占位行；新增投料或改为非零时，仍校验原料有效性。</p></div>
