@@ -84,6 +84,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _candidate_files(root: Path) -> list[Path]:
     try:
+        repository = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True, check=True)
+        if Path(repository.stdout.decode().strip()).resolve() != root:
+            return [path for path in root.rglob("*") if path.is_file()]
         result = subprocess.run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
             cwd=root,

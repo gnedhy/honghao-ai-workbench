@@ -14,7 +14,9 @@ from xml.etree.ElementTree import ParseError
 from pathlib import Path
 from uuid import uuid4
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
+from openpyxl.comments import Comment
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from api.postgres import transaction
@@ -22,6 +24,37 @@ from api.postgres import transaction
 TOTAL = "原料行情总表"
 DEPARTMENTS = ["研发一部", "研发二部", "研发三部", "研发四部", "研发五部", "宏昊生物"]
 MAX_FILE = 8 * 1024 * 1024
+
+
+def import_template(price_date: date) -> bytes:
+    book = Workbook()
+    sheet = book.active
+    sheet.title = TOTAL
+    sheet.append(["原料编号", "采购员", "库存数量", "库存价格", price_date])
+    sheet["E1"].number_format = 'yyyy-mm-dd" 行情价格"'
+    descriptions = ["填写系统中已有的原料编号，每个编号一行。", "填写负责该原料的采购员，导入后显示为修改人；空白使用导入账号。", "单位 kg，填写非负数字；导入库存价格时必填。",
+                    "单位元/kg，含税；空白或0视为缺价，不再重复加税。", "此列填写行情价格（元/kg，含税）；将本表头日期改为实际报价日期。行情空白沿用原价。"]
+    for cell, description in zip(sheet[1], descriptions):
+        cell.font = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="344054")
+        cell.alignment = Alignment(vertical="center")
+        cell.comment = Comment(description, "宏昊工作台")
+        sheet.column_dimensions[cell.column_letter].width = 25
+    sheet.row_dimensions[1].height = 30
+    sheet.freeze_panes = "A2"
+    notes = book.create_sheet("填写说明")
+    for line in ["原料价格导入模板", "在“原料行情总表”第2行起填写数据，每个原料一行。", *descriptions,
+                 "不要更改前四列表头；行情价格列表头保留为Excel日期。", "请将公式转换为数值后导入。模板不含示例业务数据。"]:
+        notes.append([line])
+    notes.column_dimensions["A"].width = 95
+    for row in notes:
+        row[0].font = Font(name="微软雅黑", size=11)
+        row[0].alignment = Alignment(wrap_text=True, vertical="center")
+        notes.row_dimensions[row[0].row].height = 28
+    stream = io.BytesIO()
+    book.save(stream)
+    book.close()
+    return stream.getvalue()
 
 
 def read_workbook(content: bytes) -> dict:
@@ -100,23 +133,52 @@ def selected_prices(content: bytes, sheet: str, price_date: str, known: dict) ->
     if price_date not in dates:
         raise ValueError("所选日期不存在，请核对表头")
     column = dates.index(price_date)
-    codes = Counter(text(r[1]) for r in rows[1:] if len(r)>1 and text(r[1]))
+    if dates.count(price_date) != 1:
+        raise ValueError("价格日期列重复，请核对表头")
+    headers = [text(v) for v in rows[0]]
+    columns = {}
+    for key, aliases in {"code": {"品名", "编号", "原料编号", "原料编码"},
+                         "inventory_quantity": {"库存数量", "库存量"},
+                         "inventory_price": {"库存价格", "库存价"}, "purchaser": {"采购员", "采购人"}}.items():
+        matches = [i for i, value in enumerate(headers) if value in aliases]
+        if len(matches) > 1 or (key == "code" and not matches):
+            raise ValueError("原料编号和库存字段需要唯一表头")
+        columns[key] = matches[0] if matches else None
+    stock = columns["inventory_price"] is not None
+    if stock and columns["inventory_quantity"] is None:
+        raise ValueError("导入库存价格需要库存数量列")
+    code_column = columns["code"]
+    codes = Counter(text(r[code_column]) for r in rows[1:] if text(r[code_column]))
     result = []
     csv_rows = []
     for n, row in enumerate(rows[1:], 2):
-        code = text(row[1]) if len(row)>1 else ""
+        code = text(row[code_column])
         if not code:
             continue
         raw = text(row[column])
         value, kind = price_value(raw)
         state = "duplicate" if codes[code]>1 else "unknown" if code not in known else kind
-        result.append({"row": n, "code": code, "raw_price": raw, "price": value, "state": state})
-        if state == "number":
+        purchaser = text(row[columns["purchaser"]]) if columns["purchaser"] is not None else ""
+        inventory = {}
+        if stock:
+            quantity, quantity_kind = price_value(row[columns["inventory_quantity"]])
+            price, price_kind = price_value(row[columns["inventory_price"]])
+            inventory = {"inventory_quantity": quantity, "inventory_price": price,
+                         "raw_inventory_quantity": text(row[columns["inventory_quantity"]]), "raw_inventory_price": text(row[columns["inventory_price"]])}
+            if state not in {"duplicate", "unknown"}:
+                if quantity_kind != "number" or price_kind not in {"number", "missing"} or known[code]["unit"] != "kg":
+                    state = "invalid"
+                elif kind == "missing":
+                    state = "stock_only"
+        if len(purchaser)>100 or any(ord(c)<32 for c in purchaser):
+            state = "invalid"
+        result.append({"purchaser": purchaser, "row": n, "code": code, "name": known.get(code, {}).get("name", code), "unit": known.get(code, {}).get("unit", "kg"), "raw_price": raw, "price": value, "state": state, **inventory})
+        if state in {"number", "stock_only"}:
             item = known[code]
-            csv_rows.append([code, item["name"], item["unit"], value])
+            csv_rows.append([code, item["name"], item["unit"], value, purchaser, *([inventory["inventory_quantity"], inventory["inventory_price"]] if stock else [])])
     stream = io.StringIO()
     writer = csv.writer(stream)
-    writer.writerow(["编号", "名称", "单位", "行情价格"])
+    writer.writerow(["编号", "名称", "单位", "行情价格", "采购员", *(["库存数量", "库存价格"] if stock else [])])
     writer.writerows(csv_rows)
     return {"rows": result, "content": stream.getvalue(), "valid": len(csv_rows),
             "blocked": sum(r["state"] in {"duplicate", "unknown", "range", "invalid"} for r in result),

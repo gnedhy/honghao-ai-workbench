@@ -136,11 +136,13 @@ def material_comparison(url, batch_id, material_id):
 def current_authorship(url, version, pending_id=None):
     with transaction(url) as db:
         official={mid:value for mid,value in db.execute('SELECT id,procurement_price_modifier(id,%s) FROM procurement_materials WHERE archived_at IS NULL',(version,)) if value is not None} if version is not None else {}
-        updates={mid:dict(kind='system',name=name,id=actor) for mid,actor,name in db.execute("""SELECT DISTINCT ON(c.material_id) c.material_id,c.actor_id,c.actor_name FROM procurement_saved_changes c
+        updates={mid:dict(kind='source' if purchaser else 'system',name=purchaser or name,id=None if purchaser else actor) for mid,actor,name,purchaser in db.execute("""SELECT DISTINCT ON(c.material_id) c.material_id,c.actor_id,c.actor_name,c.source_purchaser FROM procurement_saved_changes c
             JOIN procurement_updates u ON u.id=c.update_id WHERE c.update_id=%s AND u.status!='cancelled'
             ORDER BY c.material_id,c.created_at DESC,c._order DESC""",(pending_id,))} if pending_id else {}
         purchasers={mid:names for mid,names in db.execute("""SELECT material_id,array_agg(DISTINCT trim(raw_json::jsonb->>0) ORDER BY trim(raw_json::jsonb->>0))
             FROM procurement_material_sources WHERE NULLIF(trim(raw_json::jsonb->>0),'') IS NOT NULL GROUP BY material_id""")}
+        for mid,name in db.execute("SELECT DISTINCT c.material_id,c.source_purchaser FROM procurement_saved_changes c JOIN procurement_updates u ON u.id=c.update_id WHERE c.source_purchaser<>'' AND u.status!='cancelled'"):
+            purchasers[mid]=sorted(set([*purchasers.get(mid,[]),name]))
         return official,updates,purchasers
 
 

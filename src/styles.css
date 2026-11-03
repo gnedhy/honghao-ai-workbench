@@ -925,6 +925,8 @@ dialog.personal-profile { width: min(505px, calc(100% - 24px)); height: fit-cont
 .scope-access-name small { color: var(--muted); font-size: calc(11px + var(--ui-font-offset)); }
 .scope-access-name small[data-enabled="true"] { color: var(--green); }
 .scope-access-row[data-inactive="true"] .scope-access-name strong { color: var(--muted); }
+.scope-access-editor .settings-group-copy > strong,
+.settings-module-panel .settings-group-copy > strong { font-size: calc(11.5px + var(--ui-font-offset)); }
 .scope-access-editor > .settings-group + .settings-group { border-top: 0; }
 .scope-access-editor .scope-access-list { border-top: 0; border-bottom: 0; }
 .scope-access-help { display: flex; align-items: center; gap: 4px; }

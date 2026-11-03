@@ -12,11 +12,11 @@ import { DashboardPanel, WorkbenchLoading } from "../components/WorkbenchLayout"
 import { DecimalInput } from "../components/DecimalInput";
 import { PriceMovement as Movement } from "../components/PriceMovement";
 import { Drawer } from "../components/Drawer";
-import { TrendMaterialMenu, PriceDateRangeMenu } from "../components/WorkbenchMenus";
+import { TrendMaterialMenu, PriceDateRangeMenu, WorkbenchOptionMenu } from "../components/WorkbenchMenus";
 import { useMoverPaging } from "../components/useMoverPaging";
 import { RecordFilters } from "../components/RecordFilters";
 import { createPortal } from "react-dom";
-import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, CalendarDays, Check, ChevronRight, Clock3, FileUp, PackageCheck, RefreshCw, TrendingDown, TrendingUp, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, CalendarDays, Check, ChevronRight, Clock3, Download, FileText, FileUp, PackageCheck, RefreshCw, TrendingDown, TrendingUp, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { fetchJson, createProcurementMaterial, cancelProcurementSchedule, confirmProcurementImport, fetchProcurementBatch, previewProcurementImport, publishProcurementUpdate} from "../api";
@@ -93,7 +93,7 @@ export function ProcurementWorkbench({ userId, accessLevel, view, page, onPageCh
   if (state === "loading") return <WorkbenchLoading title="正在读取采购数据" />;
   if (state === "error" || !data || !dailyData) return <ModuleState title="采购工作台暂时不可用" retry={() => void load()} />;
 
-  const renderLedger = (ledgerData: ProcurementOverview, department?: DepartmentLedger) => <ProcurementMaterials onRequestEdit={async()=>{setEditFromDashboard(false);try{const full=await fetchProcurementOverviewCompact();setData(full);setEditFromDashboard(true);}catch{setNotice("编辑台账读取失败，请重试。");}}} startInEdit={editFromDashboard} onEditStarted={() => setEditFromDashboard(false)} locateCode={locateCode} data={dailyProcurementOverview(ledgerData)} accessLevel={accessLevel} onRefresh={() => load()} onSaved={acceptOverview} onCreate={() => {void fetchProcurementOverviewCompact().then(full=>{setData(full);setCatalogOpen(true);}).catch(()=>setNotice("原料目录读取失败，请重试。"));}} onImport={() => setImportOpen(true)} onPublish={() => {publishTrigger.current = document.activeElement as HTMLElement;void fetchProcurementOverviewCompact().then(full=>{setData(full);setPublishOpen(true);}).catch(()=>setNotice("本轮价格读取失败，请重试。"));}} onPageChange={onPageChange} focusPending={page === "updates"} department={department} onOpenDepartmentMaterial={id => { distributionTrigger.current = document.activeElement as HTMLElement; setDistributionMaterial(id); }} />;
+  const renderLedger = (ledgerData: ProcurementOverview, department?: DepartmentLedger) => <ProcurementMaterials onRequestEdit={async()=>{setEditFromDashboard(false);try{const full=await fetchProcurementOverviewCompact();setData(full);setEditFromDashboard(true);}catch{setNotice("编辑台账读取失败，请重试。");}}} startInEdit={editFromDashboard} onEditStarted={() => setEditFromDashboard(false)} locateCode={locateCode} data={ledgerData} accessLevel={accessLevel} onRefresh={() => load()} onSaved={acceptOverview} onCreate={() => {void fetchProcurementOverviewCompact().then(full=>{setData(full);setCatalogOpen(true);}).catch(()=>setNotice("原料目录读取失败，请重试。"));}} onImport={() => setImportOpen(true)} onPublish={() => {publishTrigger.current = document.activeElement as HTMLElement;void fetchProcurementOverviewCompact().then(full=>{setData(full);setPublishOpen(true);}).catch(()=>setNotice("本轮价格读取失败，请重试。"));}} onPageChange={onPageChange} focusPending={page === "updates"} department={department} onOpenDepartmentMaterial={id => { distributionTrigger.current = document.activeElement as HTMLElement; setDistributionMaterial(id); }} />;
 
   if (view === "preview") return <ProcurementPreview userId={userId} data={dailyData} onEnter={() => { onPageChange(defaultProcurementPage(data.current_update)); onEnter(); }} />;
 
@@ -474,7 +474,9 @@ function PublishedBatchDrawer({ batchId, onClose }: { batchId: string; onClose: 
 }
 
 function ImportPanel({ current, onClose, onImported }: { current: ProcurementUpdate | null; onClose: () => void; onImported: (data: ProcurementOverview) => void }) {
+  type ImportRow = { purchaser?:string; code:string; name:string; unit:string; latest_price:string; inventory_quantity?:string; inventory_price?:string; in_transit_price?:string; previous_latest_price?:string };
   const dialog = useRef<HTMLDialogElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const alive = useRef(false);
   const busyRef = useRef(false);
   useEffect(() => {
@@ -484,7 +486,9 @@ function ImportPanel({ current, onClose, onImported }: { current: ProcurementUpd
     element?.showModal();
     return () => { alive.current = false; element?.close(); trigger?.focus({ preventScroll: true }); };
   }, []);
-  const [source, setSource] = useState("采购价格导入");
+  const [source, setSource] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(current?.price_date ?? today());
   const [revision, setRevision] = useState({update_id: current?.id ?? null, updated_at: current?.updated_at ?? null});
   const [excelFile,setExcelFile] = useState<File | null>(null);
@@ -495,67 +499,138 @@ function ImportPanel({ current, onClose, onImported }: { current: ProcurementUpd
   const [importReason, setImportReason] = useState<ReasonSelection>({ selected: "", custom: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [rows, setRows] = useState<ImportRow[] | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const [checkedKey, setCheckedKey] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const checkKey = JSON.stringify([content, effectiveDate, revision]);
 
 
   const initial = useRef({ source, effectiveDate });
   const dirty = !!(content.trim() || excelFile || source !== initial.current.source || effectiveDate !== initial.current.effectiveDate || resolveReason(importReason));
-  const unsaved = useUnsavedChanges(dirty, busy, "导入文件和输入尚未保存。", "procurement-before-leave");
+  const unsaved = useUnsavedChanges(dirty, busy || checking, "导入文件和修改尚未保存。", "procurement-before-leave");
+
+  const encodeRows = (items: ImportRow[]) => {
+    const fields: Array<keyof ImportRow> = ["code", "name", "unit", "latest_price", "purchaser", ...(items.some(row => row.inventory_quantity !== undefined) ? ["inventory_quantity", "inventory_price"] as const : []), "in_transit_price", "previous_latest_price"];
+    const labels = {purchaser:"采购员",code:"编号",name:"名称",unit:"单位",latest_price:"行情价格",inventory_quantity:"库存数量",inventory_price:"库存价格",in_transit_price:"在途价格",previous_latest_price:"上次价格"};
+    return [fields.map(key => labels[key]), ...items.map(row => fields.map(key => row[key] ?? ""))].map(row => row.map(value => `"${value.replaceAll('"','""')}"`).join(",")).join("\n");
+  };
+  const loadSelection = async (file: File, selectedSheet: string, date: string) => {
+    const result = await previewProcurementExcel(file, selectedSheet, date);
+    if (!alive.current) return;
+    setExcel(result);
+    const items = result.selection?.rows.map(row => ({purchaser:row.purchaser,code:row.code,name:row.name,unit:row.unit,latest_price:row.raw_price,inventory_quantity:row.raw_inventory_quantity,inventory_price:row.raw_inventory_price})) ?? [];
+    setRows(items); setContent(encodeRows(items));
+  };
+  useEffect(() => {
+    if (!content.trim() || !effectiveDate || busy) return;
+    const controller = new AbortController();
+    setChecking(true);
+    const timer = window.setTimeout(() => {
+      previewProcurementImport(source,effectiveDate,content,controller.signal).then(result => {
+        if (controller.signal.aborted) return;
+        setPreview(result); setCheckedKey(checkKey); setError("");
+        setRows(previous => previous ?? result.rows.map(row => ({purchaser:row.purchaser,code:row.code,name:row.name,unit:row.unit,latest_price:row.raw_values?.latest_price ?? row.latest_price ?? "",inventory_quantity:row.raw_values?.inventory_quantity,inventory_price:row.raw_values?.inventory_price,in_transit_price:row.raw_values?.in_transit_price,previous_latest_price:row.raw_values?.previous_latest_price})));
+      }).catch(failure => { if (!controller.signal.aborted) { setPreview(null);setError(failure.message); } }).finally(() => { if (!controller.signal.aborted) setChecking(false); });
+    }, 250);
+    return () => { controller.abort(); window.clearTimeout(timer); setChecking(false); };
+  }, [content,effectiveDate,source,checkKey,busy,retry]);
 
   const readFile = async (file?: File) => {
     if (!file || busyRef.current) return;
     busyRef.current = true;
-    setBusy(true); setSource(file.name); setPreview(null); setExcel(null); setContent(""); setError("");
+    setBusy(true); setSource(file.name); setPreview(null); setExcel(null); setContent(""); setRows(null);setEditing(false);setError("");
     try {
       if (file.name.toLowerCase().endsWith(".xlsx")) {
         setExcelFile(file);
         const result = await previewProcurementExcel(file);
         if (!alive.current) return;
         setExcel(result); setSheet(result.default_sheet);
-        setEffectiveDate(result.sheets.find(s => s.name === result.default_sheet)?.dates.at(-1) ?? today());
+        const date = result.sheets.find(s => s.name === result.default_sheet)?.dates.at(-1) ?? today();
+        setEffectiveDate(date);
+        await loadSelection(file,result.default_sheet,date);
       } else { setExcelFile(null); const text = await file.text(); if (alive.current) setContent(text); }
     } catch (failure) { setError(failure instanceof Error ? failure.message : "读取文件失败"); }
     finally { busyRef.current = false; if (alive.current) setBusy(false); }
   };
 
-  const run = async (confirm: boolean) => {
+  const downloadTemplate = async () => {
+    setDownloading(true);setDownloadError("");
+    try {
+      const response = await fetch("/api/workbenches/procurement/import-template");
+      if (!response.ok) throw new Error("模板下载失败，请重试");
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href=url;link.download="原料价格导入模板.xlsx";document.body.append(link);link.click();link.remove();URL.revokeObjectURL(url);
+    } catch (failure) { if(alive.current)setDownloadError(failure instanceof Error ? failure.message : "模板下载失败，请重试"); }
+    finally { if(alive.current)setDownloading(false); }
+  };
+
+  const confirmImport = async () => {
     if (busyRef.current) return;
     busyRef.current = true;
-    setBusy(true); setError("");
+    setBusy(true); setSaveError("");
     try {
-      if (confirm) {
-        if (!preview || !resolveReason(importReason)) return;
+        if (!preview || checkedKey !== checkKey || checking || !resolveReason(importReason)) return;
         await confirmProcurementImport(source, effectiveDate, content, revision, resolveReason(importReason));
         if (!alive.current) return;
         const overview = await fetchProcurementOverviewCompact();
         if (alive.current) onImported(overview);
-      } else {
-        let text = content;
-        if (excelFile) { const result = await previewProcurementExcel(excelFile,sheet,effectiveDate); if (!alive.current) return; setExcel(result); if (!result.selection || result.selection.blocked) {setPreview(null); return;} text=result.selection.content; setContent(text); }
-        const result = await previewProcurementImport(source, effectiveDate, text);
-        if (alive.current) setPreview(result);
-      }
     } catch (reason) {
       if (!alive.current) return;
-      setError(reason instanceof Error ? reason.message : "导入失败");
-      if (confirm) setPreview(null);
+      setSaveError(reason instanceof Error ? reason.message : "导入失败");
+      setPreview(null);
     } finally { busyRef.current = false; if (alive.current) setBusy(false); }
   };
 
   const close = async () => { if (!busyRef.current && await unsaved.request()) onClose(); };
-  return <dialog ref={dialog} className={`settings-dialog ${styles.materialCreate} ${styles.importPanel}`} aria-labelledby="import-title" onCancel={event => { event.preventDefault(); close(); }} onKeyDown={event => { if (event.key === "Escape") event.stopPropagation(); }}>
+  const importRows = rows ?? [];
+  const editCell = (index:number, field: "purchaser" | "latest_price" | "inventory_quantity" | "inventory_price", value:string) => {
+    const updated = importRows.map((row,position) => position === index ? {...row,[field]:value} : row);
+    setRows(updated);setContent(encodeRows(updated));setPreview(null);setError("");
+  };
+  const changeSelection = async (name:string, date:string) => {
+    if (!excelFile || busyRef.current) return;
+    busyRef.current=true;setBusy(true);setSheet(name);setEffectiveDate(date);setPreview(null);setRows(null);setContent("");setEditing(false);setError("");
+    try { await loadSelection(excelFile,name,date); } catch(failure) { if(alive.current)setError(failure instanceof Error ? failure.message : "读取文件失败"); }
+    finally { busyRef.current=false;if(alive.current)setBusy(false); }
+  };
+  return <dialog ref={dialog} className={`settings-dialog ${styles.materialCreate} ${styles.importPanel}`} data-has-file={!!source} aria-labelledby="import-title" onCancel={event => { event.preventDefault(); close(); }} onKeyDown={event => { if (event.key === "Escape") event.stopPropagation(); }}>
     <header><h2 id="import-title">导入价格</h2><button className="icon-button" type="button" aria-label="关闭导入" disabled={busy} onClick={close}><X size={17} /></button></header>
-    <div className={styles.materialCreateBody}>
-    <p className={styles.importIntro}>先检查数据，再保存为待发布价。</p>
-    <label>来源名称<input disabled={busy} value={source} onChange={(event) => setSource(event.target.value)} /></label>
-    <label>价格日期<div className={styles.dateField} onClick={(event) => { const input = event.currentTarget.querySelector("input"); input?.focus(); try { input?.showPicker?.(); } catch { /* Native input remains usable. */ } }}><input type="date" disabled={busy} value={effectiveDate} onChange={(event) => { setEffectiveDate(event.target.value); setPreview(null); }} /><CalendarDays size={15} /></div></label>
-    <label className={styles.filePicker}><FileUp size={14} />选择 Excel、CSV 或 TXT<input type="file" accept=".xlsx,.csv,.txt" disabled={busy} onChange={event => void readFile(event.target.files?.[0])} /></label>
-    {excel && <><label>工作表<select disabled={busy} value={sheet} onChange={e=>{setSheet(e.target.value); setPreview(null); setExcel({...excel,selection:undefined});}}>{excel.sheets.map(item=><option key={item.name}>{item.name}</option>)}</select></label><label>表内价格日期<select disabled={busy} value={effectiveDate} onChange={e=>{setEffectiveDate(e.target.value);setPreview(null);}}>{excel.sheets.find(s=>s.name===sheet)?.dates.map(date=><option key={date}>{date}</option>)}</select></label>{excel.selection && <><p>有效 {excel.selection.valid} · 空白 {excel.selection.unreported} · 异常或冲突 {excel.selection.blocked}。空白不清除现价。</p><div className={styles.previewRows}>{excel.selection.rows.map(row=><div key={row.row}><span>第{row.row}行 · {row.code} · {row.raw_price || "—"}</span><em>{({number:"有效",missing:"空白",range:"区间价，须更正",invalid:"异常，须更正",duplicate:"重复编号",unknown:"未知编号"} as Record<string,string>)[row.state] ?? row.state}</em></div>)}</div></>}</>}
-    {!excelFile && <label>CSV、TXT 或粘贴表格<textarea rows={8} disabled={busy} value={content} onChange={(event) => { setContent(event.target.value); setPreview(null); }} placeholder={'编号,名称,单位,行情价格,库存价,在途价\nCF004,示例原料,kg,12.2,13,12.4'} /></label>}
-    {error && <p className={styles.error}>{error}<button type="button" disabled={busy} onClick={async () => {const fresh=await fetchProcurementOverviewCompact();if (!alive.current) return;setRevision({update_id:fresh.current_update?.id ?? null,updated_at:fresh.current_update?.updated_at ?? null});setPreview(null);setError("已刷新本轮，请重新检查数据；文件和输入已保留。");}}>读取最新本轮</button></p>}
-    {preview && <><div className={styles.preview}><strong>{preview.received_count} 行 · {preview.importable_count} 行可导入 · {preview.skipped_count} 行冲突</strong><span>空白保留现价；保存后仍需由有启用权的人员确认异常波动。</span></div><div className={styles.previewRows}>{preview.rows.map((row) => <div key={`${row.code}-${row.name}`}><span><strong>{row.code}</strong>{<Price value={row.reference_price}/>} → {<Price value={row.latest_price}/>} <Movement value={row.change == null ? null : row.change * 100} /></span><em>{row.issues.length ? row.issues.map(importIssueLabel).join("、") : "可导入"}</em></div>)}</div><ReasonSelect label="录价说明" options={PRICE_REASONS} placeholder="请选择说明" value={importReason} disabled={busy} onChange={setImportReason} /></>}
-    {unsaved.confirmation}
+    <div className={styles.importBody}>
+      <input ref={fileInput} hidden type="file" accept=".xlsx,.csv,.txt" disabled={busy} onChange={event => {void readFile(event.target.files?.[0]);event.target.value="";}} />
+      {!source ? <div className={styles.importEmpty}>
+        <FileUp size={28} aria-hidden="true" />
+        <p>选择报表，自动识别库存数量、库存价格和行情价格。</p>
+        <div className={styles.importEmptyActions}><button className="primary-button" type="button" onClick={()=>fileInput.current?.click()}>选择文件</button><button className="secondary-button" type="button" disabled={downloading} onClick={()=>void downloadTemplate()}><Download size={14}/>{downloading ? "正在下载…" : "下载 Excel 模板"}</button></div>
+        <small>支持 Excel（.xlsx）、CSV、TXT</small>
+        {downloadError && <p className={styles.error} role="alert">{downloadError}</p>}
+      </div> : <>
+      <p className={styles.importIntro}>核对后保存，行情与库存随本轮启用，联动更新产品成本。</p>
+      <div className={styles.importFileRow}><FileText size={16} aria-hidden="true" /><span className={styles.importFileName} title={source}>{source}</span><button className={styles.filePicker} type="button" disabled={busy} onClick={()=>fileInput.current?.click()}><FileUp size={14} />更换文件</button></div>
+      <div className={styles.importFields}>
+        {excel && <div className={styles.importField}><span>工作表</span><WorkbenchOptionMenu label="工作表" disabled={busy} value={sheet} options={excel.sheets.map(item=>({value:item.name,label:item.name}))} onSelect={name=>void changeSelection(name,excel.sheets.find(item=>item.name===name)?.dates.at(-1) ?? "")} /></div>}
+        {excel ? <div className={styles.importField}><span>表内价格日期</span><WorkbenchOptionMenu label="表内价格日期" disabled={busy} value={effectiveDate} options={(excel.sheets.find(item=>item.name===sheet)?.dates ?? []).map(value=>({value,label:value}))} onSelect={date=>void changeSelection(sheet,date)} /></div> : <label>价格日期<div className={styles.dateField}><input type="date" disabled={busy} value={effectiveDate} onChange={event=>{setEffectiveDate(event.target.value);setPreview(null);}} /><CalendarDays size={15} /></div></label>}
+      </div>
+
+      {error && <p className={styles.error} role="alert">{error}<button type="button" disabled={busy || checking} onClick={()=>{if(excelFile && !rows){if(excel)void changeSelection(sheet,effectiveDate);else void readFile(excelFile);}else setRetry(value=>value+1);}}>重新识别</button></p>}
+      {saveError && <p className={styles.error} role="alert">{saveError}<button type="button" disabled={busy} onClick={async()=>{const fresh=await fetchProcurementOverviewCompact();if(!alive.current)return;setRevision({update_id:fresh.current_update?.id??null,updated_at:fresh.current_update?.updated_at??null});setPreview(null);setSaveError("");}}>读取最新本轮</button></p>}
+      {(busy || checking) && !importRows.length && <p className={styles.importNote} role="status">{busy ? "正在处理报表…" : "正在校验数据…"}</p>}
+      {!!importRows.length && <>
+        <div className={styles.importSummary}><strong>{importRows.length} 项原料{editing && " · 编辑中"}</strong><span role="status">{checking ? "正在校验数据…" : preview && checkedKey===checkKey ? `可导入 ${preview.importable_count} · 异常 ${preview.skipped_count}` : "待校验"}</span></div>
+        <div className={styles.importTable} tabIndex={0} role="region" aria-label="报表核对明细"><table className={styles.table}><thead><tr><th>原料编号</th><th>采购员</th><th>库存数量</th><th>库存价格</th><th>行情价格</th><th>行情变化</th><th>检查结果</th></tr></thead><tbody>{importRows.map((row,index)=>{const checked=checkedKey===checkKey ? preview?.rows[index] : undefined;return <tr key={index} data-invalid={checked && !checked.importable && !checked.issues.includes("missing_price")}><td><strong>{row.code}</strong></td><td>{editing ? <input className={styles.importPurchaser} aria-label={`${row.code}采购员`} disabled={busy} maxLength={100} value={row.purchaser ?? ""} onChange={event=>editCell(index,"purchaser",event.target.value)}/> : <span className={`${styles.importValue} ${styles.importPurchaser}`} title={row.purchaser || "未填写，使用导入账号"}>{row.purchaser || "—"}</span>}</td>{(["inventory_quantity","inventory_price","latest_price"] as const).map(field=><td key={field}>{editing && (field === "latest_price" || row.inventory_quantity !== undefined) ? <DecimalInput aria-label={`${row.code}${({inventory_quantity:"库存数量",inventory_price:"库存价格",latest_price:"行情价格"})[field]}`} disabled={busy} value={row[field] ?? ""} onChange={event=>editCell(index,field,event.target.value)} /> : <span className={styles.importValue}>{field === "inventory_quantity" ? row[field] ?? "—" : <Price value={field === "inventory_price" && row[field] === "0" ? null : row[field] || null}/>}</span>}</td>)}<td><Movement value={checked?.change == null ? null : checked.change*100}/></td><td>{checked ? checked.issues.length ? checked.issues.map(importIssueLabel).join("、") : "可导入" : "待校验"}</td></tr>;})}</tbody></table></div>
+        <p className={styles.importNote}><span>数量 kg · 单价 元/kg（含税）</span><span>行情空白沿用原价；库存价空白或 0 视为缺价。</span></p>
+      </>}
+      </>}
+      {unsaved.confirmation}
     </div>
-    <footer className={styles.importActions}><button className="secondary-button" type="button" disabled={busy || (!excelFile && !content.trim()) || !effectiveDate} onClick={() => void run(false)}>检查数据</button><button className="primary-button" type="button" disabled={busy || !preview || preview.importable_count === 0 || preview.skipped_count > 0 || Boolean(excel?.selection?.blocked) || !effectiveDate || !resolveReason(importReason)} onClick={() => void run(true)}>确认并导入</button></footer>
+    {source && <footer className={styles.importActions}>
+      {!!importRows.length && <div className={styles.importReason}><ReasonSelect label="录价说明" options={PRICE_REASONS} placeholder="选择录价说明" value={importReason} disabled={busy} onChange={setImportReason}/></div>}
+      <button className="secondary-button" type="button" disabled={busy || !importRows.length} onClick={()=>setEditing(value=>!value)}>{editing ? "完成编辑" : "编辑数据"}</button>
+      <button className="primary-button" type="button" disabled={busy || checking || checkedKey!==checkKey || !preview || preview.importable_count === 0 || preview.skipped_count > 0 || !effectiveDate || !resolveReason(importReason)} onClick={()=>void confirmImport()}>确认并导入</button>
+    </footer>}
   </dialog>;
 }
 
@@ -580,6 +655,7 @@ function PublishConfirm({ update, publishing, onClose, onConfirm }: { update: Pr
         <details className={styles.publishDetails}><summary>查看调整明细</summary><div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>原料</th><th>行情价格</th><th>待启用价</th><th>价格变化</th></tr></thead><tbody>{update.input_items.map(item => <tr key={item.material_id}><td>{item.code}</td><td>{<Price value={item.published_price}/>}</td><td>{<Price value={item.draft_price}/>}</td><td><span className={styles.updateChange}>{item.comparison_basis === "previous_inquiry" && <small>较上期询价</small>}<Movement value={item.change == null ? null : item.change * 100} /></span></td></tr>)}</tbody></table></div></details>
       </div>
       <p>启用后形成包含 <strong>{update.summary.coverage_count} 项原料</strong> 的完整价格基线，未调整原料沿用行情价格。</p>
+      {!!update.inventory_items?.length && <details className={styles.publishDetails}><summary>同步库存 {update.inventory_items.length} 项，并更新产品成本</summary><div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>原料</th><th>库存数量（kg）</th><th>含税库存价格</th></tr></thead><tbody>{update.inventory_items.map(item => <tr key={item.material_id}><td>{item.code}</td><td>{item.inventory_quantity}</td><td><Price value={item.inventory_price === "0" ? null : item.inventory_price}/></td></tr>)}</tbody></table></div></details>}
       <div className={styles.activateModes}><button type="button" disabled={publishing} aria-pressed={mode === "immediate"} onClick={() => setMode("immediate")}><strong>立即启用</strong><span>确认后立刻生效</span></button><button type="button" disabled={publishing} aria-pressed={mode === "scheduled"} onClick={() => setMode("scheduled")}><strong>定时启用</strong><span>在指定时间生效</span></button></div>
       {mode === "scheduled" && <><label className={styles.scheduleField}>启用时间<input type="datetime-local" disabled={publishing} value={activateAt} onChange={(event) => setActivateAt(event.target.value)} /></label><p>启用前如价格基线变化，排期会暂停并提示重新核对。</p></>}
       <div className={styles.panelActions}><button className="secondary-button" type="button" disabled={publishing} onClick={() => void close()}>返回台账</button><button className="primary-button" type="button" disabled={publishing || counts.missing > 0 || risks.some(issue => issue.status !== "reviewed") || (mode === "scheduled" && !activateAt)} onClick={() => void onConfirm(mode, mode === "scheduled" ? activateAt : undefined)}>{publishing ? "正在处理" : mode === "scheduled" ? "确认排期" : "确认启用"}</button></div>
@@ -607,4 +683,4 @@ async function publish(update: ProcurementUpdate, baseline_id: string | null, mo
 function formatPercent(value: number) { return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`; }
 function today() { const value = new Date(); return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; }
 function futureLocalInput() { const value = new Date(Date.now() + 60 * 60 * 1000); value.setMinutes(Math.ceil(value.getMinutes() / 5) * 5, 0, 0); return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}T${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`; }
-function importIssueLabel(issue: string) { return ({ missing_price: "缺价", duplicate_code: "重复编码", unit_conflict: "单位冲突", price_spike: "价格波动" } as Record<string, string>)[issue] ?? issue; }
+function importIssueLabel(issue: string) { return ({ missing_price: "行情沿用", duplicate_code: "重复编码", unit_conflict: "单位冲突", price_spike: "价格波动", invalid_price: "数字格式无效", invalid_identity: "编号或单位不完整", invalid_purchaser: "采购员姓名无效", unknown_code: "未知原料编号" } as Record<string, string>)[issue] ?? issue; }

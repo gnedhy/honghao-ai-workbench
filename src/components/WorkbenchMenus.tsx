@@ -73,17 +73,19 @@ export function PriceDateRangeMenu({ period, range, onChange, allSelected = fals
   </details>;
 }
 
-export function WorkbenchOptionMenu({ label, value, options, onSelect, onDelete, display, className = "" }: {
+export function WorkbenchOptionMenu({ label, value, options, onSelect, onDelete, display, disabled = false, className = "" }: {
   label: string;
   value: string;
   options: { value: string; label: string; disabled?: boolean; title?: string }[];
   onSelect: (value: string) => void;
   onDelete?: (value: string) => void;
   display?: string;
+  disabled?: boolean;
   className?: string;
 }) {
   const menu = useRef<HTMLDetailsElement>(null);
   const [openUp, setOpenUp] = useState(false);
+  useEffect(() => { if (disabled && menu.current) menu.current.open = false; }, [disabled]);
   const close = () => { if (menu.current) menu.current.open = false; menu.current?.querySelector("summary")?.focus(); };
   return <details ref={menu} className={`${styles.columnMenu} ${styles.personMenu} ${className}`} data-open-up={openUp}
     onToggle={event => {
@@ -109,9 +111,9 @@ export function WorkbenchOptionMenu({ label, value, options, onSelect, onDelete,
       const next = event.key === "ArrowDown" ? (index + 1) % buttons.length : (index < 0 ? buttons.length : index) - 1;
       buttons[next]?.focus();
     }}>
-    <summary aria-label={label}><span>{display ?? options.find(option => option.value === value)?.label ?? "请选择"}</span><ChevronRight size={13} /></summary>
+    <summary aria-label={label} aria-disabled={disabled} tabIndex={disabled ? -1 : 0} onClick={event => { if (disabled) event.preventDefault(); }}><span>{display ?? options.find(option => option.value === value)?.label ?? "请选择"}</span><ChevronRight size={13} /></summary>
     <div>{options.length ? options.map(option => {
-      const choose = <button type="button" key={option.value} data-option disabled={option.disabled} title={option.title}
+      const choose = <button type="button" key={option.value} data-option disabled={disabled || option.disabled} title={option.title}
         aria-pressed={value === option.value} onClick={() => { onSelect(option.value); close(); }}>
         {option.label}{value === option.value && <Check size={14} />}</button>;
       return onDelete ? <div className={styles.optionRow} key={option.value}>{choose}

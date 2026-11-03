@@ -12,7 +12,7 @@
 | 抽屉 | `src/components/Drawer.tsx` | 标题、宽度、正文、关闭前检查；`backLabel` 显示标题左侧返回箭头，可用 `onBack` 注入上层配方导航，未提供时关闭子层。返回与关闭共用 busy／关闭前检查和完整退出动效；下层原生抽屉打开时隐藏上层抽屉及遮罩，退出后恢复，上层保持挂载以保留状态，退出下层后按现有抽屉节奏滑入；研发详情／编辑、采购版本／本轮记录、销售参数／历史 |
 | 图文使用说明 | `HelpDialog.tsx`、`HelpDialog.module.css` | 一级入口复用 SettingsGroup 原有展开动效，工作台展开列出二级入口，点击进入具体说明；测算工具归属销售工作台，返回保留阅读位置；静态示意不加载业务数据，实际入口以账号权限为准。隔离回归 `scripts/check-help-guide.mjs` |
 | 折叠与滚动 | `Interaction.tsx` → `SettingsGroup`、`useMeasuredContent`、`useFadingScrollbars` | 异步高度、默认展开、收起 inert；设置、资料、帮助、授权记录 |
-| 单选菜单、搜索单选与日期 | `src/components/WorkbenchMenus.tsx` | 普通单选、可选删除、搜索候选、日期区间；采购／研发看板、销售测算。部门树与多选继续使用 `OrganizationControls.tsx` |
+| 单选菜单、搜索单选与日期 | `src/components/WorkbenchMenus.tsx` | 普通单选、禁用状态、可选删除、搜索候选、日期区间；采购／研发看板、销售测算。部门树与多选继续使用 `OrganizationControls.tsx` |
 | 开关 | `src/components/Switch.tsx` | 受控选中、禁用、忙碌；设置、授权、配方自动换算。确认及提交由业务提供 |
 | 数字输入 | `src/components/DecimalInput.tsx` | 保留输入字符串、单位由外层展示；采购编辑、研发比例／投料、销售费用／系数。精度与校验不在组件内处理 |
 | 台账与工具栏 | `src/components/WorkbenchLayout.tsx`；`WorkbenchSurface.module.css` | 结构与样式复用，列、宽度、筛选及权限由业务提供；采购／研发／销售 |

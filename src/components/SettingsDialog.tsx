@@ -326,7 +326,7 @@ export function SettingsDialog({ currentUser, onUserChanged, serviceConnection, 
                   onSelect={id => { if (id !== selectedUserId || departmentEdit) requestLeave(() => { resetDrafts(); setSelectedUserId(id); }); }}
                   onDepartment={(id, parent) => requestLeave(() => { resetDrafts(); setDepartmentEdit({ id, parent }); })}
                   onDelete={id => requestLeave(() => { resetDrafts(); setDepartmentToDelete(id); })}
-                  renderUser={(user, extra) => <><span className="org-user-name"><strong title={user.display_name}>{user.display_name}</strong>{user.is_system_admin && <span className="org-person-tag" title="系统管理员">管理员</span>}{extra && <span className="org-person-tag">兼属</span>}</span><i data-active={user.is_active}>{user.is_active ? "启用" : "停用"}</i></>} />
+                  renderUser={user => <><span className="org-user-name"><strong title={user.display_name}>{user.display_name}</strong>{user.is_system_admin && <span className="org-person-tag" title="系统管理员">管理员</span>}</span><i data-active={user.is_active}>{user.is_active ? "启用" : "停用"}</i></>} />
                 <div className="admin-detail-panel">{departmentEdit ? <DepartmentEditor key={(departmentEdit.id || "new") + ":" + departmentEdit.parent} departments={departments} {...departmentEdit} disabled={saving} onDirty={setProfileDirty} onSaving={value => { busy.current = value; setSaving(value); }} onCancel={resetDrafts} onSaved={async () => { resetDrafts(); showNotice("部门已保存"); try { await refreshOrganization(); } catch { showNotice("部门已保存，列表刷新失败，请重新打开设置"); } }} /> : selectedUser ? <>
                   <div className="admin-detail-heading"><div className="admin-person-identity"><span className="admin-user-mark admin-detail-avatar" aria-hidden="true">{Array.from(selectedUser.display_name)[0]}</span><div><h3 className="admin-person-name">{selectedUser.display_name}{!profileOpen && <button className="admin-edit-pencil" type="button" aria-label="编辑资料与部门" title="编辑资料与部门" disabled={saving} onClick={() => requestLeave(() => { resetDrafts(); setProfileOpen(true); })}><PenLine size={14} /></button>}</h3><p>@{selectedUser.username} · {departmentPath(departments, selectedUser.primary_department_id || null)}</p>{!!selectedUser.additional_department_ids?.length && <p>兼属：{selectedUser.additional_department_ids.map(id => departmentPath(departments, id)).join("、")}</p>}</div></div><div className="admin-detail-heading-actions"><span className="status-chip" data-active={selectedUser.is_active}>{selectedUser.is_active ? "使用中" : "已停用"}</span></div></div>
                   <div className="admin-user-scroll" key={selectedUser.id} tabIndex={0} role="region" aria-label="账号资料与访问权限">
@@ -366,6 +366,13 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
     </div>
     <h3 className="settings-section-label">更新日志</h3>
     <ol className="settings-timeline" tabIndex={0} aria-label="更新日志"><li>
+      <div className="changelog-date"><time dateTime="2026-11-02">2026年11月2日</time></div>
+      <div className="settings-timeline-content">
+        <div><strong>原料报表导入</strong><p>保留人工录价，同时支持导入 Excel、CSV、TXT 文件，自动识别采购员、库存数量、库存价格和行情价格，并提供 Excel 模板下载。</p></div>
+        <div><strong>导入核对与编辑</strong><p>选取文件后自动检查数据，默认只读；点击“编辑数据”可直接修正明细。统一表格列宽、字体、对齐及录价说明，减少重复操作和台账闪动。</p></div>
+        <div><strong>价格与成本同步</strong><p>保存后按现有流程核对启用，行情和库存随本轮生效，建立新的价格历史并联动更新产品成本。报表采购员显示为修改人，实际操作账号仍保留记录。</p></div>
+      </div>
+    </li><li>
       <div className="changelog-date"><time dateTime="2026-10-21">2026年10月21日</time></div>
       <div className="settings-timeline-content">
         <div><strong>配方零投料校验</strong><p>保留原配方的零投料占位行；新增投料或改为非零时，仍校验原料有效性。</p></div>

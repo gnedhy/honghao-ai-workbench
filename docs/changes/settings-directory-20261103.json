@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "kind": "presentation",
+  "summary": "用户目录仅按主部门展示与计数，保留兼属详情；统一设置权限组标题字号。",
+  "modules": ["procurement", "research", "sales", "management"],
+  "files": ["src/components/OrganizationControls.tsx", "src/components/SettingsDialog.tsx", "src/styles.css"],
+  "consumers": ["src/components/SettingsDialog.tsx", "src/components/OrganizationControls.tsx"],
+  "permissions": "只调整目录分组展示，账号权限及部门访问边界不变。",
+  "data": "主部门与兼属部门数据保持，部门计数仅统计主部门及其下级人员。",
+  "lifecycle": "保留人员选择、部门折叠、权限组展开及未保存草稿保护。",
+  "exits": "关闭设置、取消编辑和切换账号行为不变。",
+  "compatibility": "无接口、依赖或数据库迁移变化；未分配账号继续单独展示。",
+  "recovery": "恢复前端静态资源即可回退，无需恢复数据库。",
+  "verification": {
+    "api": [],
+    "node": [{"file": "tests_ui/organizationDirectory.test.ts", "id": "directory lists each account only in its primary department and counts descendants"}],
+    "browser": []
+  }
+}

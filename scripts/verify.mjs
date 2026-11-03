@@ -49,7 +49,7 @@ npm('security:check');
 if (scope !== 'frontend') {
   const junit = `.scratch/verify/${scope}/api-results.xml`;
   rmSync(junit, { force: true }); // An old successful report cannot satisfy this execution.
-  npm('test:api', ['-o', 'addopts=', '-q', ...apiFiles, '--junitxml', junit]);
+  npm('test:api', ['-o', 'addopts=', '-q', ...apiFiles, '--basetemp', `.scratch/verify/${scope}/tmp`, '--junitxml', junit]);
   run('uv', ['--cache-dir', '.uv-cache', 'run', '--locked', 'python', 'scripts/check-api-execution.py', '--collection', '.scratch/verify/collection.json', '--junit', junit, '--files', ...apiFiles]);
   npm('check:performance:results');
 }

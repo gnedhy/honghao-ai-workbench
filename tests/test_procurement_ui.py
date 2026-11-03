@@ -16,10 +16,13 @@ from tests.helpers import TEST_ADMIN_PASSWORD
 from tests.test_procurement_rd5 import data, trial_data
 from tests.test_research_workbench import ready
 from tests.test_procurement_isolation import import_prices, publish
+from tests.test_procurement_report import report
 
 
 def test_browser_procurement_and_research(ready):
     settings, client, admin, store = ready
+    report_path = settings.data_dir.parent / 'report.xlsx'
+    report_path.write_bytes(report([('A', 17, 60, 21)]))
     current = import_prices(client, '2026-09-09', [(f'W6-{i:03}', 10) for i in range(32)])
     assert publish(client, current).status_code == 200
     store.process_events()
@@ -39,19 +42,19 @@ def test_browser_procurement_and_research(ready):
             while not server.started and thread.is_alive() and monotonic() < deadline: sleep(.02)
             assert server.started
             result = subprocess.run(['node', 'scripts/check-procurement.mjs'],
-                env={**os.environ, 'W6_TEST_API': f'http://127.0.0.1:{listener.getsockname()[1]}', 'W6_TEST_PASSWORD': TEST_ADMIN_PASSWORD},
+                env={**os.environ, 'W6_TEST_API': f'http://127.0.0.1:{listener.getsockname()[1]}', 'W6_TEST_PASSWORD': TEST_ADMIN_PASSWORD, 'W6_REPORT': str(report_path)},
                 capture_output=True, text=True, encoding='utf-8', timeout=300)
             stderr = re.sub(r'(?i)(honghao_session=)[^\s\x27\x22;]+', r'\1[redacted]', result.stderr)
             assert result.returncode == 0, stderr
             evidence = json.loads(result.stdout)
             print(result.stdout)
-            assert len({row['name'] for row in evidence}) == len(evidence) == 11
+            assert len({row['name'] for row in evidence}) == len(evidence) == 12
             assert all(row['status'] == 'passed' for row in evidence)
             for key, items in frozen.items():
                 assert client.get('/api/workbenches/procurement/batches/' + key).json()['items'] == items
             final = client.get('/api/workbenches/procurement/overview').json()
             prices = {row['code']: row['published_price'] for row in final['materials']}
-            assert prices['A'] == '60' and prices['W6-000'] == '0' and prices['W6-001'] == '14'
+            assert prices['A'] == '61' and prices['W6-000'] == '0' and prices['W6-001'] == '14'
             assert prices['W6-002'] == '12' and prices['W6-004'] == '11' and prices['W6-005'] == '11'
             assert final['current_update'] is None
             with transaction(settings.database_url) as db:
