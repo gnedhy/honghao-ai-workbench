@@ -217,10 +217,12 @@ def provenance(url: str, batch_id: str) -> dict | None:
 
 def freeze_sources(db, batch_id, update_id, previous_id):
     # Snapshot keys include frozen work-batch IDs, so revalidation retains price provenance.
+    source_table = 'procurement_effective_sources'
     if db.execute("SELECT 1 FROM procurement_snapshot_sources WHERE batch_id=%s", (update_id,)).fetchone():
         previous_id = update_id
+        source_table = 'procurement_snapshot_sources'
     if batch_id != previous_id:
-        db.execute("INSERT INTO procurement_snapshot_sources (batch_id, material_id, price_date, raw_price, price_kind, sheet, cell, sha256) SELECT %s,material_id,price_date,raw_price,price_kind,sheet,cell,sha256 FROM procurement_effective_sources WHERE batch_id=%s", (batch_id, previous_id))
+        db.execute(f"INSERT INTO procurement_snapshot_sources (batch_id, material_id, price_date, raw_price, price_kind, sheet, cell, sha256) SELECT %s,material_id,price_date,raw_price,price_kind,sheet,cell,sha256 FROM {source_table} WHERE batch_id=%s", (batch_id, previous_id))
     rows = db.execute("SELECT material_id,price_date,after_price FROM procurement_saved_changes WHERE update_id=%s ORDER BY created_at,_order", (update_id,)).fetchall()
     for material, day, value in rows:
         db.execute("INSERT INTO procurement_snapshot_sources (batch_id, material_id, price_date, raw_price, price_kind, sheet, cell, sha256) VALUES (%s,%s,%s,%s,%s,NULL,NULL,NULL) ON CONFLICT(batch_id,material_id) DO UPDATE SET price_date=excluded.price_date,raw_price=excluded.raw_price,price_kind=excluded.price_kind,sheet=NULL,cell=NULL,sha256=NULL",

@@ -41,7 +41,8 @@
       "tests/test_price_reconciliation.py::test_late_old_event_supplement_keeps_current_cost",
       "tests/test_price_reconciliation.py::test_snapshot_restores_corrections_and_projections",
       "tests/test_sales.py::test_snapshot_restore_preserves_sales_tables",
-      "tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle"
+      "tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle",
+      "tests/test_procurement_collaboration.py::test_revalidated_snapshot_and_copied_edit_keep_provenance"
     ],
     "node": [],
     "browser": [
