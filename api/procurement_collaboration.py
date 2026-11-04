@@ -205,7 +205,7 @@ def saved_events(url: str, *, update_id: str | None = None, material_id: str | N
 
 def snapshot_sources(url: str, batch_id: str | None) -> dict:
     with transaction(url) as db:
-        rows = db.execute("SELECT material_id,price_date,raw_price,price_kind,sheet,cell,sha256 FROM procurement_snapshot_sources WHERE batch_id=%s", (batch_id,)).fetchall()
+        rows = db.execute("SELECT material_id,price_date,raw_price,price_kind,sheet,cell,sha256 FROM procurement_effective_sources WHERE batch_id=%s", (batch_id,)).fetchall()
     return {r[0]: {"price_date": r[1], "raw_price": r[2], "price_kind": r[3], "sheet": r[4], "cell": r[5], "sha256": r[6]} for r in rows}
 
 
@@ -220,7 +220,7 @@ def freeze_sources(db, batch_id, update_id, previous_id):
     if db.execute("SELECT 1 FROM procurement_snapshot_sources WHERE batch_id=%s", (update_id,)).fetchone():
         previous_id = update_id
     if batch_id != previous_id:
-        db.execute("INSERT INTO procurement_snapshot_sources (batch_id, material_id, price_date, raw_price, price_kind, sheet, cell, sha256) SELECT %s,material_id,price_date,raw_price,price_kind,sheet,cell,sha256 FROM procurement_snapshot_sources WHERE batch_id=%s", (batch_id, previous_id))
+        db.execute("INSERT INTO procurement_snapshot_sources (batch_id, material_id, price_date, raw_price, price_kind, sheet, cell, sha256) SELECT %s,material_id,price_date,raw_price,price_kind,sheet,cell,sha256 FROM procurement_effective_sources WHERE batch_id=%s", (batch_id, previous_id))
     rows = db.execute("SELECT material_id,price_date,after_price FROM procurement_saved_changes WHERE update_id=%s ORDER BY created_at,_order", (update_id,)).fetchall()
     for material, day, value in rows:
         db.execute("INSERT INTO procurement_snapshot_sources (batch_id, material_id, price_date, raw_price, price_kind, sheet, cell, sha256) VALUES (%s,%s,%s,%s,%s,NULL,NULL,NULL) ON CONFLICT(batch_id,material_id) DO UPDATE SET price_date=excluded.price_date,raw_price=excluded.raw_price,price_kind=excluded.price_kind,sheet=NULL,cell=NULL,sha256=NULL",

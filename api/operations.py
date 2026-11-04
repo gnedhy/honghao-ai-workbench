@@ -272,7 +272,8 @@ def verify_snapshot(snapshot: Path, *, expected_environment: str | None = None,
 def _projection_triggers(db):
     # Restore saved projections without deriving duplicates; leave all constraints and version triggers active.
     functions=['research_history_insert_reads','research_history_delete_reads','research_history_update_reads','research_event_history_reads',
-               'procurement_price_read_changed','sales_update_activity']
+               'procurement_price_read_changed','sales_update_activity',
+               'reconciliation_refresh_prices','reconciliation_refresh_costs']
     return db.execute("SELECT c.relname,t.tgname,t.tgenabled FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_proc p ON p.oid=t.tgfoid WHERE n.nspname='public' AND NOT t.tgisinternal AND p.proname=ANY(%s) AND t.tgenabled!='D' ORDER BY c.relname,t.tgname",(functions,)).fetchall()
 
 

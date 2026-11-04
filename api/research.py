@@ -37,6 +37,7 @@ OVERVIEW_TABLES = (
     "procurement_departments", "procurement_department_materials", "identity_users",
     "identity_user_scopes", "organization_memberships", "organization_departments",
     "research_activation_grants", "research_event_revisions",
+    "procurement_price_corrections", "research_cost_corrections", "research_backfill_corrections",
 )
 OVERVIEW_INSTANCE = str(uuid4())  # Reload open tabs after a service/program restart too.
 MATERIAL_TABLES = OVERVIEW_TABLES + (
@@ -95,7 +96,7 @@ def capture(db, key=None):
         if 'CF020C' in codes: codes.add('CF020D')
     prices = {r[0]: {"latest_price": r[1], "inventory_price": r[2]} for r in db.execute("""
         SELECT m.code,b.latest_price,i.price FROM procurement_materials m
-        LEFT JOIN procurement_price_batch_items b ON b.material_id=m.id AND b.batch_id=%s
+        LEFT JOIN procurement_effective_prices b ON b.material_id=m.id AND b.batch_id=%s
         LEFT JOIN procurement_inventory i ON i.material_id=m.id WHERE m.archived_at IS NULL AND (%s::text[] IS NULL OR m.code=ANY(%s))
         """, (batch[0] if batch else None,list(codes) if codes is not None else None,list(codes) if codes is not None else None))}
     inventory_sources = {code:(sha,raw) for code,sha,raw in db.execute("SELECT m.code,i.source_sha256,i.raw_price FROM procurement_inventory i JOIN procurement_materials m ON m.id=i.material_id")} if inventory_overrides else {}
@@ -231,7 +232,7 @@ class ResearchStore:
                     positions = {r['id']:i for i,r in enumerate(graph)}
                     signed = signatures(inputs, results)
                     compared = signatures(inputs, results, include_basis=False)
-                    previous = dict(db.execute("SELECT DISTINCT ON (product_id) product_id,payload FROM research_cost_records ORDER BY product_id,sequence DESC"))
+                    previous = dict(db.execute("SELECT DISTINCT ON (product_id) product_id,payload FROM research_effective_costs ORDER BY product_id,event_order DESC,sequence DESC"))
                     inserts = []
                     insert_sql = "INSERT INTO research_cost_records(event_id,product_id,signature,payload) VALUES(%s,%s,%s,%s)"
                     def dependency_ids(key, found=None):
@@ -293,10 +294,10 @@ class ResearchStore:
         visible = access.visible_ids(db) if not access.admin else set()
         params = ((key,) if key is not None else ()) + ((list(visible),) if not access.admin else ())
         records = {key: raw for key, raw in db.execute(f"""SELECT DISTINCT ON (product_id) product_id,{SUMMARY_PAYLOAD}
-            FROM research_cost_records WHERE product_id IN (SELECT id FROM research_formulas WHERE lifecycle='active')
+            FROM research_effective_costs WHERE product_id IN (SELECT id FROM research_formulas WHERE lifecycle='active')
             {'AND product_id=%s' if key is not None else ''}
             {'AND product_id=ANY(%s)' if not access.admin else ''}
-            ORDER BY product_id,sequence DESC""", params)} if histories is None else {
+            ORDER BY product_id,event_order DESC,sequence DESC""", params)} if histories is None else {
                 key: next((row for row in rows if row.get('record_type')=='formal'), None)
                 for key,rows in histories.items()}
         rows = []
@@ -334,7 +335,7 @@ class ResearchStore:
         with transaction(self.url) as db:
             access=ResearchAccess(db,actor)
             visible=access.visible_ids(db) if not access.admin else None
-            keys=[r[0] for r in db.execute('SELECT product_id FROM research_cost_records UNION SELECT product_id FROM research_backfill_records') if visible is None or r[0] in visible]
+            keys=[r[0] for r in db.execute('SELECT product_id FROM research_effective_costs UNION SELECT product_id FROM research_effective_backfill') if visible is None or r[0] in visible]
             histories=linked_histories(db,keys,summary=True,series=series)
             history = version_history(db,access=None if access.admin else access,histories=histories,series=True) if series else self.history(actor=actor,histories=histories)
             result={**self.listing(actor,histories),**history,**self.formulas(actor)}
@@ -428,7 +429,7 @@ class ResearchStore:
             visible = access.visible_ids(db) if not access.admin else set()
             rows = []
             for product in products:
-                record = db.execute("SELECT payload FROM research_cost_records WHERE product_id=%s ORDER BY sequence DESC LIMIT 1", (product["id"],)).fetchone()
+                record = db.execute("SELECT payload FROM research_effective_costs WHERE product_id=%s ORDER BY event_order DESC,sequence DESC LIMIT 1", (product["id"],)).fetchone()
                 payload = access.project(json.loads(record[0]), visible) if record else {}
                 rows.append({"product": product, "formula": payload.get("formula", product),
                              "latest": payload.get("latest"), "inventory": payload.get("inventory")})
@@ -552,7 +553,7 @@ class ResearchStore:
             access.require(formula)
             visible = access.visible_ids(db) if not access.admin else set()
             history = access.project([r for r in self._linked_history(db,key) if access.allows(r.get('formula',r))],visible) if include_history else []
-            current_raw = db.execute('SELECT payload FROM research_cost_records WHERE product_id=%s ORDER BY sequence DESC LIMIT 1',(key,)).fetchone()
+            current_raw = db.execute('SELECT payload FROM research_effective_costs WHERE product_id=%s ORDER BY event_order DESC,sequence DESC LIMIT 1',(key,)).fetchone()
             current = json.loads(current_raw[0]) if current_raw else {}
             current = access.project(current,visible) if access.allows(current.get("formula",current)) else {}
             current_history=history
@@ -561,7 +562,7 @@ class ResearchStore:
                 last=db.execute('SELECT payload FROM research_history_reads WHERE product_id=%s ORDER BY ordinal DESC LIMIT 1',(key,)).fetchone()
                 latest_summary=normalize(last[0]) if last else {}
                 current_history=[dict(current,record_type='formal',**{field:latest_summary.get(field,current.get(field)) for field in ('change','comparison_basis')})] if current else ([latest_summary] if latest_summary else [])
-                if db.execute('SELECT 1 FROM research_backfill_records WHERE product_id=%s LIMIT 1',(key,)).fetchone():
+                if db.execute('SELECT 1 FROM research_effective_backfill WHERE product_id=%s LIMIT 1',(key,)).fetchone():
                     current_history.append({'record_type':'backfill'})
             product = next(iter(self._rows(db,actor,key,histories={key:current_history})["products"]), dict(formula, **{k:current.get(k) for k in ("latest_cost","inventory_cost","change","status")}))
             pending = db.execute("SELECT status FROM research_events WHERE status!='done' ORDER BY _order LIMIT 1").fetchone()

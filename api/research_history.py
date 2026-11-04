@@ -6,7 +6,7 @@ from decimal import Decimal
 SUMMARY_PAYLOAD = "summary_payload"
 BACKFILL_DETAIL = """(payload::jsonb || COALESCE((
     SELECT frozen.payload::jsonb FROM research_backfill_frozen frozen
-    WHERE frozen.id=research_backfill_records.frozen_id
+    WHERE frozen.id=research_effective_backfill.frozen_id
 ), '{}'::jsonb))::text"""
 
 
@@ -22,7 +22,7 @@ def save_backfill(db, version, key, signature, payload):
 def backfill(db):
     from api.research import capture, evaluate, now, packed, signatures, comparison
     if db.execute('SELECT 1 FROM research_backfill_runs').fetchone():
-        count = db.execute('SELECT COUNT(DISTINCT purchase_version) FROM research_backfill_records').fetchone()[0]
+        count = db.execute('SELECT COUNT(DISTINCT purchase_version) FROM research_effective_backfill').fetchone()[0]
         return {'status':'unchanged','versions':count}
     if db.execute("SELECT 1 FROM research_events WHERE status!='done'").fetchone():
         raise ValueError('成本更新尚未完成，请完成后再回算')
@@ -35,7 +35,7 @@ def backfill(db):
     previous = {}
     for batch_id, version, price_date, published_at in batches:
         # Snapshot prices are the already validated formal purchase prices, including explicit zero.
-        period = {code:price for code,price in db.execute('SELECT code,latest_price FROM procurement_price_batch_items WHERE batch_id=%s',(batch_id,))}
+        period = {code:price for code,price in db.execute('SELECT code,latest_price FROM procurement_effective_prices WHERE batch_id=%s',(batch_id,))}
         source_batches.append({'id':batch_id,'version':version,'price_date':price_date,'published_at':published_at,'prices':period})
         inputs = deepcopy(frozen)
         for code, entry in inputs['prices'].items():
@@ -80,7 +80,7 @@ def purchase_periods(db):
     periods = {}
     rows = db.execute("""
         SELECT e.id,e.inputs::jsonb->'purchase_period',e.inputs::jsonb->'prices',b.id,b.version,b.price_date,
-               (SELECT json_object_agg(code,latest_price) FROM procurement_price_batch_items WHERE batch_id=b.id)
+               (SELECT json_object_agg(code,latest_price) FROM procurement_effective_prices WHERE batch_id=b.id)
         FROM research_events e LEFT JOIN LATERAL (
             SELECT id,version,price_date FROM procurement_price_batches
             WHERE published_at::timestamptz <= e.recorded_at::timestamptz
@@ -112,12 +112,12 @@ def linked_histories(db, keys, periods=None, summary=False, series=False):
     entries = {key:[] for key in keys}
     # Historical series need identity/scope and exact costs, not historical input lines.
     slim = f"({payload}::jsonb - ARRAY['latest','inventory','lines'])::text"
-    formal_payload = f"CASE WHEN sequence=max(sequence) OVER (PARTITION BY product_id) THEN {payload} ELSE {slim} END" if series else payload
+    formal_payload = f"CASE WHEN row_number() OVER (PARTITION BY product_id ORDER BY event_order DESC,sequence DESC)=1 THEN {payload} ELSE {slim} END" if series else payload
     if series or summary:
-        for key,raw in db.execute(f'SELECT product_id,{SUMMARY_PAYLOAD} FROM research_backfill_records WHERE product_id=ANY(%s) ORDER BY purchase_version',(list(keys),)):
+        for key,raw in db.execute(f'SELECT product_id,{SUMMARY_PAYLOAD} FROM research_effective_backfill WHERE product_id=ANY(%s) ORDER BY purchase_version',(list(keys),)):
             entries[key].append(json.loads(raw))
     else:
-        rows=db.execute('SELECT product_id,payload,frozen_id FROM research_backfill_records WHERE product_id=ANY(%s) ORDER BY purchase_version',(list(keys),)).fetchall()
+        rows=db.execute('SELECT product_id,payload,frozen_id FROM research_effective_backfill WHERE product_id=ANY(%s) ORDER BY purchase_version',(list(keys),)).fetchall()
         ids=list({row[2] for row in rows if row[2] is not None})
         frozen={key:json.loads(raw) for key,raw in db.execute('SELECT id,payload FROM research_backfill_frozen WHERE id=ANY(%s)',(ids,))} if ids else {}
         for key,raw,frozen_id in rows:
@@ -125,7 +125,7 @@ def linked_histories(db, keys, periods=None, summary=False, series=False):
             if frozen_id is not None:
                 row.update(deepcopy(frozen[frozen_id]))
             entries[key].append(row)
-    for key,raw in db.execute(f'SELECT product_id,{formal_payload} FROM research_cost_records WHERE product_id=ANY(%s) ORDER BY sequence',(list(keys),)):
+    for key,raw in db.execute(f'SELECT product_id,{formal_payload} FROM research_effective_costs c JOIN research_events e ON e.id=c.event_id WHERE product_id=ANY(%s) ORDER BY e._order,c.sequence',(list(keys),)):
         row=json.loads(raw)
         row.update(record_type='formal',effective_date=row['recorded_at'][:10],product_id=key)
         period = periods.get(row['event_id'])
@@ -164,7 +164,7 @@ def _compare_history(entries):
 def version_history(db, event_id=None, access=None, product_id=None, summary=False, histories=None, series=False):
     versions = {}
     periods = purchase_periods(db) if histories is None else None
-    keys = [r[0] for r in db.execute("SELECT DISTINCT product_id FROM research_cost_records UNION SELECT DISTINCT product_id FROM research_backfill_records ORDER BY product_id")]
+    keys = [r[0] for r in db.execute("SELECT DISTINCT product_id FROM research_effective_costs UNION SELECT DISTINCT product_id FROM research_effective_backfill ORDER BY product_id")]
     visible = access.visible_ids(db) if access else set()
     if access:
         keys = [key for key in keys if key in visible]

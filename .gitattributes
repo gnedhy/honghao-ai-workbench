@@ -13,3 +13,6 @@ api/migrations/postgresql/0018_research_revision_groups.sql -text whitespace=bla
 
 # Migration 0020 was formally applied with CRLF; preserve its immutable checksum.
 api/migrations/postgresql/0020_procurement_report_purchaser.sql -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+
+# Migration 0021 was formally applied with CRLF; preserve its immutable checksum.
+api/migrations/postgresql/0021_price_reconciliation.sql -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

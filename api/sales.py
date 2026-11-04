@@ -141,8 +141,8 @@ class SalesStore:
     def _catalog(self, db, product_ids=None):
         pending = db.execute("SELECT status FROM research_events WHERE status!='done' ORDER BY _order LIMIT 1").fetchone()
         records = {row[0]: row[1:] for row in db.execute('''SELECT f.id,r.sequence,r.summary_payload,r.event_id,e.recorded_at
-            FROM research_formulas f JOIN LATERAL (SELECT sequence,summary_payload,event_id FROM research_cost_records
-                WHERE product_id=f.id ORDER BY sequence DESC LIMIT 1) r ON TRUE
+            FROM research_formulas f JOIN LATERAL (SELECT sequence,summary_payload,event_id FROM research_effective_costs
+                WHERE product_id=f.id ORDER BY event_order DESC,sequence DESC LIMIT 1) r ON TRUE
             LEFT JOIN research_events e ON e.id=r.event_id
             WHERE f.lifecycle='active' AND (%s OR f.id=ANY(%s))''',
             (product_ids is None,[key.removeprefix('research:') for key in product_ids or [] if key.startswith('research:')]))}
@@ -165,7 +165,7 @@ class SalesStore:
         batch = db.execute('SELECT id FROM procurement_price_batches ORDER BY version DESC LIMIT 1').fetchone()
         for ident, code, name, unit, latest, inventory, version, published_at, price_date in db.execute('''SELECT m.id,m.code,m.name,m.unit,b.latest_price,i.price,
                 pb.version,pb.published_at,pb.price_date FROM procurement_materials m
-                LEFT JOIN procurement_price_batch_items b ON b.material_id=m.id AND b.batch_id=%s
+                LEFT JOIN procurement_effective_prices b ON b.material_id=m.id AND b.batch_id=%s
                 LEFT JOIN procurement_price_batches pb ON pb.id=b.batch_id
                 LEFT JOIN procurement_inventory i ON i.material_id=m.id WHERE m.archived_at IS NULL AND (%s OR m.id=ANY(%s)) ORDER BY m.code''', (batch[0] if batch else None,product_ids is None,[key.removeprefix('procurement:') for key in product_ids or [] if key.startswith('procurement:')])):
             if code == 'CF401B' or unit.lower().strip() not in ('kg', '公斤', '千克'):

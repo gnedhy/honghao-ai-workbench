@@ -195,7 +195,7 @@ def test_catalog_reads_latest_frozen_costs_in_one_query(sales,monkeypatch):
     execute=connection_type.execute
     queries=[]
     def counted(self,query,*args,**kwargs):
-        if isinstance(query,str) and 'FROM research_cost_records' in query:queries.append(query)
+        if isinstance(query,str) and 'FROM research_effective_costs' in query:queries.append(query)
         return execute(self,query,*args,**kwargs)
     monkeypatch.setattr(connection_type,'execute',counted)
     catalog=store.products(actor)['products']
