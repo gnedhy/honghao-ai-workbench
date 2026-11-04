@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "kind": "presentation",
+  "summary": "补齐系统内 11 月 4 日行情与成本更正更新日志。",
+  "modules": ["procurement", "research", "sales"],
+  "files": ["src/components/SettingsDialog.tsx"],
+  "consumers": ["src/components/SettingsDialog.tsx"],
+  "permissions": "仅增加静态日志，设置访问权限保持。",
+  "data": "不修改业务数据，不执行迁移或数据修复。",
+  "lifecycle": "复用现有时间轴、字号和设置导航。",
+  "exits": "关闭、返回和退出行为保持。",
+  "compatibility": "无接口、依赖或交互逻辑变化。",
+  "recovery": "恢复原静态页面与匹配源码，不涉及数据库恢复。",
+  "verification": {
+    "api": ["tests/test_modules.py::test_admin_can_read_environment_and_pending_module_settings"],
+    "node": [],
+    "browser": []
+  }
+}
