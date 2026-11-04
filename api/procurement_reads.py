@@ -52,12 +52,12 @@ def eligible(url, start, end):
             GROUP BY p.material_id HAVING count(DISTINCT p.batch_day)>=2""",(start,end))]
 
 # Catalog-only supplemental batches do not create a new price period for untouched materials.
-OFFICIAL = """FROM procurement_price_batch_items i JOIN procurement_price_batches b ON b.id=i.batch_id
-    LEFT JOIN procurement_snapshot_sources s ON s.batch_id=b.id AND s.material_id=i.material_id
+OFFICIAL = """FROM procurement_effective_prices i JOIN procurement_price_batches b ON b.id=i.batch_id
+    LEFT JOIN procurement_effective_sources s ON s.batch_id=b.id AND s.material_id=i.material_id
     WHERE i.material_id=%s AND NOT (
         EXISTS(SELECT 1 FROM procurement_price_batches p WHERE p.version<b.version)
         AND EXISTS(SELECT 1 FROM procurement_saved_changes c WHERE c.update_id=b.update_id)
-        AND NOT EXISTS(SELECT 1 FROM procurement_saved_changes c JOIN procurement_price_batch_items old
+        AND NOT EXISTS(SELECT 1 FROM procurement_saved_changes c JOIN procurement_effective_prices old
             ON old.material_id=c.material_id AND old.batch_id=(SELECT id FROM procurement_price_batches p WHERE p.version<b.version ORDER BY version DESC LIMIT 1)
             WHERE c.update_id=b.update_id)
         AND NOT EXISTS(SELECT 1 FROM procurement_saved_changes c WHERE c.update_id=b.update_id AND c.material_id=i.material_id))"""
@@ -115,18 +115,18 @@ def material_comparison(url, batch_id, material_id):
         while batch_id:
             batch=db.execute('SELECT version,update_id FROM procurement_price_batches WHERE id=%s',(batch_id,)).fetchone()
             prior=db.execute('SELECT id,version FROM procurement_price_batches WHERE version<%s ORDER BY version DESC LIMIT 1',(batch[0],)).fetchone()
-            values=db.execute("""SELECT i.latest_price,s.raw_price,s.price_kind FROM procurement_price_batch_items i
-                LEFT JOIN procurement_snapshot_sources s ON s.batch_id=i.batch_id AND s.material_id=i.material_id
+            values=db.execute("""SELECT i.latest_price,s.raw_price,s.price_kind FROM procurement_effective_prices i
+                LEFT JOIN procurement_effective_sources s ON s.batch_id=i.batch_id AND s.material_id=i.material_id
                 WHERE i.batch_id=%s AND i.material_id=%s""",(batch_id,material_id)).fetchone()
-            old=db.execute("""SELECT i.latest_price,s.raw_price,s.price_kind FROM procurement_price_batch_items i
-                LEFT JOIN procurement_snapshot_sources s ON s.batch_id=i.batch_id AND s.material_id=i.material_id
+            old=db.execute("""SELECT i.latest_price,s.raw_price,s.price_kind FROM procurement_effective_prices i
+                LEFT JOIN procurement_effective_sources s ON s.batch_id=i.batch_id AND s.material_id=i.material_id
                 WHERE i.batch_id=%s AND i.material_id=%s""",(prior[0] if prior else None,material_id)).fetchone()
             if not values:return None
             before=old[0] if old else None
             unusual=values[2] in ('range','invalid') or (old and old[2] in ('range','invalid'))
             kind='incomparable' if unusual else 'missing' if values[0] is None else 'first' if before is None else 'up' if Decimal(values[0])>Decimal(before) else 'down' if Decimal(values[0])<Decimal(before) else 'unchanged'
             supplement=prior and db.execute("""SELECT EXISTS(SELECT 1 FROM procurement_saved_changes WHERE update_id=%s)
-                AND NOT EXISTS(SELECT 1 FROM procurement_saved_changes c JOIN procurement_price_batch_items i ON i.material_id=c.material_id AND i.batch_id=%s WHERE c.update_id=%s)
+                AND NOT EXISTS(SELECT 1 FROM procurement_saved_changes c JOIN procurement_effective_prices i ON i.material_id=c.material_id AND i.batch_id=%s WHERE c.update_id=%s)
                 AND NOT EXISTS(SELECT 1 FROM procurement_saved_changes WHERE update_id=%s AND material_id=%s)""",(batch[1],prior[0],batch[1],batch[1],material_id)).fetchone()[0]
             if supplement and kind=='unchanged':
                 batch_id=prior[0];continue
@@ -176,4 +176,7 @@ def batch_page(store, *, page=1, page_size=10, status='all', version=None, start
 
 def revision_note(db, batch_id):
     row=db.execute('SELECT note FROM procurement_batch_revisions WHERE batch_id=%s',(batch_id,)).fetchone()
-    return row[0] if row else None
+    corrected=db.execute('SELECT count(DISTINCT material_id) FROM procurement_price_corrections WHERE batch_id=%s',(batch_id,)).fetchone()[0]
+    notes=[row[0]] if row else []
+    if corrected: notes.append(f'已按核对文件更正 {corrected} 项行情，原始快照保留。')
+    return '；'.join(notes) or None

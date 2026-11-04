@@ -207,7 +207,7 @@ def test_history_reads_are_batched_and_preserve_frozen_comparisons(ready,monkeyp
     queries=[]
     execute=connection_type.execute
     def counted(self,query,*args,**kwargs):
-        if isinstance(query,str) and query.startswith('SELECT product_id,') and ('FROM research_cost_records' in query or 'FROM research_backfill_records' in query):
+        if isinstance(query,str) and query.startswith('SELECT product_id,') and ('FROM research_effective_costs' in query or 'FROM research_effective_backfill' in query):
             queries.append(query)
         return execute(self,query,*args,**kwargs)
     monkeypatch.setattr(connection_type,'execute',counted)

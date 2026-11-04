@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "kind": "business",
+  "summary": "历史行情和成本更正采用追加记录；原始快照、配方、成本明细与签名保留，各读取入口统一采用有效更正值。",
+  "modules": [
+    "procurement",
+    "research",
+    "sales"
+  ],
+  "files": [
+    "api/migrations/postgresql/0021_price_reconciliation.sql",
+    "api/procurement.py",
+    "api/procurement_collaboration.py",
+    "api/procurement_inventory.py",
+    "api/procurement_rd5.py",
+    "api/procurement_reads.py",
+    "api/research.py",
+    "api/research_history.py",
+    "api/research_reads.py",
+    "api/sales.py",
+    "api/migrations/postgresql/0022_cost_event_order.sql",
+    "api/operations.py"
+  ],
+  "consumers": [
+    "api/procurement_reads.py",
+    "api/research_reads.py",
+    "api/sales.py"
+  ],
+  "permissions": "原读取与写入权限不变；核对更正脚本仅允许有效系统管理员执行。",
+  "data": "迁移21新增更正表与有效读取视图，迁移22增加成本事件排序；迁移不自动修改业务价格。实际更正先备份、隔离复算并校验原值和签名，不覆盖后续人工数据。",
+  "lifecycle": "更正记录只追加；历史成本按原期次排序，后续正常导入继续使用有效行情并生成新成本。",
+  "exits": "基线变化时在写入前拒绝，事务失败整体回滚。",
+  "compatibility": "页面接口和库存计算口径保持，旧报价仍按冻结值读取；原始成本与更正成本分开保存。",
+  "recovery": "使用匹配实际迁移版本的程序；恢复时暂停派生数据触发器后恢复原状态。已验证含更正记录的完整快照恢复；撤销业务更正使用追加反向更正，不用旧数据库覆盖后续用户数据。",
+  "verification": {
+    "api": [
+      "tests/test_price_reconciliation.py::test_correction_keeps_original_and_future_costs",
+      "tests/test_price_reconciliation.py::test_changed_baseline_rolls_back_without_partial_correction",
+      "tests/test_price_reconciliation.py::test_price_overlay_updates_history_and_keeps_inventory",
+      "tests/test_procurement_report.py::test_upload_activation_freezes_inventory_and_updates_cost_version",
+      "tests/test_price_reconciliation.py::test_late_old_event_supplement_keeps_current_cost",
+      "tests/test_price_reconciliation.py::test_snapshot_restores_corrections_and_projections",
+      "tests/test_sales.py::test_snapshot_restore_preserves_sales_tables",
+      "tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle",
+      "tests/test_procurement_collaboration.py::test_revalidated_snapshot_and_copied_edit_keep_provenance",
+      "tests/test_sqlite_migration.py::test_complete_import_preserves_order_bytes_precision_paths_sequences_and_constraints"
+    ],
+    "node": [],
+    "browser": [
+      {
+        "file": "scripts/check-research.mjs",
+        "id": "readonly-export-and-final-formal-cost-chain",
+        "apiTest": "tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle"
+      }
+    ]
+  }
+}

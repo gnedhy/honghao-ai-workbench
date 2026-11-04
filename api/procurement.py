@@ -301,7 +301,7 @@ class ProcurementStore:
                 purchasers[material_id] = row["purchaser"]
                 before = connection.execute("SELECT latest_price FROM procurement_update_items WHERE update_id=%s AND material_id=%s", (update_id, material_id)).fetchone()
                 if before is None:
-                    before = connection.execute("SELECT latest_price FROM procurement_price_batch_items WHERE batch_id=%s AND material_id=%s", (self._latest_batch_id(connection), material_id)).fetchone()
+                    before = connection.execute("SELECT latest_price FROM procurement_effective_prices WHERE batch_id=%s AND material_id=%s", (self._latest_batch_id(connection), material_id)).fetchone()
                 if row["inventory_quantity"] is not None:
                     inventory.append({"material_id": material_id, "quantity": row["inventory_quantity"],
                                       "price": row["inventory_price"], "source_row": row["source_row"], "purchaser": row["purchaser"]})
@@ -412,11 +412,11 @@ class ProcurementStore:
             current_batch_id = str(batch_rows[0][0]) if batch_rows else None
             previous_batch_id = str(batch_rows[1][0]) if len(batch_rows) > 1 else None
             published_rows = connection.execute(
-                "SELECT material_id, latest_price FROM procurement_price_batch_items WHERE batch_id = %s",
+                "SELECT material_id, latest_price FROM procurement_effective_prices WHERE batch_id = %s",
                 (current_batch_id,),
             ).fetchall() if current_batch_id else []
             previous_published_rows = connection.execute(
-                "SELECT material_id, latest_price FROM procurement_price_batch_items WHERE batch_id = %s",
+                "SELECT material_id, latest_price FROM procurement_effective_prices WHERE batch_id = %s",
                 (previous_batch_id,),
             ).fetchall() if previous_batch_id else []
             working_state = connection.execute(
@@ -561,7 +561,7 @@ class ProcurementStore:
             if update is None:
                 return None
             official = dict(connection.execute(
-                "SELECT material_id, latest_price FROM procurement_price_batch_items WHERE batch_id = %s",
+                "SELECT material_id, latest_price FROM procurement_effective_prices WHERE batch_id = %s",
                 (self._latest_batch_id(connection),),
             ).fetchall())
             item_rows = [(*row[:5], official.get(row[0]), self._reference_price(connection, update_id, str(row[0])))
@@ -868,8 +868,8 @@ class ProcurementStore:
             ).fetchall()
             official = connection.execute("""SELECT b.id,b.version,b.price_date,i.latest_price,
                 s.price_date,s.raw_price,s.price_kind,s.sheet,s.cell
-                FROM procurement_price_batches b JOIN procurement_price_batch_items i ON i.batch_id=b.id
-                LEFT JOIN procurement_snapshot_sources s ON s.batch_id=b.id AND s.material_id=i.material_id
+                FROM procurement_price_batches b JOIN procurement_effective_prices i ON i.batch_id=b.id
+                LEFT JOIN procurement_effective_sources s ON s.batch_id=b.id AND s.material_id=i.material_id
                 WHERE i.material_id=%s ORDER BY b.version DESC LIMIT %s""", (material_id, 2 if compact else 2147483647)).fetchall()[::-1]
             sources = connection.execute("""SELECT s.sheet,s.source_row,s.raw_json,f.filename
                 FROM procurement_material_sources s JOIN procurement_source_imports f ON f.sha256=s.sha256
@@ -1047,7 +1047,7 @@ class ProcurementStore:
         active = self._active_history(connection=connection, material_id=material_id)
         before_row = connection.execute("SELECT latest_price FROM procurement_update_items WHERE update_id=%s AND material_id=%s", (update_id, material_id)).fetchone()
         if before_row is None:
-            before_row = connection.execute("SELECT latest_price FROM procurement_price_batch_items WHERE batch_id=%s AND material_id=%s", (self._latest_batch_id(connection), material_id)).fetchone()
+            before_row = connection.execute("SELECT latest_price FROM procurement_effective_prices WHERE batch_id=%s AND material_id=%s", (self._latest_batch_id(connection), material_id)).fetchone()
         active.sort(key=lambda item: (item["effective_date"], item["created_at"]))
         latest = active[-1] if active else None
         if target_history_id is None and latest and date_text < latest["effective_date"]:
@@ -1120,7 +1120,7 @@ class ProcurementStore:
             for item in payload.items:
                 before = connection.execute("SELECT latest_price FROM procurement_update_items WHERE update_id=%s AND material_id=%s", (payload.update_id, item.material_id)).fetchone()
                 if before is None:
-                    before = connection.execute("SELECT latest_price FROM procurement_price_batch_items WHERE batch_id=%s AND material_id=%s", (self._latest_batch_id(connection), item.material_id)).fetchone()
+                    before = connection.execute("SELECT latest_price FROM procurement_effective_prices WHERE batch_id=%s AND material_id=%s", (self._latest_batch_id(connection), item.material_id)).fetchone()
                 changes.append((item.material_id, before[0] if before else None, _decimal_text(item.price)))
                 material = connection.execute("SELECT code FROM procurement_materials WHERE id=%s", (item.material_id,)).fetchone()
                 try:
@@ -1143,7 +1143,7 @@ class ProcurementStore:
                 if material is None:
                     raise LookupError("原料不存在")
                 reference = self._reference_for_date(connection, payload.effective_date.isoformat(), item.material_id)
-                official = connection.execute("SELECT 1 FROM procurement_price_batch_items WHERE batch_id=%s AND material_id=%s", (baseline_id, item.material_id)).fetchone()
+                official = connection.execute("SELECT 1 FROM procurement_effective_prices WHERE batch_id=%s AND material_id=%s", (baseline_id, item.material_id)).fetchone()
                 rows.append({"material_id": item.material_id, "code": material[0], "name": material[1], "reference_price": reference, "comparison_basis": "published" if official else "previous_inquiry", "price": _decimal_text(item.price), "change": _change(item.price, reference), "high_risk": _has_price_spike(item.price, _decimal(reference))})
             return {"baseline_id": baseline_id, "rows": rows}
 
@@ -1223,7 +1223,7 @@ class ProcurementStore:
         rows.sort(key=lambda item: (item["effective_date"], item["created_at"]))
         latest = rows[-1] if rows else None
         previous = rows[-2] if len(rows) > 1 else None
-        baseline = connection.execute("SELECT latest_price FROM procurement_price_batch_items WHERE batch_id=%s AND material_id=%s", (self._latest_batch_id(connection), material_id)).fetchone()
+        baseline = connection.execute("SELECT latest_price FROM procurement_effective_prices WHERE batch_id=%s AND material_id=%s", (self._latest_batch_id(connection), material_id)).fetchone()
         connection.execute(
             """UPDATE procurement_materials SET latest_price = %s, inventory_price = %s, in_transit_price = %s,
                previous_latest_price = %s, last_import_id = %s, updated_at = %s WHERE id = %s""",
@@ -1248,7 +1248,7 @@ class ProcurementStore:
         rows = {row[0]: row for row in connection.execute(
             """SELECT m.id, m.code, m.name, m.unit, b.latest_price, b.inventory_price,
                       b.in_transit_price, b.recommended_price
-               FROM procurement_materials m LEFT JOIN procurement_price_batch_items b
+               FROM procurement_materials m LEFT JOIN procurement_effective_prices b
                  ON b.material_id = m.id AND b.batch_id = %s
                WHERE m.archived_at IS NULL ORDER BY m.code""",
             (self._latest_batch_id(connection),),
@@ -1292,7 +1292,7 @@ class ProcurementStore:
 
     def _reference_for_date(self, connection: Connection, price_date: str, material_id: str) -> str | None:
         official = connection.execute(
-            "SELECT latest_price FROM procurement_price_batch_items WHERE batch_id = %s AND material_id = %s",
+            "SELECT latest_price FROM procurement_effective_prices WHERE batch_id = %s AND material_id = %s",
             (self._latest_batch_id(connection), material_id),
         ).fetchone()
         if official is not None:
@@ -1568,7 +1568,7 @@ class ProcurementStore:
                 self._refresh_update_issues(connection, copied_id, now)
                 event_id = self._event(connection, copied_id, "copied_from_schedule", actor_user_id, f"从排期 {update_id} 复制：{reason}")
                 changes = connection.execute("""SELECT c.material_id,b.latest_price,c.after_price,c.price_date,c.source_purchaser FROM procurement_saved_changes c
-                    LEFT JOIN procurement_price_batch_items b ON b.material_id=c.material_id AND b.batch_id=%s
+                    LEFT JOIN procurement_effective_prices b ON b.material_id=c.material_id AND b.batch_id=%s
                     WHERE c.update_id=%s AND c._order=(SELECT MAX(s._order) FROM procurement_saved_changes s WHERE s.update_id=c.update_id AND s.material_id=c.material_id)""", (self._latest_batch_id(connection),update_id)).fetchall()
                 for material_id,before,after,price_date,purchaser in changes:
                     collaboration.record_changes(connection,event_id,copied_id,actor_user_id,price_date,[(material_id,before,after)],{material_id:purchaser})
@@ -1579,8 +1579,8 @@ class ProcurementStore:
     def batch_comparison(self, batch_id: str, *, preserve_catalog: bool = False) -> dict[str, Any]:
         with transaction(self.url) as connection:
             previous = connection.execute("SELECT id, version FROM procurement_price_batches WHERE version < (SELECT version FROM procurement_price_batches WHERE id=%s) ORDER BY version DESC LIMIT 1", (batch_id,)).fetchone()
-            old = dict(connection.execute("SELECT material_id, latest_price FROM procurement_price_batch_items WHERE batch_id=%s", (previous[0] if previous else None,)).fetchall())
-            current = connection.execute("SELECT material_id, latest_price FROM procurement_price_batch_items WHERE batch_id=%s", (batch_id,)).fetchall()
+            old = dict(connection.execute("SELECT material_id, latest_price FROM procurement_effective_prices WHERE batch_id=%s", (previous[0] if previous else None,)).fetchall())
+            current = connection.execute("SELECT material_id, latest_price FROM procurement_effective_prices WHERE batch_id=%s", (batch_id,)).fetchall()
             batch = connection.execute("SELECT version,update_id FROM procurement_price_batches WHERE id=%s", (batch_id,)).fetchone()
             reported = {row[0] for row in connection.execute("SELECT material_id FROM procurement_saved_changes WHERE update_id=%s", (batch[1],))} if batch else set()
             supplement = bool(previous) and bool(reported) and reported.isdisjoint(old)
@@ -1609,7 +1609,7 @@ class ProcurementStore:
                        for ident,version,published,date in db.execute('SELECT id,version,published_at,price_date FROM procurement_price_batches ORDER BY version DESC')}
             for batch_id,material_id,code,price,source_id,date,kind in db.execute("""
                 SELECT i.batch_id,i.material_id,i.code,i.latest_price,s.material_id,s.price_date,s.price_kind
-                FROM procurement_price_batch_items i LEFT JOIN procurement_snapshot_sources s
+                FROM procurement_effective_prices i LEFT JOIN procurement_effective_sources s
                 ON s.batch_id=i.batch_id AND s.material_id=i.material_id ORDER BY i.batch_id,i.code
             """):
                 batch = batches[batch_id]
@@ -1638,7 +1638,7 @@ class ProcurementStore:
                 """
                 SELECT material_id, code, name, unit, latest_price, inventory_price,
                        in_transit_price, recommended_price
-                FROM procurement_price_batch_items WHERE batch_id = %s ORDER BY code
+                FROM procurement_effective_prices WHERE batch_id = %s ORDER BY code
                 """,
                 (batch_id,),
             ).fetchall()

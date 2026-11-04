@@ -174,7 +174,7 @@ def import_rd5(url: str, source: Path, actor_id: str, *, data_dir: Path, expecte
                                    (PRICE_SHEET, f"C{row['source_row']}", expected_sha256, batch["id"], row["material_id"]))
             prices = {r[0]: {"material_id": r[1], "latest_price": r[2], "inventory_price": r[3]} for r in db.execute(
                 """SELECT m.code,m.id,b.latest_price,i.price FROM procurement_materials m
-                   LEFT JOIN procurement_price_batch_items b ON b.material_id=m.id AND b.batch_id=%s
+                   LEFT JOIN procurement_effective_prices b ON b.material_id=m.id AND b.batch_id=%s
                    LEFT JOIN procurement_inventory i ON i.material_id=m.id WHERE m.archived_at IS NULL""", (store._latest_batch_id(db),))}
             package.update(source_filename=source.name, effective_date=effective_date.isoformat(), imported_at=now,
                            price_batch_id=store._latest_batch_id(db), material_mapping=plan["rows"], price_inputs=prices)
@@ -232,7 +232,7 @@ def revise_preparation(url: str, digest: str, *, actor_id: str | None = None,
         batch_id = ProcurementStore(url)._latest_batch_id(db)
         prices = {r[0]: {"material_id": r[1], "latest_price": r[2], "inventory_price": r[3]} for r in db.execute(
             """SELECT m.code,m.id,b.latest_price,i.price FROM procurement_materials m
-               LEFT JOIN procurement_price_batch_items b ON b.material_id=m.id AND b.batch_id=%s
+               LEFT JOIN procurement_effective_prices b ON b.material_id=m.id AND b.batch_id=%s
                LEFT JOIN procurement_inventory i ON i.material_id=m.id WHERE m.archived_at IS NULL""", (batch_id,))}
         if "CF020D" not in prices:
             raise ValueError("替代原料 CF020D 不在在用台账中")
