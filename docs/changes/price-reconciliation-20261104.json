@@ -19,8 +19,7 @@
     "api/research_reads.py",
     "api/sales.py",
     "api/migrations/postgresql/0022_cost_event_order.sql",
-    "api/operations.py",
-    "scripts/migrate_sqlite_to_postgres.py"
+    "api/operations.py"
   ],
   "consumers": [
     "api/procurement_reads.py",
