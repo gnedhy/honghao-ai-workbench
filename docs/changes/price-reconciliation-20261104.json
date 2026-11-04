@@ -19,7 +19,8 @@
     "api/research_reads.py",
     "api/sales.py",
     "api/migrations/postgresql/0022_cost_event_order.sql",
-    "api/operations.py"
+    "api/operations.py",
+    "scripts/migrate_sqlite_to_postgres.py"
   ],
   "consumers": [
     "api/procurement_reads.py",
@@ -42,7 +43,8 @@
       "tests/test_price_reconciliation.py::test_snapshot_restores_corrections_and_projections",
       "tests/test_sales.py::test_snapshot_restore_preserves_sales_tables",
       "tests/test_research_ui.py::test_browser_research_edit_and_read_lifecycle",
-      "tests/test_procurement_collaboration.py::test_revalidated_snapshot_and_copied_edit_keep_provenance"
+      "tests/test_procurement_collaboration.py::test_revalidated_snapshot_and_copied_edit_keep_provenance",
+      "tests/test_sqlite_migration.py::test_complete_import_preserves_order_bytes_precision_paths_sequences_and_constraints"
     ],
     "node": [],
     "browser": [
