@@ -52,7 +52,7 @@ def activate_report_inventory(db: Connection, update_id: str, batch_id: str, act
             (material_id, row["quantity"], price, row["price"] or "", 'report:' + row["import_id"], row["source_row"], actor_id, now))
     # Freeze the inventory used by this period, including unchanged materials.
     snapshot = db.execute("""SELECT i.material_id,i.quantity,i.price FROM procurement_inventory i
-        JOIN procurement_price_batch_items b ON b.material_id=i.material_id WHERE b.batch_id=%s ORDER BY i.material_id""", (batch_id,)).fetchall()
+        JOIN procurement_effective_prices b ON b.material_id=i.material_id WHERE b.batch_id=%s ORDER BY i.material_id""", (batch_id,)).fetchall()
     db.execute("UPDATE procurement_price_batches SET inventory_snapshot=%s WHERE id=%s", (json.dumps(snapshot), batch_id))
     db.execute("""UPDATE procurement_price_batch_items b SET inventory_price=i.price
         FROM procurement_inventory i WHERE b.material_id=i.material_id AND b.batch_id=%s""", (batch_id,))

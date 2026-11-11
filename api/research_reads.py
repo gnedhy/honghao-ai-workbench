@@ -61,9 +61,9 @@ def history_record(db,key,event_id,actor):
     if summary is None or not access.allows(summary[0]):
         raise KeyError('记录不存在')
     if summary[1]=='backfill':
-        raw=db.execute(f'SELECT {BACKFILL_DETAIL} FROM research_backfill_records WHERE product_id=%s AND purchase_version=%s',(key,summary[2])).fetchone()
+        raw=db.execute(f'SELECT {BACKFILL_DETAIL} FROM research_effective_backfill WHERE product_id=%s AND purchase_version=%s',(key,summary[2])).fetchone()
     else:
-        raw=db.execute('SELECT payload FROM research_cost_records WHERE product_id=%s AND event_id=%s',(key,summary[0].get('source_event_id',event_id))).fetchone()
+        raw=db.execute('SELECT payload FROM research_effective_costs WHERE product_id=%s AND event_id=%s',(key,summary[0].get('source_event_id',event_id))).fetchone()
     if raw is None: raise KeyError('记录不存在')
     row=normalize({**json.loads(raw[0]),**summary[0]})
     access.require(row.get('formula',row))
@@ -88,10 +88,10 @@ def ledger_source(db,actor,kind):
         value="(CASE WHEN f.lifecycle='draft' THEN COALESCE(d.formula,f.formula) ELSE f.formula END)::jsonb - 'source_hashes' || jsonb_build_object('lifecycle',f.lifecycle,'revision',f.revision,'has_draft',d.id IS NOT NULL OR f.lifecycle='draft')"
         joins=''
     else:
-        value="COALESCE(c.current_payload::jsonb,f.formula::jsonb || jsonb_build_object('latest_cost',NULL,'inventory_cost',NULL,'change',jsonb_build_object('percent',NULL,'reason','首次核算中'),'missing_materials','[]'::jsonb)) || jsonb_build_object('revision',f.revision,'has_draft',d.id IS NOT NULL) || CASE WHEN h.payload IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('change',h.payload->'change','comparison_basis',h.payload->'comparison_basis','includes_backfill',EXISTS(SELECT 1 FROM research_backfill_records b WHERE b.product_id=f.id)) END"
+        value="COALESCE(c.current_payload::jsonb,f.formula::jsonb || jsonb_build_object('latest_cost',NULL,'inventory_cost',NULL,'change',jsonb_build_object('percent',NULL,'reason','首次核算中'),'missing_materials','[]'::jsonb)) || jsonb_build_object('revision',f.revision,'has_draft',d.id IS NOT NULL) || CASE WHEN h.payload IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('change',h.payload->'change','comparison_basis',h.payload->'comparison_basis','includes_backfill',EXISTS(SELECT 1 FROM research_effective_backfill b WHERE b.product_id=f.id)) END"
         if pending:
             value += " || jsonb_build_object('status','"+('failed' if pending[0]=='failed' else 'updating')+"')"
-        joins="LEFT JOIN LATERAL(SELECT current_payload FROM research_cost_records WHERE product_id=f.id ORDER BY sequence DESC LIMIT 1)c ON true LEFT JOIN LATERAL(SELECT payload FROM research_history_reads WHERE product_id=f.id ORDER BY ordinal DESC LIMIT 1)h ON true"
+        joins="LEFT JOIN LATERAL(SELECT current_payload FROM research_effective_costs WHERE product_id=f.id ORDER BY event_order DESC,sequence DESC LIMIT 1)c ON true LEFT JOIN LATERAL(SELECT payload FROM research_history_reads WHERE product_id=f.id ORDER BY ordinal DESC LIMIT 1)h ON true"
         scope+=" AND f.lifecycle='active'"
     source=f"WITH scoped AS MATERIALIZED(SELECT {value} AS row FROM research_formulas f LEFT JOIN research_drafts d ON d.id=f.id {joins} WHERE f.formula::jsonb->>'kind'='recipe' AND {scope}), rows AS MATERIALIZED(SELECT row || jsonb_build_object('lines',CASE WHEN jsonb_typeof(row->'lines')='array' THEN jsonb_array_length(row->'lines') ELSE COALESCE((row->>'lines')::integer,0) END) AS row FROM scoped) "
     return source,params,access,pending

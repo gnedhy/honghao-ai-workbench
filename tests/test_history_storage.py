@@ -32,7 +32,7 @@ def test_migration_losslessly_shares_inputs_and_preserves_period_signatures(pg_t
                        (version, 'P', f'sig-{version}', packed(sample(version))))
         before = db.execute('SELECT purchase_version,product_id,signature,payload,_order FROM research_backfill_records ORDER BY _order').fetchall()
         db.execute(files[6][3])
-        after = db.execute(f'SELECT purchase_version,product_id,signature,{BACKFILL_DETAIL},_order FROM research_backfill_records ORDER BY _order').fetchall()
+        after = db.execute(f'SELECT purchase_version,product_id,signature,{BACKFILL_DETAIL},_order FROM research_backfill_records AS research_effective_backfill ORDER BY _order').fetchall()
         assert [(v,k,s,json.loads(p),o) for v,k,s,p,o in before] == [(v,k,s,json.loads(p),o) for v,k,s,p,o in after]
         assert db.execute('SELECT count(*) FROM research_backfill_frozen').fetchone()[0] == 1
         summaries = [json.loads(row[0]) for row in db.execute('SELECT summary_payload FROM research_backfill_records')]
@@ -48,7 +48,7 @@ def test_new_records_share_only_identical_inputs_and_rollback_atomically(pg_targ
         changed=sample(3); changed['formula']['yield']='98.5'
         save_backfill(db,3,'P','sig-3',changed)
         assert db.execute('SELECT count(*) FROM research_backfill_frozen').fetchone()[0] == 2
-        assert json.loads(db.execute(f'SELECT {BACKFILL_DETAIL} FROM research_backfill_records WHERE purchase_version=3').fetchone()[0]) == changed
+        assert json.loads(db.execute(f'SELECT {BACKFILL_DETAIL} FROM research_backfill_records AS research_effective_backfill WHERE purchase_version=3').fetchone()[0]) == changed
     with pytest.raises(RuntimeError, match='rollback'):
         with postgres.transaction(app, write=True) as db:
             changed['formula']['yield']='97'

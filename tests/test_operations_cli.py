@@ -167,7 +167,7 @@ def test_restore_requires_confirmation_and_uses_an_empty_target(tmp_path: Path, 
         restored_path = Path(db.execute('SELECT stored_path FROM procurement_source_imports').fetchone()[0])
         assert db.execute('SELECT payload,summary_payload FROM research_cost_records').fetchone()==expected
         assert db.execute('SELECT payload,summary_payload FROM research_backfill_records').fetchone()==expected_backfill
-        assert json.loads(db.execute(f'SELECT {BACKFILL_DETAIL} FROM research_backfill_records').fetchone()[0])==backfill_payload
+        assert json.loads(db.execute(f'SELECT {BACKFILL_DETAIL} FROM research_backfill_records AS research_effective_backfill').fetchone()[0])==backfill_payload
     assert restored_path.is_relative_to(target.data_dir) and restored_path.is_file()
     assert not (target.data_dir / RESTORE_MARKER_NAME).exists()
     assert all(value == 'ok' for value in readiness(second_pg['url'], 'test').values())

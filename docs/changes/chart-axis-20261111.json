@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "kind": "presentation",
+  "summary": "补齐共用原料行情历史走势图的坐标轴字号，并补充系统更新日志。",
+  "modules": ["procurement", "research"],
+  "files": ["src/workbenches/ProcurementMaterialHistory.tsx", "src/components/SettingsDialog.tsx"],
+  "consumers": ["src/workbenches/ProcurementMaterialView.tsx", "src/workbenches/ProcurementWorkbench.tsx", "src/workbenches/ResearchMaterialPrices.tsx", "src/workbenches/ResearchProductView.tsx", "src/components/SettingsDialog.tsx"],
+  "permissions": "沿用采购详情与研发只读原料的现有权限，不增加入口或授权。",
+  "data": "只调整 XAxis、YAxis 的文字显示；价格点、历史记录、计算、接口及数据库结构不变，无数据写入。",
+  "lifecycle": "沿用历史读取、分页、日期范围与组件卸载行为。",
+  "exits": "详情关闭、返回和未保存提醒保持原实现。",
+  "compatibility": "无依赖或接口变更，保持现役后端；先追加哈希资源，再切换页面入口。",
+  "recovery": "恢复前版页面入口和匹配源码，保留旧哈希资源，不恢复或覆盖数据库。",
+  "verification": {
+    "api": [],
+    "node": [{"file": "tests_ui/procurementAnalytics.test.ts", "id": "采购价格趋势按时间顺序保留有效询价点"}],
+    "browser": []
+  }
+}
