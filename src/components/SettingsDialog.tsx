@@ -368,6 +368,7 @@ function AboutSystem({ connection }: { connection: ServiceConnection }) {
     <ol className="settings-timeline" tabIndex={0} aria-label="更新日志"><li>
       <div className="changelog-date"><time dateTime="2026-11-11">2026年11月11日</time></div>
       <div className="settings-timeline-content">
+        <div><strong>走势图字号统一</strong><p>修正原料详情走势图坐标轴字号偏大的问题，采购详情与研发原料查看保持一致。</p></div>
         <div><strong>历史行情再次核对</strong><p>依据最新核对表补充历史行情更正，并同步核对受影响的产品成本；原始记录和当前待发布数据保留。</p></div>
         <div><strong>台账比较基准同步</strong><p>历史行情更正后，按有效行情重新计算本轮价格变化与待确认提示。导入最新一期不会自动覆盖历史期次。</p></div>
         <div><strong>本机维护修复同步</strong><p>同步旧期成本补录排序和更正记录恢复修复，避免旧期补录影响当前成本。</p></div>
